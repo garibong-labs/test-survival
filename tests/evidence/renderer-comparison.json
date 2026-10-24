@@ -1,0 +1,62 @@
+[
+  {
+    "class": "JsonSchema",
+    "identical_block": true,
+    "identical_manifest": true,
+    "prompts": {
+      "ZSL": true,
+      "FSL": true,
+      "CoT": true,
+      "ToT": true,
+      "GToT": true
+    }
+  },
+  {
+    "class": "BaseJsonValidator",
+    "identical_block": true,
+    "identical_manifest": true,
+    "prompts": {
+      "ZSL": true,
+      "FSL": true,
+      "CoT": true,
+      "ToT": true,
+      "GToT": true
+    }
+  },
+  {
+    "class": "AnyOfValidator",
+    "identical_block": true,
+    "identical_manifest": true,
+    "prompts": {
+      "ZSL": true,
+      "FSL": true,
+      "CoT": true,
+      "ToT": true,
+      "GToT": true
+    }
+  },
+  {
+    "class": "OneOfValidator",
+    "identical_block": true,
+    "identical_manifest": true,
+    "prompts": {
+      "ZSL": true,
+      "FSL": true,
+      "CoT": true,
+      "ToT": true,
+      "GToT": true
+    }
+  },
+  {
+    "class": "JsonSchemaFactory",
+    "identical_block": true,
+    "identical_manifest": true,
+    "prompts": {
+      "ZSL": true,
+      "FSL": true,
+      "CoT": true,
+      "ToT": true,
+      "GToT": true
+    }
+  }
+]

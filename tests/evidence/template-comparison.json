@@ -1,0 +1,26 @@
+{
+  "CoT.txt": {
+    "sha256": "d176f4276fb22664e80e318d6f2118181ee34b153a14ad548eb553e0c1efd50b",
+    "identical_to_jsoup": true
+  },
+  "FSL.txt": {
+    "sha256": "8ec872a158a61d4a0ea63591990a3cca35fcf9a8d32129a71ac63a1fe68fc99a",
+    "identical_to_jsoup": true
+  },
+  "ZSL.txt": {
+    "sha256": "76f684228964c772d401a8cb44e8ccb0f3c2fb525caaf195f3ceb8bd21f7f4ef",
+    "identical_to_jsoup": true
+  },
+  "GToT.txt": {
+    "sha256": "cd305c96c26e4497b65597b352fe36b84020cfe7e245269bb37008bbe7caba61",
+    "identical_to_jsoup": true
+  },
+  "fewshot_example.txt": {
+    "sha256": "e85ca2d0f5041b8029a7319562c81df2c46882418f110b6f47d0c8b562317ae4",
+    "identical_to_jsoup": true
+  },
+  "ToT.txt": {
+    "sha256": "6cabd0f4020d024e933e1ea7a01ba833e12e47d6f4a90450dde0add5876d329b",
+    "identical_to_jsoup": true
+  }
+}

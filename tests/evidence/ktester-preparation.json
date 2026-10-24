@@ -1,0 +1,8 @@
+{
+  "preparation_passed": true,
+  "index_passed": true,
+  "dataset_passed": true,
+  "entries": 64,
+  "identical_population_rows": true,
+  "model_calls": 0
+}
