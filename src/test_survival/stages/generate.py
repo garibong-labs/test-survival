@@ -1,4 +1,3 @@
-import time
 import shutil
 from datetime import datetime,timezone
 from ..config import stage_hash
@@ -26,24 +25,22 @@ def run(exp,config,group=None,force=False):
         old=read_json(path,{})
         if old.get('config_hash')==digest and old.get('stopped'):
             summaries.append(g['name']+': already generated');continue
-        history=[];entries=[];kept=[];round_no=1;retry=0
+        history=[];entries=[];kept=[];round_no=1
         while True:
-            if g['method']=='ouedraogo':generator=OuedraogoNative(exp,config,g,retry)
+            if g['method']=='ouedraogo':generator=OuedraogoNative(exp,config,g)
             else:
                 from ..generators.ktester_tool import KTesterTool
-                generator=KTesterTool(exp,config,g,retry)
+                generator=KTesterTool(exp,config,g)
             result=generator.generate(round_no)
-            label=f'round{round_no}'+(f'-retry{retry}' if retry else '')
+            label=f'round{round_no}'
             directory=exp/'generated'/g['name']/label
             kept,funnel=screen_round(exp,config,g,directory,kept)
             history.append(funnel['compiled'])
-            action=decision(g['rounds'],round_no,retry,history,len(kept),ndev)
-            entries.append(dict(round=round_no,retry=retry,directory=label,funnel=funnel,model_calls=len(result.calls)))
-            write_json(path,dict(config_hash=digest,rounds=entries,stopped=action if action not in ['retry','next'] else None))
+            action=decision(g['rounds'],round_no,history,len(kept),ndev)
+            entries.append(dict(round=round_no,directory=label,funnel=funnel,model_calls=len(result.calls)))
+            write_json(path,dict(config_hash=digest,rounds=entries,stopped=action if action!='next' else None))
             log(exp,f'generate: {g["name"]} {label}: {funnel["compiled"]} compiled files; {len(kept)} kept; {action}')
-            if action=='retry':
-                time.sleep(60);retry+=1
-            elif action=='next':round_no+=1;retry=0
+            if action=='next':round_no+=1
             else:break
         summaries.append(g['name']+': '+action)
     return '; '.join(summaries)

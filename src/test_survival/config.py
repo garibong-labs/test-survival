@@ -121,13 +121,26 @@ def integer(default, minimum=1, nullable=False):
     return Field(int, default, minimum=minimum, nullable=nullable)
 
 
+DOCKER = {
+    'compose_files': Field(list, []), 'service': Field(str, 'ktester'),
+    'image': Field(str, None, nullable=True), 'mounts': Field(dict, {}),
+    'env_file': Field(str, None, nullable=True),
+}
+DEV_GROUP = {
+    'name': Field(str), 'display': Field(str, None, nullable=True),
+    'denominator': enum('project', 'project', 'scope-targeted', 'coverage-scoped'),
+    'derive_from': Field(str, None, nullable=True),
+}
+
+
 GENERATOR = {
     'name': Field(str), 'display': Field(str, None, nullable=True),
     'method': enum('ktester', 'ktester', 'ouedraogo', 'testpilot'),
     'impl': enum('author-tool', 'author-tool', 'native'),
     'tool_path': Field(str, None, nullable=True), 'params': Field(dict, {}),
+    'docker': Field(dict, None, nullable=True),
     'rounds': {'max': integer(1), 'until_dev_matched': Field(bool, False),
-               'retry_on_zero_compile': integer(0, 0), 'stop_after_zero_compile': integer(0, 0)},
+               'stop_after_zero_compile': integer(2, 0)},
     'context': {'dependency_signatures': {'enabled': Field(bool, False), 'max_types': integer(15), 'max_lines': integer(400)}},
     'prompt': {'api_constraint': Field(bool, False)},
     'postprocess': {'import_repair': {'enabled': Field(bool, False), 'passes': integer(2)}},
@@ -135,16 +148,19 @@ GENERATOR = {
 SCHEMA = {
     'name': Field(str),
     'project': {'repo': Field(str), 'language': enum('java', 'java', 'javascript'),
-                'build': enum('maven', 'maven', 'npm', 'pnpm'), 'module': Field(str, '.')},
+                'build': enum('maven', 'maven', 'npm', 'pnpm'), 'module': Field(str, '.'),
+                'test_framework': enum('auto', 'auto', 'junit5', 'junit4')},
     'anchor': Field(str),
     'range': {'branch': Field(str, 'origin/master'), 'end': Field(str, None, nullable=True),
-              'mode': enum('first-parent', 'first-parent'), 'limit': integer(None, 1, True)},
+              'mode': enum('first-parent', 'first-parent'), 'limit': integer(None, 1, True),
+              'skip_untouched': enum('none', 'none', 'module', 'main-sources')},
     'scope': {'rule': enum('change-ranked', 'dedicated-test', 'change-ranked', 'explicit'),
               'rank_by': enum('change-count', 'change-count', 'method-count'),
               'min_methods': integer(3), 'exclude_accessor_heavy': Field(bool, True),
               'target_methods': Field(list, [50, 80]), 'max_classes': integer(10),
               'classes': Field(list, []), 'min_classes': integer(1)},
-    'dev': {'denominator': enum('project', 'project', 'scope-targeted'), 'stable_runs': integer(3)},
+    'dev': {'denominator': enum('project', 'project', 'scope-targeted', 'coverage-scoped'), 'stable_runs': integer(3),
+            'groups': Field(list, [])},
     'model': {'provider': enum('openrouter', 'openrouter'), 'name': Field(str, 'openai/gpt-oss-120b'),
               'env_file': Field(str, '/Users/donggi/_projects/experiment-projects/KTester/docker/.env'),
               'env_key': Field(str, 'OPENROUTER_API_KEY')},
@@ -153,13 +169,12 @@ SCHEMA = {
                'matching': enum('none', 'none', 'subsample-to-dev')},
     'survival': {'definition': enum('cumulative-fixed-denominator', 'cumulative-fixed-denominator'),
                  'flaky_rerun': integer(1, 0), 'build_fail': enum('carry-over', 'carry-over'),
-                 'dev_cache': enum('none', 'none', 'unchanged-module')},
+                 'environment_errors': {'patterns': Field(list, []), 'max_reruns': integer(3, 0),
+                                        'backoff_seconds': Field(float, 5, minimum=0)}},
     'coverage': {'changed_line': Field(bool, True), 'at_anchor': Field(bool, True),
                  'groups': enum('alive-entering', 'alive-entering')},
     'runner': {
-        'docker': {'compose_files': Field(list, []), 'service': Field(str, 'ktester'),
-                   'image': Field(str, None, nullable=True), 'mounts': Field(dict, {}),
-                   'env_file': Field(str, None, nullable=True)},
+        'docker': DOCKER,
         'reuse': {'checkouts': Field(str, None, nullable=True), 'classpath_cache': Field(str, None, nullable=True)},
         'workers': {key: integer(4) for key in ('build', 'survive', 'cover')},
         'timeouts': {'build': integer(600), 'compile': integer(300), 'test_class': integer(120)},
@@ -215,6 +230,43 @@ def _strings(values, path):
         raise ConfigError(f'{path}: duplicate entries are not allowed')
 
 
+def _docker(data, prefix):
+    docker = _validate(data, DOCKER, prefix+'.')
+    _strings(docker['compose_files'], prefix+'.compose_files')
+    if docker['compose_files'] and docker['image']:
+        raise ConfigError(prefix+': compose_files and image are alternatives')
+    for host,target in docker['mounts'].items():
+        if not isinstance(host,str) or not isinstance(target,str) or not Path(host).is_absolute() or not target.startswith('/'):
+            raise ConfigError(prefix+'.mounts: expected absolute host path -> absolute container path')
+    return docker
+
+
+def _group_name(name, names, prefix):
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*',name) or name in names:
+        raise ConfigError(prefix+'name: must be unique across developer and generator groups and contain only letters, digits, _ or -')
+    names.add(name)
+
+
+def developer_groups(config):
+    return config['dev']['groups']
+
+
+def group_names(config):
+    return [g['name'] for g in [*developer_groups(config),*config['generators']]]
+
+
+def group_labels(config):
+    return {g['name']:g['display'] for g in [*developer_groups(config),*config['generators']]}
+
+
+def generator_config(config, generator):
+    """A generator's Docker mapping replaces the runner mapping, in a copy."""
+    result=deepcopy(config)
+    if generator.get('docker') is not None:
+        result['runner']['docker']=deepcopy(generator['docker'])
+    return result
+
+
 def validate(data):
     data = as_written(data)
     c = _validate(data, SCHEMA)
@@ -231,14 +283,33 @@ def validate(data):
     _strings(c['scope']['classes'], 'scope.classes')
     if c['scope']['rule'] == 'explicit' and not c['scope']['classes']:
         raise ConfigError('scope.classes: required nonempty list for explicit scope')
+    raw_dev=data.get('dev',{})
+    if 'groups' in raw_dev and 'denominator' in raw_dev:
+        raise ConfigError('dev: use groups or denominator shorthand, not both')
+    if 'groups' in raw_dev and not c['dev']['groups']:
+        raise ConfigError('dev.groups: expected at least one group')
+    groups=c['dev']['groups'] if 'groups' in raw_dev else [{'name':'dev','denominator':c['dev']['denominator']}]
+    names=set();resolved=[]
+    for i,raw in enumerate(groups):
+        prefix=f'dev.groups[{i}].';g=_validate(raw,DEV_GROUP,prefix)
+        _group_name(g['name'],names,prefix)
+        g['display']=g['display'] or ('Dev' if g['name']=='dev' else g['name'])
+        resolved.append(g)
+    links={g['name']:g['derive_from'] for g in resolved}
+    for i,g in enumerate(resolved):
+        seen={g['name']};source=g['derive_from']
+        while source is not None:
+            if source not in links:raise ConfigError(f'dev.groups[{i}].derive_from: expected a developer group name')
+            if source in seen:raise ConfigError(f'dev.groups[{i}].derive_from: dependency cycle')
+            seen.add(source);source=links[source]
+    c['dev']['groups']=resolved
+    _strings(c['survival']['environment_errors']['patterns'],'survival.environment_errors.patterns')
     generators = []
-    names = {'dev'}
     for i, raw in enumerate(c['generators']):
         prefix = f'generators[{i}].'
         g = _validate(raw, GENERATOR, prefix)
-        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', g['name']) or g['name'] in names:
-            raise ConfigError(prefix + 'name: must be unique, not dev, and contain only letters, digits, _ or -')
-        names.add(g['name'])
+        _group_name(g['name'],names,prefix)
+        if g['docker'] is not None:g['docker']=_docker(g['docker'],prefix+'docker')
         if (g['method'], g['impl']) not in (('ktester', 'author-tool'), ('ouedraogo', 'native')):
             raise ConfigError(prefix + 'method/impl: not implemented in this version of the tool; implemented: ktester/author-tool, ouedraogo/native')
         if g['impl'] == 'author-tool' and g['tool_path'] is None:
@@ -254,13 +325,7 @@ def validate(data):
                 raise ConfigError(prefix + 'params.prompts: allowed values: ZSL, FSL, CoT, ToT, GToT; list must be nonempty')
         generators.append(g)
     c['generators'] = generators
-    docker = c['runner']['docker']
-    _strings(docker['compose_files'], 'runner.docker.compose_files')
-    if docker['compose_files'] and docker['image']:
-        raise ConfigError('runner.docker: compose_files and image are alternatives')
-    for host, target in docker['mounts'].items():
-        if not isinstance(host, str) or not isinstance(target, str) or not Path(host).is_absolute() or not target.startswith('/'):
-            raise ConfigError('runner.docker.mounts: expected absolute host path -> absolute container path')
+    c['runner']['docker']=_docker(c['runner']['docker'],'runner.docker')
     for key, value in c['runner']['jvm'].items():
         if not re.fullmatch(r'[1-9][0-9]*[kKmMgG]?', value):
             raise ConfigError(f'runner.jvm.{key}: expected a positive JVM memory size, such as 512m or 1g')

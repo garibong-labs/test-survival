@@ -7,7 +7,7 @@ import yaml
 from test_survival.config import ConfigError, STAGES, SCHEMA, Field, as_written, load, stage_hash, validate
 
 
-EXAMPLE_HASHES = {
+ORIGINAL_HASHES = {
     'prepare': '0ef980fde3cd48e474b0a262d153b1c26bda0a9b3ec6f699ce1364b407fc581b',
     'scope': '9c69904ee4ac24e42dd455e6475f8068e01ada3378dc9e6111756445e9b04623',
     'generate': '36b9b01922e96970acee7112f46f5eb42417158b4a3e0e0f28ca4942ffea6f26',
@@ -18,6 +18,8 @@ EXAMPLE_HASHES = {
     'report': '2d76c1cf13e442a3c04b9a49886b308dc44db78477c73a88a0166a41a8965cf1',
 }
 
+EXAMPLE_HASHES = {'prepare': '1faf02ac81f8e86d07c02ec53f17f8905288d8e2937389fb3f36fccc4c02b39f', 'scope': '633878ca8eb4d94ce3c4925d4f4695676fedcec26c6f997aacb4da4a6ab08646', 'generate': '726e60c85658b2746bfe721463102984482d7845c1d1b496ae6e09a7b3a9f49e', 'screen': '3d86ba915cae35bdab9dbb0bdf51168d4826b2a9e11ea38cb4d356e9f1ed86f8', 'control': '3d86ba915cae35bdab9dbb0bdf51168d4826b2a9e11ea38cb4d356e9f1ed86f8', 'survive': 'bfdf064ea7e7e63d85cce1d90640af788d19d6ea90b8b36b0937c82d2769605f', 'cover': '05984cbe07601094b47008e53eb6cfe354d13be63430223b076542f282c84b34', 'report': '664dc66a579b7fe7590f1039397d9c29e5816a77e90abf6abeb1fdcd0a2f45de'}
+
 
 @pytest.fixture
 def minimal():
@@ -26,7 +28,8 @@ def minimal():
 
 def test_defaults_and_acceptance_example(minimal):
     c = validate(minimal)
-    assert c['dev'] == {'denominator': 'project', 'stable_runs': 3}
+    assert c['dev']['groups']==[{'name':'dev','display':'Dev','denominator':'project','derive_from':None}]
+    assert c['dev']['stable_runs']==3
     assert c['runner']['workers'] == {'build': 4, 'survive': 4, 'cover': 4}
     assert c['scope']['rank_by'] == 'change-count'
     assert len(load(Path(__file__).parents[1] / 'examples/jsv-run2/experiment.yaml')['generators']) == 4
@@ -119,3 +122,48 @@ def test_explicit_null_keeps_written_value_when_execution_fills_display(minimal)
     assert as_written(config) == minimal
     config['generators'][0]['display'] = 'k'
     assert as_written(config)['generators'][0]['display'] == 'k'
+
+
+
+def test_original_written_hashes_are_still_pinned_without_accepting_removed_keys():
+    raw=yaml.safe_load((Path(__file__).parent/'fixtures/jsv-run2-original.yaml').read_text())
+    assert {stage:stage_hash(raw,stage) for stage in STAGES}==ORIGINAL_HASHES
+    with pytest.raises(ConfigError,match='dev_cache|retry_on_zero_compile'):
+        validate(raw)
+
+
+@pytest.mark.parametrize('patch,key', [
+    ({'dev':{'groups':[]}},'dev.groups'),
+    ({'dev':{'groups':[{'name':'a'},{'name':'a'}]}},'name'),
+    ({'dev':{'groups':[{'name':'a','derive_from':'missing'}]}},'derive_from'),
+    ({'dev':{'groups':[{'name':'a','derive_from':'b'},{'name':'b','derive_from':'a'}]}},'cycle'),
+    ({'dev':{'groups':[{'name':'a'}],'denominator':'project'}},'dev'),
+    ({'dev':{'groups':[{'name':'k'}]},'generators':[{'name':'k','tool_path':'/k'}]},'name'),
+    ({'survival':{'dev_cache':'none'}},'dev_cache'),
+    ({'generators':[{'name':'k','tool_path':'/k','rounds':{'retry_on_zero_compile':0}}]},'retry_on_zero_compile'),
+    ({'project':{'repo':'/p','test_framework':'testng'}},'test_framework'),
+    ({'range':{'skip_untouched':'test-only'}},'skip_untouched'),
+    ({'survival':{'environment_errors':{'patterns':['']}}},'patterns'),
+    ({'survival':{'environment_errors':{'max_reruns':-1}}},'max_reruns'),
+    ({'survival':{'environment_errors':{'backoff_seconds':-1}}},'backoff_seconds'),
+    ({'generators':[{'name':'k','tool_path':'/k','docker':{'image':'x','compose_files':['y']}}]},'docker'),
+])
+def test_revised_schema_validation(minimal,patch,key):
+    minimal.update(patch)
+    with pytest.raises(ConfigError,match=key):validate(minimal)
+
+
+def test_new_defaults_and_generator_override_do_not_mutate_runner(minimal):
+    from test_survival.config import generator_config
+    minimal['runner']={'docker':{'image':'runner:25'}}
+    minimal['generators']=[{'name':'k','tool_path':'/k','docker':{'compose_files':['/k/compose.yml']}}]
+    config=validate(minimal)
+    assert config['project']['test_framework']=='auto'
+    assert config['range']['skip_untouched']=='none'
+    assert config['survival']['environment_errors']=={'patterns':[],'max_reruns':3,'backoff_seconds':5}
+    assert config['generators'][0]['rounds']['stop_after_zero_compile']==2
+    effective=generator_config(config,config['generators'][0])
+    assert effective['runner']['docker']['compose_files']==['/k/compose.yml']
+    assert effective['runner']['docker']['image'] is None
+    assert config['runner']['docker']['image']=='runner:25'
+    assert as_written(config)==minimal

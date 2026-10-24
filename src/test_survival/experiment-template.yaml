@@ -4,6 +4,7 @@ project:
   repo: /absolute/path/to/project                    # host path of the project fork
   language: java                # java | javascript   (javascript is validated but not implemented yet)
   build: maven                  # maven | npm | pnpm   (npm/pnpm validated only)
+  test_framework: auto          # auto | junit5 | junit4
   module: "."                   # module directory relative to repo
 
 anchor: release-tag                  # tag or sha of t
@@ -12,6 +13,7 @@ range:
   branch: origin/master         # ref whose first-parent history is walked
   end: null                     # sha. If null, resolve branch at prepare time and record the sha in anchor.json.
   mode: first-parent            # only value
+  skip_untouched: none          # none | module | main-sources
   limit: null                   # int. Keep only the first N commits after t.
 
 scope:
@@ -25,7 +27,9 @@ scope:
   min_classes: 1                # stop if fewer classes are selected
 
 dev:
-  denominator: project          # project | scope-targeted
+  groups:
+    - {name: dev, denominator: project}
+    - {name: dev-scope, display: "Dev (scope)", denominator: coverage-scoped, derive_from: dev}
   stable_runs: 3
 
 model:
@@ -39,12 +43,12 @@ generators:                     # list. Group name is `name`. `dev` is implicit 
     method: ktester             # ouedraogo | ktester | testpilot
     impl: author-tool           # author-tool | native
     tool_path: /absolute/path/to/KTester             # author-tool only
+    docker: null                # optional complete runner.docker override
     params: {}                  # method-specific, see section 9
     rounds:
       max: 1
       until_dev_matched: false  # stop rounds once kept methods >= dev denominator
-      retry_on_zero_compile: 0  # re-run the same round this many times if zero files compiled
-      stop_after_zero_compile: 0 # 0 disables. N: after N consecutive zero-compile rounds, stop this group and record 0
+      stop_after_zero_compile: 2 # 0 disables. after N consecutive zero-compile rounds, stop this group and record 0
     context:
       dependency_signatures: {enabled: false, max_types: 15, max_lines: 400}
     prompt:
@@ -60,8 +64,11 @@ screen:
 survival:
   definition: cumulative-fixed-denominator   # only value
   flaky_rerun: 1
+  environment_errors:
+    patterns: []                # failure-message substrings; empty disables
+    max_reruns: 3
+    backoff_seconds: 5
   build_fail: carry-over        # only value
-  dev_cache: none               # none | unchanged-module
 
 coverage:
   changed_line: true

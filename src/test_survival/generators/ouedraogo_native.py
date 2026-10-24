@@ -3,6 +3,7 @@ import hashlib
 import time
 
 from .base import RoundResult
+from ..config import generator_config
 from .parts import context,prompts,postprocess
 from .parts.extraction import extract
 from ..adapters.java_maven import JavaMavenAdapter
@@ -11,12 +12,12 @@ from ..model.openrouter import OpenRouter
 
 
 class OuedraogoNative:
-    def __init__(self,exp,config,generator,retry=0):
-        self.exp,self.config,self.group,self.retry=exp,config,generator,retry
-        self.adapter=JavaMavenAdapter(exp,config)
+    def __init__(self,exp,config,generator):
+        self.exp,self.config,self.group=exp,generator_config(config,generator),generator
+        self.adapter=JavaMavenAdapter(exp,self.config)
 
     def generate(self,round_no):
-        label=f'round{round_no}'+(f'-retry{self.retry}' if self.retry else '')
+        label=f'round{round_no}'
         directory=self.exp/'generated'/self.group['name']/label
         directory.mkdir(parents=True,exist_ok=True)
         scope=read_json(self.exp/'population/scope.json')['classes']

@@ -19,6 +19,8 @@ def test_legacy_retry_and_round_manifest_synthesis(tmp_path):
     manifest=read_json(exp/'generated/o/rounds.json')
     assert manifest['source']=='imported'
     assert [r['directory'] for r in manifest['rounds']]==['round1','round1-retry','round2']
+    assert [r['round'] for r in manifest['rounds']]==[1,2,3]
+    assert [r['archived_retry'] for r in manifest['rounds']]==[0,1,0]
     assert not (src/'generated/o/rounds.json').exists()
     state=read_json(exp/'state/generate.json')
     assert state['config_hash']==stage_hash(load(exp),'generate')

@@ -4,7 +4,8 @@ from pathlib import Path
 import re
 import shutil
 
-from .config import load, stage_hash, canonical_hash
+from .config import load, stage_hash, canonical_hash, UniqueLoader
+import yaml
 from .io import now, read_json, write_json
 from .pipeline import PipelineError, invalidate, log, run_lock
 
@@ -37,7 +38,9 @@ def import_experiment(exp, source, what):
                 shutil.copy2(src,dst)
                 copied[str(dst.relative_to(exp))]=hashlib.sha256(dst.read_bytes()).hexdigest()
             if selection=='generated':
-                source_config=load(source) if (source/'experiment.yaml').exists() else None
+                # Archived source YAML may use removed options; only group names
+                # identify importable directories. Never execute that configuration.
+                source_config=yaml.load((source/'experiment.yaml').read_text(),Loader=UniqueLoader) if (source/'experiment.yaml').exists() else None
                 names={g['name'] for g in source_config['generators']} if source_config else {p.name for p in (source/'generated').iterdir() if p.is_dir()}
                 imported=[]
                 for g in config['generators']:
@@ -49,12 +52,12 @@ def import_experiment(exp, source, what):
                         if f.is_file():
                             copy(f,dest/f.relative_to(src))
                     entries=[]
-                    for directory in rounds(dest):
+                    for ordinal,directory in enumerate(rounds(dest),1):
                         funnel=read_json(directory/'funnel.json')
                         if funnel is None:
                             raise FileNotFoundError(directory/'funnel.json')
                         n,retry=round_key(directory)
-                        entries.append(dict(round=n,retry=retry,directory=directory.name,funnel=funnel,source='imported'))
+                        entries.append(dict(round=ordinal,archived_round=n,archived_retry=retry,directory=directory.name,funnel=funnel,source='imported'))
                     if not entries:
                         raise FileNotFoundError(src/'round*')
                     write_json(dest/'rounds.json',dict(source='imported',source_path=str(src),config_hash=stage_hash(config,'generate',name),rounds=entries,stopped='imported'))

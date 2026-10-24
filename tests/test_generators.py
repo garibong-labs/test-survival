@@ -23,9 +23,31 @@ def test_dependency_gate():
 
 
 def test_round_stopping_priority_and_limits():
-    c={'max':3,'until_dev_matched':True,'retry_on_zero_compile':1,'stop_after_zero_compile':2}
-    assert decision(c,1,0,[0],0,185)=='retry'
-    assert decision(c,1,1,[0,0],0,185)=='zero-compile'
-    assert decision(c,2,0,[2,2],185,185)=='dev-matched'
-    assert decision(c,2,0,[2,2],20,185)=='next'
-    assert decision(c,3,0,[2,2,2],20,185)=='max-rounds'
+    c={'max':3,'until_dev_matched':True,'stop_after_zero_compile':2}
+    assert decision(c,1,[0],0,185)=='next'
+    assert decision(c,2,[0,0],0,185)=='zero-compile'
+    assert decision(c,2,[2,2],185,185)=='dev-matched'
+    assert decision(c,2,[2,2],20,185)=='next'
+    assert decision(c,3,[2,2,2],20,185)=='max-rounds'
+
+
+def test_zero_compile_round_loop_advances_without_retry(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    from test_survival.config import validate
+    from test_survival.stages import generate
+    from test_survival.adapters import java_maven
+    from test_survival.io import write_csv,read_json
+    config=validate({'name':'test','project':{'repo':'/p'},'anchor':'t','generators':[{'name':'o','method':'ouedraogo','impl':'native','rounds':{'max':5}}]})
+    write_csv(tmp_path/'dev/dev-denominator.csv',[{'class':'C','method':'t','kind':'plain'}],['class','method','kind'])
+    calls=[]
+    class Fake:
+        def __init__(self,*args):pass
+        def setup_runner(self):pass
+        def generate(self,n):calls.append(n);return SimpleNamespace(calls=[])
+    monkeypatch.setattr(java_maven,'JavaMavenAdapter',Fake)
+    monkeypatch.setattr(generate,'OuedraogoNative',Fake)
+    monkeypatch.setattr(generate,'screen_round',lambda *args:([],{'compiled':0}))
+    generate.run(tmp_path,config)
+    record=read_json(tmp_path/'generated/o/rounds.json')
+    assert calls==[1,2] and record['stopped']=='zero-compile'
+    assert [r['directory'] for r in record['rounds']]==['round1','round2']

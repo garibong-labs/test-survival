@@ -4,22 +4,23 @@ import os
 import subprocess
 
 from .base import RoundResult
+from ..config import generator_config
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,write_json
 from ..model.credentials import _read
 
 
 class KTesterTool:
-    def __init__(self,exp,config,generator,retry=0):
-        self.exp,self.config,self.group,self.retry=exp,config,generator,retry
-        self.adapter=JavaMavenAdapter(exp,config)
+    def __init__(self,exp,config,generator):
+        self.exp,self.config,self.group=exp,generator_config(config,generator),generator
+        self.adapter=JavaMavenAdapter(exp,self.config)
 
     def generate(self,round_no):
-        label=f'round{round_no}'+(f'-retry{self.retry}' if self.retry else '')
+        label=f'round{round_no}'
         directory=self.exp/'generated'/self.group['name']/label
         project_name=Path(self.config['project']['repo']).name
         script=Path(__file__).parents[1]/'adapters/ktester_worker.py'
-        job=dict(experiment=self.adapter.runner.path(self.exp),module=self.config['project']['module'],tool=self.adapter.runner.path(self.group['tool_path']),project_name=project_name,group=self.group['name'],round=round_no,retry=self.retry,label=label,params=self.group['params'],model=self.config['model']['name'],env_key=self.config['model']['env_key'])
+        job=dict(experiment=self.adapter.runner.path(self.exp),module=self.config['project']['module'],tool=self.adapter.runner.path(self.group['tool_path']),project_name=project_name,group=self.group['name'],round=round_no,retry=0,label=label,params=self.group['params'],model=self.config['model']['name'],env_key=self.config['model']['env_key'])
         for action in ['prepare','index','dataset','generate']:
             state=self.exp/'work/ktester'/self.group['name']/(action+('-'+label if action=='generate' else '')+'.json')
             if read_json(state,{}).get('status')=='completed':continue
