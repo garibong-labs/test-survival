@@ -73,21 +73,54 @@ def failure_differences(replay,reference):
     a,b=csvrows(replay/'results/first-failures.csv'),csvrows(reference/'results/first-failures.csv')
     sets=[{row_key(r) for r in rows} for rows in [a,b]]
     differences=[]
-    @lru_cache(maxsize=8)
+    @lru_cache(maxsize=32)
     def raw(path):
         return read_json(path)
-    for side,root,rows,other in [('replay',replay,a,sets[1]),('reference',reference,b,sets[0])]:
+
+    def describe(side, root, line, row):
+        path=root/f"results/raw/{row['index']}-{row['group']}.json"
+        method=next((m for m in raw(path)['methods'] if m['id']==row['id']),None)
+        messages={key:method.get(key,'') for key in ['message','retry_message']} if method else {}
+        evidence=[dict(field=key,matched='java.net.BindException',message=message)
+                  for key,message in messages.items() if 'java.net.BindException' in message]
+        return dict(side=side,csv_line=line,row=row,raw=str(path),messages=messages,evidence=evidence)
+
+    indexed=[]
+    for side,root,rows in [('replay',replay,a),('reference',reference,b)]:
+        index={}
         for line,row in enumerate(rows,2):
-            if row_key(row) in other:continue
-            path=root/f"results/raw/{row['index']}-{row['group']}.json"
-            method=next((m for m in raw(path)['methods'] if m['id']==row['id']),None)
-            messages={key:method.get(key,'') for key in ['message','retry_message']} if method else {}
-            evidence=[]
-            for key,message in messages.items():
-                match=PORT.search(message)
-                if match:evidence.append(dict(field=key,matched=match.group(),message=message))
-            differences.append(dict(side=side,csv_line=line,row=row,classification='port-collision' if evidence else 'unclassified',raw=str(path),messages=messages,evidence=evidence))
+            key=(row['group'],row['id'])
+            if key in index:raise ValueError('Duplicate first-failure method: '+str(key))
+            index[key]=describe(side,root,line,row)
+        indexed.append(index)
+    for side_index in range(2):
+        for key,item in indexed[side_index].items():
+            row=item['row']
+            if row_key(row) in sets[1-side_index]:continue
+            partner=indexed[1-side_index].get(key)
+            witnesses=[]
+            if row['group']=='dev' and partner:
+                for collision,other in [(item,partner),(partner,item)]:
+                    earlier=int(collision['row']['index'])<int(other['row']['index'])
+                    same_non_environment=(collision['row']['index']==other['row']['index']
+                                          and not any(PORT.search(m) for m in other['messages'].values()))
+                    if collision['evidence'] and (earlier or same_non_environment):
+                        witnesses.append(dict(side=collision['side'],index=collision['row']['index'],
+                                              raw=collision['raw'],evidence=collision['evidence']))
+            differences.append(dict(**item,classification='port-collision' if witnesses else 'unclassified',
+                                    paired_with=partner,pair_evidence=witnesses))
     return sorted(differences,key=lambda r:(int(r['row']['index']),r['row']['group'],r['row']['id'],r['side']))
+
+
+def lost_method_audit(replay,reference):
+    a,b=[csvrows(root/'results/first-failures.csv') for root in [replay,reference]]
+    groups=sorted({r['group'] for r in a+b})
+    result={}
+    for group in groups:
+        left,right=[{r['id'] for r in rows if r['group']==group} for rows in [a,b]]
+        result[group]=dict(identical=left==right,replay_count=len(left),reference_count=len(right),
+                           replay_only=sorted(left-right),reference_only=sorted(right-left))
+    return result
 
 
 def order_audit(replay,reference):
@@ -114,6 +147,32 @@ def order_audit(replay,reference):
                 cross_commit_timing='Raw records contain durations, not a complete shared execution timeline; they do not establish identical concurrent interleaving. Conditional retry launches can differ when outcomes differ.')
 
 
+def llm_file_comparisons(replay,reference):
+    """Compare shared metadata and LLM cells, excluding Dev-only events."""
+    def project(root,name):
+        path=root/'results'/name
+        if name=='first-failures.csv':
+            return sorted(row_key(r) for r in csvrows(path) if r['group']!='dev')
+        if name.endswith('.csv'):
+            return [{k:v for k,v in r.items() if not k.startswith('dev_') and '_dev_' not in k} for r in csvrows(path)]
+        if name=='consistency.md':
+            return json.loads(re.search(r'```json\s*\n(.*?)\n```',path.read_text(),re.S)[1])
+        curve=csvrows(root/'results/survival.csv')
+        events={r['index'] for r in curve if any(int(v) for k,v in r.items() if k.endswith('_lost') and not k.startswith('dev_'))}
+        if name=='table1-survival-by-event.md':events.update([curve[0]['index'],curve[-1]['index']])
+        result=[];omit=[]
+        for line in normalized(path).splitlines():
+            if not line.startswith('|'):
+                result.append(line);continue
+            cells=[c.strip() for c in re.split(r'(?<!\\)\|',line)[1:-1]]
+            dev_columns=[i for i,c in enumerate(cells) if c=='Dev' or c.startswith('Dev ')]
+            if dev_columns:omit=dev_columns
+            if name in ['table1-survival-by-event.md','table2-breaking-commits.md'] and cells[0].isdigit() and cells[0] not in events:continue
+            result.append([c for i,c in enumerate(cells) if i not in omit])
+        return result
+    return [dict(file=name,status='identical' if project(replay,name)==project(reference,name) else 'differs') for name in FILES]
+
+
 def comparison(replay,reference):
     config=load(replay)
     failures=failure_differences(replay,reference)
@@ -128,6 +187,7 @@ def comparison(replay,reference):
     result=dict(replay=str(replay),reference=str(reference),survive_workers=config['runner']['workers']['survive'],
                 files=[compare_file(replay,reference,name) for name in FILES],
                 differing_first_failure_rows=failures,unclassified=[r for r in failures if r['classification']=='unclassified'],
+                lost_method_sets=lost_method_audit(replay,reference),llm_file_comparisons=llm_file_comparisons(replay,reference),
                 ordering=order_audit(replay,reference),final_survivors={k.removesuffix('_alive'):int(v) for k,v in curve[-1].items() if k.endswith('_alive')},
                 coverage_indices=len(csvrows(replay/'results/coverage-commits.csv')),
                 survival_consistency=read_json(replay/'results/survival-consistency.json'),
@@ -136,11 +196,13 @@ def comparison(replay,reference):
 
 
 def failure_table(rows):
-    lines=['| Side / CSV line | Index | Group | ID | Kind | Classification | Matching failure text |','|---|---:|---|---|---|---|---|']
+    lines=['| Side / CSV line | Index | Group | ID | Kind | Classification | Paired side / index | BindException witness |','|---|---:|---|---|---|---|---|---|']
     for item in rows:
-        r=item['row'];evidence='; '.join(e['field']+': '+e['matched'] for e in item['evidence']) or 'No bind/connect/address-in-use match'
-        cells=[md(v) for v in [item['side']+' / '+str(item['csv_line']),r['index'],r['group'],r['id'],r['kind'],item['classification']]]
-        cells.append('['+md(evidence)+']('+item['raw']+')')
+        r=item['row'];partner=item['paired_with']
+        cells=[md(v) for v in [item['side']+' / '+str(item['csv_line']),r['index'],r['group'],r['id'],r['kind'],item['classification'],
+                               partner['side']+' / '+partner['row']['index'] if partner else 'Missing']]
+        evidence='; '.join('['+e['side']+' index '+e['index']+': java.net.BindException]('+e['raw']+')' for e in item['pair_evidence'])
+        cells.append(evidence or 'No qualifying pair')
         lines.append('| '+' | '.join(cells)+' |')
     return '\n'.join(lines) if rows else 'None.'
 
@@ -148,7 +210,7 @@ def failure_table(rows):
 def markdown(reports):
     lines=['# Acceptance comparison','',
            'Each replay is compared with the read-only hand-run reference. Text comparisons normalize trailing whitespace; first-failure CSVs use unordered row sets; consistency compares its JSON block.',
-           '', 'The `port-collision` label follows the requested message rule: a bind/connect error or an address-in-use condition in the original or retry failure message. It does not independently establish that every connection error was caused by a port collision.', '']
+           '', 'Dev first failures are paired by method ID. Both differing rows are classified `port-collision` only when one side has its own raw `java.net.BindException` failure and the other side loses that method later, or at the same index for a non-environmental reason. LLM differences receive no exception.', '']
     for label,report in reports:
         lines += ['## '+label,'',f"Replay: `{report['replay']}`. Reference: `{report['reference']}`.",'',f"`runner.workers.survive`: **{report['survive_workers']}**.",'',
                   '| Compared file | Result | First differing line |','|---|---|---:|']
@@ -164,7 +226,7 @@ def markdown(reports):
                   'Reference phase metadata:', '```json',json.dumps(report['ordering']['reference_phase_workers'],indent=2),'```']
         if report['ordering']['differences']:
             lines += ['', 'Ordering differences:', '```json',json.dumps(report['ordering']['differences'],indent=2),'```']
-        lines += ['', '### Every differing first-failure row', '',failure_table(report['differing_first_failure_rows']),
+        lines += ['', '### LLM and shared-data comparison', '', 'Dev columns and Dev-only event rows are excluded; LLM values and shared metadata are retained. All ten projections identical: **'+str(all(r['status']=='identical' for r in report['llm_file_comparisons']))+'**.', '', '| Compared file | LLM/shared result |', '|---|---|', *['| '+r['file']+' | '+r['status']+' |' for r in report['llm_file_comparisons']], '', '### Per-method pairing', '', f"Differing Dev methods: **{len({r['row']['id'] for r in report['differing_first_failure_rows'] if r['row']['group']=='dev'})}**. Differing rows: **{len(report['differing_first_failure_rows'])}**. Unclassified rows: **{len(report['unclassified'])}**.", '', 'Methods ever lost, by group:', '', '```json', json.dumps(report['lost_method_sets'],indent=2), '```', '', '### Every differing first-failure row', '',failure_table(report['differing_first_failure_rows']),
                   '', '### Unclassified first-failure rows', '',failure_table(report['unclassified']), '']
     return '\n'.join(lines)
 
@@ -178,7 +240,7 @@ def main():
     args=parser.parse_args();reports=[]
     for item in args.replay:
         label,path=item.split('=',1)
-        reports.append((label,comparison(Path(path),args.reference)))
+        reports.append((label,comparison(Path(path).resolve(),args.reference.resolve())))
     args.json_out.parent.mkdir(parents=True,exist_ok=True)
     args.json_out.write_text(json.dumps(dict(reports),indent=2)+'\n')
     args.out.parent.mkdir(parents=True,exist_ok=True);args.out.write_text(markdown(reports)+'\nFull comparison data and failure messages: ['+args.json_out.name+']('+str(args.json_out.resolve())+').\n')

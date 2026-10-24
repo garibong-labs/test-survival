@@ -41,6 +41,96 @@
           "changed": true
         }
       ]
+    },
+    {
+      "experiment": "/Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-replay",
+      "timestamp": "2026-10-24T11:15:59.551135+00:00",
+      "stages": [
+        {
+          "stage": "prepare",
+          "before": "0ef980fde3cd48e474b0a262d153b1c26bda0a9b3ec6f699ce1364b407fc581b",
+          "after": "0ef980fde3cd48e474b0a262d153b1c26bda0a9b3ec6f699ce1364b407fc581b",
+          "changed": false
+        },
+        {
+          "stage": "scope",
+          "before": "9c69904ee4ac24e42dd455e6475f8068e01ada3378dc9e6111756445e9b04623",
+          "after": "9c69904ee4ac24e42dd455e6475f8068e01ada3378dc9e6111756445e9b04623",
+          "changed": false
+        },
+        {
+          "stage": "generate",
+          "before": "36b9b01922e96970acee7112f46f5eb42417158b4a3e0e0f28ca4942ffea6f26",
+          "after": "36b9b01922e96970acee7112f46f5eb42417158b4a3e0e0f28ca4942ffea6f26",
+          "changed": false
+        },
+        {
+          "stage": "screen",
+          "before": "89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45",
+          "after": "89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45",
+          "changed": false
+        },
+        {
+          "stage": "control",
+          "before": "89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45",
+          "after": "89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45",
+          "changed": false
+        },
+        {
+          "stage": "survive",
+          "before": "42407e16987d4b965028d1e17ced58cf8761262cde61d0e16b5d86ce36583ed0",
+          "after": "42407e16987d4b965028d1e17ced58cf8761262cde61d0e16b5d86ce36583ed0",
+          "changed": false
+        }
+      ]
+    },
+    {
+      "experiment": "/Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-replay",
+      "timestamp": "2026-10-24T11:15:59.556984+00:00",
+      "stages": [
+        {
+          "stage": "cover",
+          "before": "c4ab8e985275fa8178479ec4badd7901ae9c2c43d13a657cd8ba3198286f504e",
+          "after": "5abda39490deb68908123a5e406c9c192bc76bbc420a8b82065d0374115a33e7",
+          "changed": true
+        }
+      ]
+    },
+    {
+      "experiment": "/Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-replay-serial",
+      "timestamp": "2026-10-24T11:18:47.026364+00:00",
+      "stages": [
+        {
+          "stage": "prepare",
+          "before": "0ef980fde3cd48e474b0a262d153b1c26bda0a9b3ec6f699ce1364b407fc581b",
+          "after": "e17e86c69d512b7cdd92815591a921b1ba4563b3c0cac7b7947053f7813465cb",
+          "changed": true
+        },
+        {
+          "stage": "scope",
+          "before": "9c69904ee4ac24e42dd455e6475f8068e01ada3378dc9e6111756445e9b04623",
+          "after": "e5c02dafbc952643b1f95c62764325e465d021c3be412d6a8eddf40ca3b82fff",
+          "changed": true
+        },
+        {
+          "stage": "generate",
+          "before": "36b9b01922e96970acee7112f46f5eb42417158b4a3e0e0f28ca4942ffea6f26",
+          "after": "c4fbac933f054fd428185e37af7e6c7e7d63b19db50c35d408c5c3603e088952",
+          "changed": true
+        },
+        {
+          "stage": "screen",
+          "before": "89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45",
+          "after": "df310f51a0e978667cc9c538094d2d45ca0cd1e54ff7f4d53ccd12ea817c7aac",
+          "changed": true
+        },
+        {
+          "stage": "control",
+          "before": "89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45",
+          "after": "df310f51a0e978667cc9c538094d2d45ca0cd1e54ff7f4d53ccd12ea817c7aac",
+          "changed": true
+        }
+      ]
     }
   ]
 }
