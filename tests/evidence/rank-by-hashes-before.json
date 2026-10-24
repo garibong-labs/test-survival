@@ -1,0 +1,58 @@
+[
+  {
+    "stage": "prepare",
+    "current": "88cc7a6eada07f153fa327361ac99d821b8ee340c8a47ae3d83daf696e964789",
+    "as_written": "0ef980fde3cd48e474b0a262d153b1c26bda0a9b3ec6f699ce1364b407fc581b",
+    "stored": "88cc7a6eada07f153fa327361ac99d821b8ee340c8a47ae3d83daf696e964789",
+    "status": "completed"
+  },
+  {
+    "stage": "scope",
+    "current": "ad9fdc25f1d40b1022c321e1b65e7ba7f6eb2e4c62b94ada54faaca97bc7fee0",
+    "as_written": "9c69904ee4ac24e42dd455e6475f8068e01ada3378dc9e6111756445e9b04623",
+    "stored": "ad9fdc25f1d40b1022c321e1b65e7ba7f6eb2e4c62b94ada54faaca97bc7fee0",
+    "status": "completed"
+  },
+  {
+    "stage": "generate",
+    "current": "cf4397925df68bee8aa6796dfa48e2e18101b4e3096a3399dcc18707b64b7b01",
+    "as_written": "36b9b01922e96970acee7112f46f5eb42417158b4a3e0e0f28ca4942ffea6f26",
+    "stored": "cf4397925df68bee8aa6796dfa48e2e18101b4e3096a3399dcc18707b64b7b01",
+    "status": "completed"
+  },
+  {
+    "stage": "screen",
+    "current": "6dbe6681bbad8433dfc64e81850b5e2deb648fcb9c9993c5f599531f3d3a14e2",
+    "as_written": "89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45",
+    "stored": "6dbe6681bbad8433dfc64e81850b5e2deb648fcb9c9993c5f599531f3d3a14e2",
+    "status": "completed"
+  },
+  {
+    "stage": "control",
+    "current": "6dbe6681bbad8433dfc64e81850b5e2deb648fcb9c9993c5f599531f3d3a14e2",
+    "as_written": "89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45",
+    "stored": "6dbe6681bbad8433dfc64e81850b5e2deb648fcb9c9993c5f599531f3d3a14e2",
+    "status": "completed"
+  },
+  {
+    "stage": "survive",
+    "current": "a0f63aa2e9f9e576e940d35cb3074fa3047b889907eb7f6f765ebb20800432f4",
+    "as_written": "42407e16987d4b965028d1e17ced58cf8761262cde61d0e16b5d86ce36583ed0",
+    "stored": "a0f63aa2e9f9e576e940d35cb3074fa3047b889907eb7f6f765ebb20800432f4",
+    "status": "completed"
+  },
+  {
+    "stage": "cover",
+    "current": "c4ab8e985275fa8178479ec4badd7901ae9c2c43d13a657cd8ba3198286f504e",
+    "as_written": "5abda39490deb68908123a5e406c9c192bc76bbc420a8b82065d0374115a33e7",
+    "stored": "c4ab8e985275fa8178479ec4badd7901ae9c2c43d13a657cd8ba3198286f504e",
+    "status": "running"
+  },
+  {
+    "stage": "report",
+    "current": "f0646affecac0917880eeb7adcd884411e351b08534c7614c2f23ec893b95be6",
+    "as_written": "2d76c1cf13e442a3c04b9a49886b308dc44db78477c73a88a0166a41a8965cf1",
+    "stored": null,
+    "status": null
+  }
+]

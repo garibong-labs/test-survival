@@ -13,6 +13,7 @@ import yaml
 from test_survival.config import load
 from test_survival.io import read_json,write_json,now
 from test_survival.pipeline import process_alive
+from migrate_state_hashes import migrate
 
 
 def main():
@@ -33,22 +34,28 @@ def main():
             subprocess.run(list(map(str,argv)),check=True,cwd=root)
         def run(exp,*options):
             command(sys.executable,'-m','test_survival.cli','run',exp,*options)
+        def migrate_completed(exp, stages):
+            migrate(exp, stages, evidence/'state-hash-migration.json')
         def compare(include_serial):
             command(sys.executable,root/'scripts/compare_full_replay.py','--reference',args.reference,
                     '--replay','Configured replay='+str(args.replay),
                     *(['--replay','Single-worker replay='+str(args.serial)] if include_serial else []),
                     '--out',root/'.local/acceptance-report.md','--json-out',evidence/'full-comparisons.json')
         try:
-            checkpoint('waiting for the active survive run')
+            checkpoint('waiting for the active replay run without restarting it')
             while True:
-                stage=read_json(args.replay/'state/survive.json',{})
                 active=read_json(args.replay/'state/run.json',{})
-                if stage.get('status')=='completed' and active.get('status')!='running':break
-                if active.get('status')!='running' or not process_alive(active.get('pid')):
-                    raise RuntimeError('Active replay stopped before survival completed')
+                if active.get('status')!='running':break
+                if not process_alive(active.get('pid')):
+                    raise RuntimeError('Active replay process stopped without finishing its record')
                 time.sleep(10)
+            # The active process loaded the former hashing implementation. Its
+            # completed record must be migrated before a new process resumes.
+            migrate_completed(args.replay,['prepare','scope','generate','screen','control','survive'])
             checkpoint('configured replay: coverage and report')
-            run(args.replay,'--stage','cover')
+            if read_json(args.replay/'state/cover.json',{}).get('status')!='completed':
+                run(args.replay,'--stage','cover')
+            migrate_completed(args.replay,['cover'])
             run(args.replay,'--stage','report')
             checkpoint('configured replay: complete step-6 comparison')
             compare(False)
@@ -67,13 +74,10 @@ def main():
                 owned.update(status='ready',finished=now());write_json(marker,owned)
             if load(args.serial)['runner']['workers']['survive']!=1:
                 raise RuntimeError('Serial copy must have runner.workers.survive=1')
-            # Runner configuration participates in all upstream stage hashes.
-            # Revalidate those stages and import the exact archived generation;
-            # never rewrite hashes or make new model calls to bypass prerequisites.
-            checkpoint('single-worker copy: revalidating prerequisites')
-            run(args.serial,'--until','scope')
-            command(sys.executable,'-m','test_survival.cli','import',args.serial,'--from',args.replay,'--what','generated')
-            run(args.serial,'--until','control')
+            # Preserve the copied, frozen inputs. Only survival concurrency has
+            # changed; all three measurements below are explicitly forced.
+            checkpoint('single-worker copy: migrating frozen prerequisite hashes')
+            migrate_completed(args.serial,['prepare','scope','generate','screen','control'])
             command(sys.executable,root/'scripts/check_acceptance.py',args.serial,args.replay,'--checkpoint','screen','--out',evidence/'serial-denominator-comparison.json')
             checkpoint('single-worker replay: survive')
             run(args.serial,'--stage','survive','--force')

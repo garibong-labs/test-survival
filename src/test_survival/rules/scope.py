@@ -12,9 +12,8 @@ def select_scope(survey, config):
     else:
         if config['rule'] == 'dedicated-test':
             eligible = [r for r in eligible if r['has_test']=='yes']
-            ranked = sorted(eligible, key=lambda r: (-int(r['m']), r['class']))
-        else:
-            ranked = sorted(eligible, key=lambda r: (-int(r['c']), -int(r['m']), r['class']))
+        metric = {'change-count': 'c', 'method-count': 'm'}[config.get('rank_by', 'change-count')]
+        ranked = sorted(eligible, key=lambda r: (-int(r[metric]), r['class']))
         chosen, total = [], 0
         for row in ranked:
             if total + int(row['m']) > config['target_methods'][1]:

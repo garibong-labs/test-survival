@@ -17,6 +17,93 @@ class ConfigError(ValueError):
     pass
 
 
+class Configuration(dict):
+    """Resolved values for execution, retaining explicitly supplied hash inputs."""
+
+    def __init__(self, resolved, written):
+        self._explicit = set(written)
+        self._written = deepcopy(written)
+        self._initial = deepcopy(resolved)
+        dict.__init__(self, {key: self._wrap(value, written.get(key, MISSING)) for key, value in resolved.items()})
+
+    @staticmethod
+    def _wrap(value, written):
+        if isinstance(value, Configuration):
+            return value
+        if isinstance(value, dict):
+            return Configuration(value, written if isinstance(written, dict) else {})
+        if isinstance(value, list):
+            supplied = written if isinstance(written, list) else []
+            return [Configuration._wrap(v, supplied[i] if i < len(supplied) else MISSING) for i, v in enumerate(value)]
+        return value
+
+    def __setitem__(self, key, value):
+        self._explicit.add(key)
+        self._written[key] = deepcopy(value)
+        dict.__setitem__(self, key, self._wrap(value, value))
+
+    def __delitem__(self, key):
+        dict.__delitem__(self, key)
+        self._explicit.discard(key)
+
+    def update(self, *args, **kwargs):
+        for key, value in dict(*args, **kwargs).items():
+            self[key] = value
+
+    def setdefault(self, key, default=None):
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+    def pop(self, key, *default):
+        value = dict.pop(self, key, *default)
+        self._explicit.discard(key)
+        return value
+
+    def popitem(self):
+        key, value = dict.popitem(self)
+        self._explicit.discard(key)
+        return key, value
+
+    def clear(self):
+        dict.clear(self)
+        self._explicit.clear()
+
+    def __ior__(self, other):
+        self.update(other)
+        return self
+
+    def __deepcopy__(self, memo):
+        clone = Configuration({}, {})
+        memo[id(self)] = clone
+        clone._explicit = self._explicit.copy()
+        clone._written = deepcopy(self._written, memo)
+        clone._initial = deepcopy(self._initial, memo)
+        for key, value in self.items():
+            dict.__setitem__(clone, key, deepcopy(value, memo))
+        return clone
+
+
+def as_written(value):
+    if isinstance(value, Configuration):
+        result = {}
+        for key, item in value.items():
+            supplied = as_written(item)
+            if not isinstance(item, (dict, list)) and key in value._written and item == value._initial.get(key, MISSING):
+                supplied = value._written[key]
+            if key in value._explicit or (isinstance(item, Configuration) and supplied) or item != value._initial.get(key, MISSING):
+                result[key] = supplied
+        return result
+    if isinstance(value, dict):
+        return {key: as_written(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [as_written(item) for item in value]
+    return value
+
+
+yaml.SafeDumper.add_representer(Configuration, lambda dumper, value: dumper.represent_dict(as_written(value)))
+
+
 @dataclass(frozen=True)
 class Field:
     kind: object
@@ -53,6 +140,7 @@ SCHEMA = {
     'range': {'branch': Field(str, 'origin/master'), 'end': Field(str, None, nullable=True),
               'mode': enum('first-parent', 'first-parent'), 'limit': integer(None, 1, True)},
     'scope': {'rule': enum('change-ranked', 'dedicated-test', 'change-ranked', 'explicit'),
+              'rank_by': enum('change-count', 'change-count', 'method-count'),
               'min_methods': integer(3), 'exclude_accessor_heavy': Field(bool, True),
               'target_methods': Field(list, [50, 80]), 'max_classes': integer(10),
               'classes': Field(list, []), 'min_classes': integer(1)},
@@ -128,6 +216,7 @@ def _strings(values, path):
 
 
 def validate(data):
+    data = as_written(data)
     c = _validate(data, SCHEMA)
     if (c['project']['language'], c['project']['build']) != ('java', 'maven'):
         raise ConfigError('project.language/project.build: not implemented in this version of the tool; implemented: java/maven')
@@ -177,7 +266,7 @@ def validate(data):
             raise ConfigError(f'runner.jvm.{key}: expected a positive JVM memory size, such as 512m or 1g')
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', c['model']['env_key']):
         raise ConfigError('model.env_key: expected an environment variable name')
-    return c
+    return Configuration(c, data)
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -220,20 +309,27 @@ def stage_inputs(c, stage, group=None):
     if stage not in STAGES:
         raise ConfigError(f'stage: allowed values: {", ".join(STAGES)}')
     index = STAGES.index(stage)
-    data = {k: c[k] for k in ('project', 'anchor', 'range', 'runner')}
-    data['dev'] = {'stable_runs': c['dev']['stable_runs']}
+    c = as_written(c)
+    data = {k: c[k] for k in ('project', 'anchor', 'range', 'runner') if k in c}
+    if 'stable_runs' in c.get('dev', {}):
+        data['dev'] = {'stable_runs': c['dev']['stable_runs']}
     if index >= 1:
-        data.update(scope=c['scope'], dev=c['dev'], generators=[{k: g[k] for k in ('name', 'method')} for g in c['generators']])
+        data.update({k: c[k] for k in ('scope', 'dev') if k in c})
+        if 'generators' in c:
+            data['generators'] = [{k: g[k] for k in ('name', 'method') if k in g} for g in c['generators']]
     if index >= 2:
-        selected = [g for g in c['generators'] if group is None or g['name'] == group]
+        selected = [g for g in c.get('generators', []) if group is None or g['name'] == group]
         if group is not None and not selected:
             raise ConfigError('group: expected a configured generator name')
-        data.update(model=c['model'], generators=selected)
-    if index >= 3:
+        if 'model' in c:
+            data['model'] = c['model']
+        if 'generators' in c:
+            data['generators'] = selected
+    if index >= 3 and 'screen' in c:
         data['screen'] = c['screen']
-    if index >= 5:
+    if index >= 5 and 'survival' in c:
         data['survival'] = c['survival']
-    if index >= 6:
+    if index >= 6 and 'coverage' in c:
         data['coverage'] = c['coverage']
     if index >= 7:
         data = c
