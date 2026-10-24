@@ -57,7 +57,7 @@ def import_experiment(exp, source, what):
                         entries.append(dict(round=n,retry=retry,directory=directory.name,funnel=funnel,source='imported'))
                     if not entries:
                         raise FileNotFoundError(src/'round*')
-                    write_json(dest/'rounds.json',dict(source='imported',source_path=str(src),rounds=entries,stopped='imported'))
+                    write_json(dest/'rounds.json',dict(source='imported',source_path=str(src),config_hash=stage_hash(config,'generate',name),rounds=entries,stopped='imported'))
                     imported.append(name)
                 if set(imported)!={g['name'] for g in config['generators']}:
                     # Partial imports are recorded but cannot mark all generation complete.

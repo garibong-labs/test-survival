@@ -10,7 +10,7 @@ import sys
 import time
 
 import yaml
-from test_survival.config import load
+from test_survival.config import load,stage_hash
 from test_survival.io import read_json,write_json,now
 from test_survival.pipeline import process_alive
 from migrate_state_hashes import migrate
@@ -21,12 +21,19 @@ def main():
     parser.add_argument('--replay',type=Path,required=True)
     parser.add_argument('--reference',type=Path,required=True)
     parser.add_argument('--serial',type=Path,required=True)
+    parser.add_argument('--resume-serial',action='store_true',help='Wait for an active serial stage and finish only its remaining stages')
+    parser.add_argument('--workspace-root',type=Path,help='Evidence destination when using an isolated committed runtime')
+    parser.add_argument('--runtime-commit')
+    parser.add_argument('--runtime-path',type=Path)
     args=parser.parse_args()
-    root=Path(__file__).resolve().parents[1]
+    root=args.workspace_root or Path(__file__).resolve().parents[1]
+    scripts=Path(__file__).resolve().parent
     evidence=root/'tests/evidence'
     with (evidence/'comparison-driver.lock').open('w') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         state=dict(pid=os.getpid(),status='running',started=now(),replay=str(args.replay),serial=str(args.serial))
+        if args.runtime_commit:
+            state.update(runtime_commit=args.runtime_commit,runtime_path=str(args.runtime_path))
         def checkpoint(step):
             state.update(step=step,updated=now());write_json(evidence/'comparison-driver.json',state)
             print(json.dumps({'time':now(),'step':step}),flush=True)
@@ -37,11 +44,32 @@ def main():
         def migrate_completed(exp, stages):
             migrate(exp, stages, evidence/'state-hash-migration.json')
         def compare(include_serial):
-            command(sys.executable,root/'scripts/compare_full_replay.py','--reference',args.reference,
+            command(sys.executable,scripts/'compare_full_replay.py','--reference',args.reference,
                     '--replay','Configured replay='+str(args.replay),
                     *(['--replay','Single-worker replay='+str(args.serial)] if include_serial else []),
-                    '--out',root/'.local/acceptance-report.md','--json-out',evidence/'full-comparisons.json')
+                    '--out',root/'.local/acceptance-report.md','--json-out',evidence/'full-comparisons.json',
+                    *(['--runtime-commit',args.runtime_commit,'--runtime-path',args.runtime_path] if args.runtime_commit else []))
         try:
+            if args.resume_serial:
+                checkpoint('waiting for the active serial run without restarting it')
+                while True:
+                    active=read_json(args.serial/'state/run.json',{})
+                    if active.get('status')!='running':break
+                    if not process_alive(active.get('pid')):
+                        raise RuntimeError('Active serial process stopped without finishing its record')
+                    time.sleep(10)
+                config=load(args.serial)
+                if config['runner']['workers']['survive']!=1:
+                    raise RuntimeError('Serial copy must have runner.workers.survive=1')
+                for stage in ['survive','cover','report']:
+                    record=read_json(args.serial/f'state/{stage}.json',{})
+                    if record.get('status')=='completed' and record.get('config_hash')==stage_hash(config,stage):continue
+                    checkpoint('single-worker replay: '+stage)
+                    run(args.serial,'--stage',stage,'--force')
+                checkpoint('both complete step-6 comparisons')
+                compare(True)
+                state.update(status='completed',finished=now());write_json(evidence/'comparison-driver.json',state)
+                return
             checkpoint('waiting for the active replay run without restarting it')
             while True:
                 active=read_json(args.replay/'state/run.json',{})

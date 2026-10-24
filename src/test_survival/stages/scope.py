@@ -26,13 +26,15 @@ def run(exp, config):
     text = text[text.index('class\tmethod\t'):]
     audits = list(csv.DictReader(io.StringIO(text), delimiter='\t'))
     counts = collections.Counter(r['class'] for r in audits if r['accessor']=='true')
+    module = config['project']['module'].removeprefix('./').strip('/')
+    prefix = '' if module in ['', '.'] else module+'/'
     survey = []
     for cls, members in methods.items():
         file = inventory['main']['classes'][cls]['path']
         test = cls+'Test'
         has_test = test in inventory['test']['classes'] and inventory['test']['classes'][test]['path']=='src/test/java/'+test.replace('.','/')+'.java'
         survey.append(dict(**{'class':cls}, file=file, m=len(members), has_test='yes' if has_test else 'no',
-                           d=sum(r['class']==test and r['stable']=='yes' for r in baseline), c=sum(file in paths for paths in touches.values()),
+                           d=sum(r['class']==test and r['stable']=='yes' for r in baseline), c=sum(prefix+file in paths for paths in touches.values()),
                            accessors=counts[cls], accessor_fraction=counts[cls]/len(members), excluded_accessors='yes' if counts[cls]*2>len(members) else 'no'))
     survey.sort(key=lambda r:(-r['c'],-r['d'],r['class']))
     def table(path, rows, fields):

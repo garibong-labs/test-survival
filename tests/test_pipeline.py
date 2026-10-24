@@ -76,3 +76,28 @@ def test_init_and_status(tmp_path, capsys):
     assert (tmp_path / 'experiment.yaml').read_text() == original
     assert main(['status', str(tmp_path)]) == 0
     assert 'prepare    pending' in capsys.readouterr().out
+
+
+def test_detached_child_records_its_completion(tmp_path, config):
+    import subprocess
+    import time
+    import yaml
+    from test_survival.config import stage_hash
+    from test_survival.io import write_json
+    from test_survival.pipeline import background
+    (tmp_path/'experiment.yaml').write_text(yaml.safe_dump(config))
+    for stage in STAGES:
+        write_json(tmp_path/'state'/f'{stage}.json', dict(status='completed', config_hash=stage_hash(config, stage)))
+    pid, log_path = background(tmp_path)
+    deadline = time.monotonic()+10
+    while time.monotonic()<deadline:
+        record = read_json(tmp_path/'state/run.json')
+        if record['status']!='running':
+            break
+        time.sleep(.02)
+    assert record['pid']==pid
+    assert record['status']=='completed'
+    assert record['log']==str(log_path)
+    assert 'report: already completed; skipped' in log_path.read_text()
+    # Reap our child so this test does not leave a zombie in a long-lived runner.
+    os.waitpid(pid, 0)

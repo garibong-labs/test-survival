@@ -3,14 +3,21 @@ from concurrent.futures import ThreadPoolExecutor
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv, atomic_text, now
 from ..pipeline import log
+from ..config import canonical_hash
 
 
 def run(exp, config):
     adapter = JavaMavenAdapter(exp, config)
     prior = read_json(exp/'results/anchor.json', {})
     anchor_sha = adapter.git('rev-parse', config['anchor']+'^{commit}')
-    end = config['range']['end'] or prior.get('origin_master') or adapter.git('rev-parse', config['range']['branch'])
+    resolution_hash = canonical_hash({k:config[k] for k in ['project','anchor','range']})
+    resolution = read_json(exp/'state/resolved-range.json', {})
+    saved_end = resolution.get('end') if resolution.get('config_hash') == resolution_hash else None
+    end = config['range']['end'] or saved_end or adapter.git('rev-parse', config['range']['branch'])
     end = adapter.git('rev-parse', end+'^{commit}')
+    if anchor_sha not in adapter.git('rev-list', '--first-parent', end).splitlines():
+        raise RuntimeError('anchor is not on the range endpoint first-parent history')
+    write_json(exp/'state/resolved-range.json', {'config_hash':resolution_hash, 'end':end})
     shas = adapter.git('rev-list', '--first-parent', '--reverse', anchor_sha+'..'+end).splitlines()
     if config['range']['limit'] is not None:
         shas = shas[:config['range']['limit']]
@@ -27,7 +34,8 @@ def run(exp, config):
             break
     write_json(exp/'results/anchor.json', anchor)
     commits, touches = [], {}
-    module = config['project']['module'].strip('./')
+    module = config['project']['module']
+    module = '' if module == '.' else module.removeprefix('./').rstrip('/')
     prefix = module+'/' if module else ''
     for index, sha in enumerate(shas, 1):
         paths = adapter.git('diff','--no-renames','--name-only',sha+'^1',sha).splitlines()

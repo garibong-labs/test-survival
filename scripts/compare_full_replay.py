@@ -39,21 +39,58 @@ def normalized(path):
     return '\n'.join(line.rstrip() for line in path.read_text().splitlines())
 
 
+def comparison_text(root,name,omit_scope=False):
+    path=root/'results'/name
+    if not omit_scope:return normalized(path)
+    if name.endswith('.csv'):
+        import io
+        rows=csvrows(path)
+        with path.open(newline='') as stream:fields=next(csv.reader(stream))
+        fields=[k for k in fields if not k.startswith('dev-scope_') and '_dev-scope_' not in k]
+        output=io.StringIO();writer=csv.DictWriter(output,fields,lineterminator='\n',extrasaction='ignore');writer.writeheader()
+        writer.writerows(r for r in rows if r.get('group')!='dev-scope')
+        return output.getvalue().rstrip('\n')
+    result=[];omit=[]
+    for line in normalized(path).splitlines():
+        if line.startswith('|'):
+            cells=re.split(r'(?<!\\)\|',line)
+            found=[i for i,c in enumerate(cells) if c.strip()=='Dev (scope)' or c.strip().startswith('Dev (scope) ')]
+            if found:omit=found
+            line='|'.join(c for i,c in enumerate(cells) if i not in omit)
+        result.append(line)
+    return '\n'.join(result)
+
+
+def common_failure_rows(root,omit_scope):
+    return [r for r in csvrows(root/'results/first-failures.csv') if not omit_scope or r.get('group')!='dev-scope']
+
+
+def lacks_scope(replay):
+    path=replay/'results/denominators.json'
+    return not path.exists() or 'dev-scope' not in read_json(path)
+
+
 def compare_file(replay, reference, name):
     a,b=replay/'results'/name,reference/'results'/name
     if not a.exists() or not b.exists():
         return dict(file=name,status='missing',missing=[str(p) for p in [a,b] if not p.exists()])
+    omit_scope=lacks_scope(replay)
     if name=='first-failures.csv':
-        x,y=sorted(map(row_key,csvrows(a))),sorted(map(row_key,csvrows(b)))
+        x,y=[sorted(map(row_key,common_failure_rows(root,omit_scope))) for root in [replay,reference]]
     elif name=='consistency.md':
         x,y=[json.loads(re.search(r'```json\s*\n(.*?)\n```',p.read_text(),re.S)[1]) for p in [a,b]]
+        if omit_scope:
+            for value in [x,y]:
+                value['raw_records']=value.get('measured_raw_records',value['raw_records'])
+                value['expected_raw_records']=value.get('expected_measured_raw_records',value['expected_raw_records'])
+                for key in ['measured_raw_records','derived_raw_records','expected_measured_raw_records','expected_derived_raw_records']:value.pop(key,None)
     else:
-        x,y=normalized(a),normalized(b)
+        x,y=[comparison_text(root,name,omit_scope) for root in [replay,reference]]
     result=dict(file=name,status='identical' if x==y else 'differs')
     if x!=y:
-        left,right=normalized(a).splitlines(),normalized(b).splitlines()
+        left,right=[comparison_text(root,name,omit_scope).splitlines() for root in [replay,reference]]
         if name=='first-failures.csv':
-            ar,br=csvrows(a),csvrows(b)
+            ar,br=[common_failure_rows(root,omit_scope) for root in [replay,reference]]
             aset,bset=set(map(row_key,ar)),set(map(row_key,br))
             ai=next((i for i,r in enumerate(ar,2) if row_key(r) not in bset),None)
             bi=next((i for i,r in enumerate(br,2) if row_key(r) not in aset),None)
@@ -70,7 +107,7 @@ def compare_file(replay, reference, name):
 
 
 def failure_differences(replay,reference):
-    a,b=csvrows(replay/'results/first-failures.csv'),csvrows(reference/'results/first-failures.csv')
+    a,b=[common_failure_rows(root,lacks_scope(replay)) for root in [replay,reference]]
     sets=[{row_key(r) for r in rows} for rows in [a,b]]
     differences=[]
     @lru_cache(maxsize=32)
@@ -88,7 +125,9 @@ def failure_differences(replay,reference):
     indexed=[]
     for side,root,rows in [('replay',replay,a),('reference',reference,b)]:
         index={}
-        for line,row in enumerate(rows,2):
+        physical_lines={row_key(r):i for i,r in enumerate(csvrows(root/'results/first-failures.csv'),2)}
+        for row in rows:
+            line=physical_lines[row_key(row)]
             key=(row['group'],row['id'])
             if key in index:raise ValueError('Duplicate first-failure method: '+str(key))
             index[key]=describe(side,root,line,row)
@@ -113,7 +152,7 @@ def failure_differences(replay,reference):
 
 
 def lost_method_audit(replay,reference):
-    a,b=[csvrows(root/'results/first-failures.csv') for root in [replay,reference]]
+    a,b=[common_failure_rows(root,lacks_scope(replay)) for root in [replay,reference]]
     groups=sorted({r['group'] for r in a+b})
     result={}
     for group in groups:
@@ -152,13 +191,17 @@ def llm_file_comparisons(replay,reference):
     def project(root,name):
         path=root/'results'/name
         if name=='first-failures.csv':
-            return sorted(row_key(r) for r in csvrows(path) if r['group']!='dev')
+            return sorted(row_key(r) for r in csvrows(path) if r['group'] not in ['dev','dev-scope'])
         if name.endswith('.csv'):
-            return [{k:v for k,v in r.items() if not k.startswith('dev_') and '_dev_' not in k} for r in csvrows(path)]
+            return [{k:v for k,v in r.items() if not k.startswith(('dev_','dev-scope_')) and '_dev_' not in k and '_dev-scope_' not in k} for r in csvrows(path)]
         if name=='consistency.md':
-            return json.loads(re.search(r'```json\s*\n(.*?)\n```',path.read_text(),re.S)[1])
+            value=json.loads(re.search(r'```json\s*\n(.*?)\n```',path.read_text(),re.S)[1])
+            value['raw_records']=value.get('measured_raw_records',value['raw_records'])
+            value['expected_raw_records']=value.get('expected_measured_raw_records',value['expected_raw_records'])
+            for key in ['measured_raw_records','derived_raw_records','expected_measured_raw_records','expected_derived_raw_records']:value.pop(key,None)
+            return value
         curve=csvrows(root/'results/survival.csv')
-        events={r['index'] for r in curve if any(int(v) for k,v in r.items() if k.endswith('_lost') and not k.startswith('dev_'))}
+        events={r['index'] for r in curve if any(int(v) for k,v in r.items() if k.endswith('_lost') and not k.startswith(('dev_','dev-scope_')))}
         if name=='table1-survival-by-event.md':events.update([curve[0]['index'],curve[-1]['index']])
         result=[];omit=[]
         for line in normalized(path).splitlines():
@@ -209,7 +252,7 @@ def failure_table(rows):
 
 def markdown(reports):
     lines=['# Acceptance comparison','',
-           'Each replay is compared with the read-only hand-run reference. Text comparisons normalize trailing whitespace; first-failure CSVs use unordered row sets; consistency compares its JSON block.',
+           'Each replay is compared with the read-only hand-run reference. Text comparisons normalize trailing whitespace; first-failure CSVs use unordered row sets; consistency compares its JSON block. For the existing five-group replays, the reference addendum’s Dev (scope) columns and rows are excluded, and consistency uses measured record counts. Dev (scope) is compared separately in step 9.',
            '', 'Dev first failures are paired by method ID. Both differing rows are classified `port-collision` only when one side has its own raw `java.net.BindException` failure and the other side loses that method later, or at the same index for a non-environmental reason. LLM differences receive no exception.', '']
     for label,report in reports:
         lines += ['## '+label,'',f"Replay: `{report['replay']}`. Reference: `{report['reference']}`.",'',f"`runner.workers.survive`: **{report['survive_workers']}**.",'',
@@ -237,13 +280,15 @@ def main():
     parser.add_argument('--replay',action='append',required=True,help='label=path; repeat for both runs')
     parser.add_argument('--out',type=Path,required=True)
     parser.add_argument('--json-out',type=Path,required=True)
+    parser.add_argument('--runtime-commit')
+    parser.add_argument('--runtime-path')
     args=parser.parse_args();reports=[]
     for item in args.replay:
         label,path=item.split('=',1)
         reports.append((label,comparison(Path(path).resolve(),args.reference.resolve())))
     args.json_out.parent.mkdir(parents=True,exist_ok=True)
     args.json_out.write_text(json.dumps(dict(reports),indent=2)+'\n')
-    args.out.parent.mkdir(parents=True,exist_ok=True);args.out.write_text(markdown(reports)+'\nFull comparison data and failure messages: ['+args.json_out.name+']('+str(args.json_out.resolve())+').\n')
+    args.out.parent.mkdir(parents=True,exist_ok=True);args.out.write_text((('Frozen comparison runtime: commit `'+args.runtime_commit+'`, path `'+args.runtime_path+'`.\n\n') if args.runtime_commit else '')+markdown(reports)+'\nFull comparison data and failure messages: ['+args.json_out.name+']('+str(args.json_out.resolve())+').\n')
     for label,result in reports:
         print(json.dumps(dict(label=label,survive_workers=result['survive_workers'],differing_files=sum(r['status']!='identical' for r in result['files']),differing_first_failure_rows=len(result['differing_first_failure_rows']),unclassified=len(result['unclassified']))))
 

@@ -19,7 +19,7 @@ survival = "test_survival.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-test_survival = ["experiment-template.yaml", "adapters/java/*.java", "adapters/java/*.json", "generators/parts/templates/*.txt", "dashboard/template/*.html"]
+test_survival = ["experiment-template.yaml", "adapters/java/*.java", "adapters/java/*.json", "generators/parts/templates/*.txt", "dashboard/template/*.html", "report/*.java"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

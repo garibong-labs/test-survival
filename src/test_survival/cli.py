@@ -65,8 +65,8 @@ def main(argv=None):
             if args.command == 'status':
                 print(status(args.exp_dir, config))
             elif args.command == 'show':
-                state = read_json(args.exp_dir / 'state' / f'{args.stage}.json', {})
-                print(f'{args.stage}: {state.get("status", "pending")}\n{state.get("notes", "")}')
+                from .summary import show
+                print(show(args.exp_dir, args.stage))
             else:
                 options = {key: getattr(args, key) for key in ('until', 'stage', 'force', 'group')}
                 if args.background:

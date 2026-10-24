@@ -33,7 +33,8 @@ def process_alive(pid):
         return False
     except PermissionError:
         return True
-    return True
+    result = subprocess.run(['ps', '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
+    return bool(result.stdout.strip()) and not result.stdout.strip().startswith('Z')
 
 
 @contextmanager
@@ -84,7 +85,8 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
                 raise PipelineError(f'{stage} requires completed, current stage {earlier}')
     run_path = exp / 'state/run.json'
     record = read_json(run_path, {})
-    record.update(pid=os.getpid(), log=record.get('log', str(exp / 'state/log.txt')), status='running', started=now())
+    log_path = record.get('log') if record.get('pid') == os.getpid() and record.get('status') == 'running' else str(exp / 'state/log.txt')
+    record.update(pid=os.getpid(), log=log_path, status='running', started=now())
     write_json(run_path, record)
     completed = []
     try:
@@ -101,7 +103,7 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
             log(exp, f'{current}: started')
             try:
                 handler = handlers[current] if handlers is not None else default_handler(current)
-                summary = handler(exp, config, group=group) if group else handler(exp, config)
+                summary = handler(exp, config, group=group, force=force) if current == 'generate' and handlers is None else handler(exp, config, group=group) if group else handler(exp, config)
             except BaseException as exc:
                 # Tracebacks and arbitrary exception strings may include request secrets.
                 state.update(status='failed', finished=now(), notes=f'{type(exc).__name__}; see stage evidence')
@@ -109,6 +111,12 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
                 log(exp, f'{current}: failed ({type(exc).__name__})')
                 raise
             state.update(status='completed', finished=now(), notes=summary or f'{current} completed')
+            if current == 'generate' and group and handlers is None:
+                hashes = dict(previous.get('group_hashes', {}))
+                hashes[group] = stage_hash(config, 'generate', group)
+                state['group_hashes'] = hashes
+                if any(hashes.get(g['name']) != stage_hash(config, 'generate', g['name']) for g in config['generators']):
+                    state['status'] = 'pending'
             write_json(path, state)
             log(exp, f'{current}: {state["notes"]}')
             completed.append(current)
