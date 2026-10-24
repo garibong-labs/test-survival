@@ -8,6 +8,7 @@ from ..adapters.java_maven import JavaMavenAdapter
 from ..importer import rounds
 from ..io import read_csv, read_json, write_csv, write_json, atomic_text
 from ..rules.matching import subsample
+from ..rules.dev_denominator import frozen_method,denominator_file,validate_derived_subsets
 
 FIELDS=['file','class','method','kind','body_hash','round','technique']
 
@@ -62,16 +63,15 @@ def screen_round(exp,config,g,directory,prior=()):
 
 def run(exp,config):
     adapter=JavaMavenAdapter(exp,config);adapter.setup_runner()
-    frozen={'dev':[]}
-    for row in read_csv(exp/'dev/dev-denominator.csv'):
-        filename='dev/src-test-t/java/'+row['class'].split('$',1)[0].replace('.','/')+'.java'
-        frozen['dev'].append({**row,'file':filename,'id':'|'.join([filename,row['class'],row['method']])})
+    frozen={g['name']:[frozen_method(r) for r in read_csv(exp/denominator_file(g,i))] for i,g in enumerate(config['dev']['groups'])}
+    validate_derived_subsets(config['dev']['groups'],frozen)
+    first_dev=config['dev']['groups'][0]['name']
     for g in config['generators']:
         kept=[]
         for directory in rounds(exp/'generated'/g['name']):
             kept,_=screen_round(exp,config,g,directory,kept)
         if config['screen']['matching']=='subsample-to-dev':
-            kept=subsample(kept,len(frozen['dev']),g['name'])
+            kept=subsample(kept,len(frozen[first_dev]),g['name'])
         write_csv(exp/f'results/llm-{g["name"]}-denominator.csv',[{k:r[k] for k in FIELDS} for r in kept],FIELDS)
         frozen[g['name']]=[{k:r[k] for k in ['class','method','kind','file','id']} for r in kept]
     write_json(exp/'results/frozen-denominators.json',frozen)

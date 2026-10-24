@@ -4,6 +4,7 @@ from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv, atomic_text, now
 from ..pipeline import log
 from ..config import canonical_hash
+from ..rules.commits import skip_reason
 
 
 def run(exp, config):
@@ -53,6 +54,11 @@ def run(exp, config):
         baseline = adapter.baseline()
         log(exp, f'prepare: baseline has {sum(r["stable"]=="yes" for r in baseline)} stable methods')
     def build(row):
+        reason=skip_reason(touches[str(row['index'])],config['project']['module'],config['range']['skip_untouched'])
+        if reason:
+            result=dict(index=row['index'],sha=row['sha'],build='skipped-untouched',attempts=[],reason=reason)
+            write_json(exp/f'results/builds/{row["index"]}.json',result)
+            return result
         result = adapter.build(row['index'], row['sha'])
         log(exp, f'prepare: build {row["index"]}/{len(commits)} {result["build"]}')
         return result

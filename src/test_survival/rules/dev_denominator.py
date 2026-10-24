@@ -1,6 +1,8 @@
 """Stable developer populations; class-name matching follows the archived rule."""
 
 def denominator(methods, mode, scope, production_names):
+    if mode not in ['project','scope-targeted']:
+        raise ValueError('Use per-method coverage observations for coverage-scoped denominators')
     def targeted(cls):
         pkg, _, simple = cls.rpartition('.')
         for selected in scope:
@@ -55,3 +57,13 @@ def derive_record(source, group, denominator):
     result['files']=[{**part,'methods':[m for m in part['methods'] if m['id'] in wanted]}
                      for part in result['files'] if any(m['id'] in wanted for m in part['methods'])]
     return result
+
+
+
+def frozen_method(row):
+    file='dev/src-test-t/java/'+row['class'].split('$',1)[0].replace('.','/')+'.java'
+    return {**row,'file':file,'id':'|'.join([file,row['class'],row['method']])}
+
+
+def denominator_file(group, index):
+    return 'dev/dev-denominator.csv' if index==0 else 'dev/'+group['name']+'-denominator.csv'

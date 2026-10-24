@@ -77,10 +77,19 @@ class JavaMavenAdapter:
         write_json(record, result)
         return result
 
+    def test_framework(self):
+        requested=self.config['project']['test_framework']
+        if requested!='auto':return requested
+        build=read_json(self.exp/'results/builds/0.json',{})
+        cp=(self.exp/build['classpath']).read_text() if build.get('classpath') else ''
+        selected='junit4' if ('/junit/junit/' in cp or re.search(r'(?:^|[:/])junit-4[^:]*\.jar',cp)) and 'junit-jupiter-engine' not in cp else 'junit5'
+        write_json(self.exp/'results/test-framework.json',dict(configured=requested,resolved=selected))
+        return selected
+
     def inventory(self, root, log):
         if not Path(root).exists() or not list(Path(root).rglob('*.java')) and Path(root).suffix != '.java':
             return {'classes': {}, 'methods': []}
-        run = self.runner.execute(['java', '-Xmx'+self.config['runner']['jvm']['launcher'], str(self.helpers/'SourceInventory.java'), str(root)],
+        run = self.runner.execute(['java', '-Xmx'+self.config['runner']['jvm']['launcher'], str(self.helpers/'SourceInventory.java'), str(root), self.test_framework()],
                                   self.folder(0), log, self.config['runner']['timeouts']['compile'])
         if run['exit_code']:
             raise RuntimeError('Source inventory failed; see '+str(log))
@@ -147,6 +156,8 @@ class JavaMavenAdapter:
                         if candidates:
                             longest = max(len(m['display']) for m in candidates)
                             candidates = [m for m in candidates if len(m['display']) == longest]
+                    if not candidates and case.find('skipped') is not None:
+                        continue
                     if len(candidates) != 1:
                         unmapped.append(dict(run=repeat, **{'class': cls}, name=name))
                         continue
@@ -168,12 +179,13 @@ class JavaMavenAdapter:
         return rows
 
     def provenance(self):
-        paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py']
+        paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py', Path(__file__).parents[1]/'rules/environment.py']
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
     def worker(self, job):
+        developer=job.get('group') in {g['name'] for g in self.config['dev']['groups']}
         job.update(experiment=self.runner.path(self.exp), module=self.config['project']['module'],
-                   jvm=self.config['runner']['jvm'], timeouts=self.config['runner']['timeouts'], flaky_rerun=self.config['survival']['flaky_rerun'])
+                   test_framework=self.test_framework() if developer else 'auto', developer=developer, environment_errors=self.config['survival']['environment_errors'], jvm=self.config['runner']['jvm'], timeouts=self.config['runner']['timeouts'], flaky_rerun=self.config['survival']['flaky_rerun'])
         path = self.exp/job.get('work','work/runner-setup')/'job.json'
         # The worker clears its work directory; keep its input outside that directory.
         path = path.parent.with_name(path.parent.name+'-job.json')
@@ -186,7 +198,7 @@ class JavaMavenAdapter:
 
     def setup_runner(self):
         record = read_json(self.exp/'results/runner-setup.json',{})
-        if record.get('status') != 'completed':
+        if record.get('status') != 'completed' or record.get('jars') != read_json(self.helpers/'classpath-artifacts.json'):
             self.worker({'action':'setup'})
 
     def screen_file(self, group, round_name, source, repeats, number):
@@ -219,7 +231,7 @@ class JavaMavenAdapter:
 
     def run_group(self,index,group,methods,phase='A',repeats=1):
         fingerprint=canonical_hash({'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
-                                    'survival':self.config['survival'], 'runner':self.config['runner'], 'repeats':repeats})
+                                    'project':self.config['project'], 'survival':self.config['survival'], 'runner':self.config['runner'], 'repeats':repeats})
         provenance=self.provenance()
         folder='raw' if phase=='A' else 'raw-coverage' if phase=='B' else phase
         output=f'results/{folder}/{index}-{group}.json'
@@ -229,6 +241,19 @@ class JavaMavenAdapter:
             return old
         return self.worker(dict(action='run',index=index,sha=commit['sha'],group=group,phase=phase,methods=methods,repeats=repeats,
                                 input_sha256=fingerprint,runner_sha256=provenance,output=output,work=f'work/phase-{phase}/{index}/{group}'))
+
+    def method_coverage(self, method):
+        name=method['class']+'#'+method['method']
+        xml=f'results/dev-method-coverage-t/{name}.xml'
+        output=f'results/dev-method-coverage-t/{name}.json'
+        fingerprint=canonical_hash({'method':method,'source':hashlib.sha256((self.exp/method['file']).read_bytes()).hexdigest(),
+                                    'project':self.config['project'],'runner':self.config['runner']})
+        previous=read_json(self.exp/output,{})
+        provenance=self.provenance()
+        anchor=read_json(self.exp/'results/anchor.json')
+        if previous.get('input_sha256')==fingerprint and previous.get('runner_sha256')==provenance and previous.get('sha')==anchor['sha'] and (self.exp/xml).exists():return previous
+        return self.worker(dict(action='run',index=0,sha=anchor['sha'],group=self.config['dev']['groups'][0]['name'],phase='B',methods=[method],repeats=1,retry=False,
+                                input_sha256=fingerprint,runner_sha256=provenance,coverage_xml=xml,output=output,work='work/dev-method-coverage-t/'+name))
 
     def coverage(self,index,files,methods,*,group='dev'):
         return self.run_group(index,group,methods,'B')

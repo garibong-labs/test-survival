@@ -1,3 +1,4 @@
+from ..config import group_names,group_labels
 """Report tables retain the reference's ordering, punctuation, and rounding."""
 from collections import Counter
 from ..io import read_csv,read_json,atomic_text,write_json
@@ -8,8 +9,8 @@ def pct(n,d):return f'{n} ({100*n/d:.1f}%)' if d else f'{n} (n/a)'
 
 
 def build(exp,config):
-    groups=['dev',*[g['name'] for g in config['generators']]]
-    labels={'dev':'Dev',**{g['name']:g['display'] for g in config['generators']}}
+    groups=group_names(config)
+    labels=group_labels(config)
     counts=read_json(exp/'results/denominators.json')
     curves=read_csv(exp/'results/survival.csv');losses=read_csv(exp/'results/first-failures.csv')
     last=curves[-1]

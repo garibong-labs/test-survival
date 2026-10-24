@@ -156,5 +156,19 @@
     "coordinate": "org.hamcrest:hamcrest-core:1.3",
     "role": "test",
     "sha256": "66fdef91e9739348df7a096aa384a5685f4e875584cce89386a7a47251c4d8e9"
+  },
+  {
+    "filename": "org.jacoco.agent-0.8.14-runtime.jar",
+    "coordinate": "org.jacoco:org.jacoco.agent:0.8.14",
+    "classifier": "runtime",
+    "role": "coverage",
+    "sha256": "3fb76eea65f81bd9415202bab34b6571728841dff1ab8e6bbe81adc2e299face"
+  },
+  {
+    "filename": "org.jacoco.cli-0.8.14-nodeps.jar",
+    "coordinate": "org.jacoco:org.jacoco.cli:0.8.14",
+    "classifier": "nodeps",
+    "role": "coverage",
+    "sha256": "811c7f8c6b358c5d68a8973cfa867f6892be7a671b697a4b13c4b447e6daf75c"
   }
 ]

@@ -22,6 +22,7 @@ class SourceInventory {
     return "";
   }
   public static void main(String[] args) throws Exception {
+    boolean junit4=args.length>1 && args[1].equals("junit4");
     JavaCompiler compiler=ToolProvider.getSystemJavaCompiler();
     StandardJavaFileManager manager=compiler.getStandardFileManager(null,null,null);
     List<Path> paths;
@@ -39,6 +40,8 @@ class SourceInventory {
           if(name.isEmpty()) return null;
           String fqn=parent==null?(pkg.isEmpty()?name:pkg+"."+name):parent+"$"+name;
           boolean top=parent==null;
+          boolean ignored=junit4 && cls.getModifiers().getAnnotations().stream().anyMatch(a->simple(a).equals("Ignore"));
+          boolean parameterized=junit4 && cls.getModifiers().getAnnotations().stream().anyMatch(a->simple(a).equals("RunWith") && a.toString().contains("Parameterized.class"));
           row("C",fqn,cls.getKind(),top,display(cls.getModifiers()),unit.getSourceFile().toUri().getPath());
           for(Tree member:cls.getMembers()) {
             if(member instanceof MethodTree) {
@@ -47,6 +50,10 @@ class SourceInventory {
               List<String> anns=m.getModifiers().getAnnotations().stream().map(SourceInventory::simple).collect(Collectors.toList());
               boolean eligible=top && cls.getKind()==Tree.Kind.CLASS && m.getBody()!=null && !m.getModifiers().getFlags().contains(Modifier.PRIVATE) && !anns.contains("Deprecated");
               String kind=anns.contains("ParameterizedTest")?"parameterized":anns.contains("TestFactory")?"test-factory":(anns.contains("RepeatedTest") || anns.contains("TestTemplate"))?"test-template":anns.contains("Test")?"plain":"";
+              if(junit4) {
+                boolean test=m.getModifiers().getAnnotations().stream().anyMatch(a->a.getAnnotationType().toString().equals("org.junit.Test") || (a.getAnnotationType().toString().equals("Test") && unit.getImports().stream().anyMatch(i->i.getQualifiedIdentifier().toString().equals("org.junit.Test") || i.getQualifiedIdentifier().toString().equals("org.junit.*"))));
+                kind=test && !ignored && !anns.contains("Ignore") ? (parameterized?"parameterized":"plain") : "";
+              }
               String sig=m.getName()+"("+m.getParameters().stream().map(p->p.getType().toString()).collect(Collectors.joining(", "))+")";
               String hash="";
               if(m.getBody()!=null) {

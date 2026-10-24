@@ -79,11 +79,13 @@ def compare_file(replay, reference, name):
         x,y=[sorted(map(row_key,common_failure_rows(root,omit_scope))) for root in [replay,reference]]
     elif name=='consistency.md':
         x,y=[json.loads(re.search(r'```json\s*\n(.*?)\n```',p.read_text(),re.S)[1]) for p in [a,b]]
-        if omit_scope:
-            for value in [x,y]:
-                value['raw_records']=value.get('measured_raw_records',value['raw_records'])
-                value['expected_raw_records']=value.get('expected_measured_raw_records',value['expected_raw_records'])
-                for key in ['measured_raw_records','derived_raw_records','expected_measured_raw_records','expected_derived_raw_records']:value.pop(key,None)
+        for value in [x,y]:
+            value['raw_records']=value.get('measured_raw_records',value['raw_records'])
+            value['expected_raw_records']=value.get('expected_measured_raw_records',value['expected_raw_records'])
+            for key in ['measured_raw_records','expected_measured_raw_records','skipped_indices']:value.pop(key,None)
+            if omit_scope:
+                for key in ['derived_raw_records','expected_derived_raw_records']:value.pop(key,None)
+
     else:
         x,y=[comparison_text(root,name,omit_scope) for root in [replay,reference]]
     result=dict(file=name,status='identical' if x==y else 'differs')
@@ -116,6 +118,7 @@ def failure_differences(replay,reference):
 
     def describe(side, root, line, row):
         path=root/f"results/raw/{row['index']}-{row['group']}.json"
+        if not path.exists():path=root/f"results/raw-derived/{row['index']}-{row['group']}.json"
         method=next((m for m in raw(path)['methods'] if m['id']==row['id']),None)
         messages={key:method.get(key,'') for key in ['message','retry_message']} if method else {}
         evidence=[dict(field=key,matched='java.net.BindException',message=message)
@@ -138,7 +141,7 @@ def failure_differences(replay,reference):
             if row_key(row) in sets[1-side_index]:continue
             partner=indexed[1-side_index].get(key)
             witnesses=[]
-            if row['group']=='dev' and partner:
+            if row['group'] in ['dev','dev-scope'] and partner:
                 for collision,other in [(item,partner),(partner,item)]:
                     earlier=int(collision['row']['index'])<int(other['row']['index'])
                     same_non_environment=(collision['row']['index']==other['row']['index']
@@ -163,11 +166,14 @@ def lost_method_audit(replay,reference):
 
 
 def order_audit(replay,reference):
-    details=[];compared=0;missing=[]
+    details=[];compared=0;missing=[];skipped=[]
     for file in sorted((reference/'results/raw').glob('*.json')):
         other=replay/'results/raw'/file.name
         if not other.exists():missing.append(file.name);continue
-        a,b=read_json(other),read_json(file);compared+=1
+        a,b=read_json(other),read_json(file)
+        if a.get('status')=='skipped-untouched':
+            skipped.append(file.name);continue
+        compared+=1
         def selectors(record, all_runs=False):
             result=[]
             for part in record['files']:
@@ -182,7 +188,7 @@ def order_audit(replay,reference):
         if not all(checks.values()):details.append(dict(index=a['index'],group=a['group'],**checks))
     phases={p.name:{k:v for k,v in read_json(p).items() if k in ['workers','resume_workers','jobs']} for p in sorted((reference/'results').glob('phase-a*.json')) if '-oom' not in p.name}
     initial_equal=not missing and all(all(r[k] for k in ['file_order','method_order','requested_id_order','initial_selector_order']) for r in details)
-    return dict(compared_records=compared,missing=missing,initial_per_commit_orders_equal=initial_equal,all_per_commit_orders_equal=not details and not missing,differences=details,reference_phase_workers=phases,
+    return dict(compared_records=compared,missing=missing,skipped_records=skipped,initial_per_commit_orders_equal=initial_equal,all_per_commit_orders_equal=not details and not missing,differences=details,reference_phase_workers=phases,
                 cross_commit_timing='Raw records contain durations, not a complete shared execution timeline; they do not establish identical concurrent interleaving. Conditional retry launches can differ when outcomes differ.')
 
 
@@ -198,7 +204,7 @@ def llm_file_comparisons(replay,reference):
             value=json.loads(re.search(r'```json\s*\n(.*?)\n```',path.read_text(),re.S)[1])
             value['raw_records']=value.get('measured_raw_records',value['raw_records'])
             value['expected_raw_records']=value.get('expected_measured_raw_records',value['expected_raw_records'])
-            for key in ['measured_raw_records','derived_raw_records','expected_measured_raw_records','expected_derived_raw_records']:value.pop(key,None)
+            for key in ['measured_raw_records','derived_raw_records','expected_measured_raw_records','expected_derived_raw_records','skipped_indices']:value.pop(key,None)
             return value
         curve=csvrows(root/'results/survival.csv')
         events={r['index'] for r in curve if any(int(v) for k,v in r.items() if k.endswith('_lost') and not k.startswith(('dev_','dev-scope_')))}
@@ -220,11 +226,12 @@ def comparison(replay,reference):
     config=load(replay)
     failures=failure_differences(replay,reference)
     curve=csvrows(replay/'results/survival.csv')
-    fingerprints={g:canonical_hash({'methods':[(r['id'],hashlib.sha256((replay/r['file']).read_bytes()).hexdigest()) for r in methods], 'survival':config['survival'],'runner':config['runner'],'repeats':1}) for g,methods in read_json(replay/'results/frozen-denominators.json').items()}
+    fingerprints={g:canonical_hash({'methods':[(r['id'],hashlib.sha256((replay/r['file']).read_bytes()).hexdigest()) for r in methods], 'project':config['project'],'survival':config['survival'],'runner':config['runner'],'repeats':1}) for g,methods in read_json(replay/'results/frozen-denominators.json').items()}
     provenance=JavaMavenAdapter(replay,config).provenance()
     invalid=[];reused=[];raw_count=0
     for path in (replay/'results/raw').glob('*.json'):
         raw=read_json(path);raw_count+=1
+        if raw['status']=='skipped-untouched':continue
         if raw['input_sha256']!=fingerprints[raw['group']] or raw['runner_sha256']!=provenance:invalid.append(path.name)
         if 'reused_from' in raw:reused.append(path.name)
     result=dict(replay=str(replay),reference=str(reference),survive_workers=config['runner']['workers']['survive'],
@@ -269,7 +276,7 @@ def markdown(reports):
                   'Reference phase metadata:', '```json',json.dumps(report['ordering']['reference_phase_workers'],indent=2),'```']
         if report['ordering']['differences']:
             lines += ['', 'Ordering differences:', '```json',json.dumps(report['ordering']['differences'],indent=2),'```']
-        lines += ['', '### LLM and shared-data comparison', '', 'Dev columns and Dev-only event rows are excluded; LLM values and shared metadata are retained. All ten projections identical: **'+str(all(r['status']=='identical' for r in report['llm_file_comparisons']))+'**.', '', '| Compared file | LLM/shared result |', '|---|---|', *['| '+r['file']+' | '+r['status']+' |' for r in report['llm_file_comparisons']], '', '### Per-method pairing', '', f"Differing Dev methods: **{len({r['row']['id'] for r in report['differing_first_failure_rows'] if r['row']['group']=='dev'})}**. Differing rows: **{len(report['differing_first_failure_rows'])}**. Unclassified rows: **{len(report['unclassified'])}**.", '', 'Methods ever lost, by group:', '', '```json', json.dumps(report['lost_method_sets'],indent=2), '```', '', '### Every differing first-failure row', '',failure_table(report['differing_first_failure_rows']),
+        lines += ['', '### LLM and shared-data comparison', '', 'Dev columns and Dev-only event rows are excluded; LLM values and shared metadata are retained. All ten projections identical: **'+str(all(r['status']=='identical' for r in report['llm_file_comparisons']))+'**.', '', '| Compared file | LLM/shared result |', '|---|---|', *['| '+r['file']+' | '+r['status']+' |' for r in report['llm_file_comparisons']], '', '### Per-method pairing', '', f"Differing Dev methods: **{len({r['row']['id'] for r in report['differing_first_failure_rows'] if r['row']['group'] in ['dev','dev-scope']})}**. Differing rows: **{len(report['differing_first_failure_rows'])}**. Unclassified rows: **{len(report['unclassified'])}**.", '', 'Methods ever lost, by group:', '', '```json', json.dumps(report['lost_method_sets'],indent=2), '```', '', '### Every differing first-failure row', '',failure_table(report['differing_first_failure_rows']),
                   '', '### Unclassified first-failure rows', '',failure_table(report['unclassified']), '']
     return '\n'.join(lines)
 

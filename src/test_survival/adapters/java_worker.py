@@ -18,6 +18,28 @@ import time
 import xml.etree.ElementTree as ET
 
 
+try:
+    from ..rules.environment import matches as environment_matches
+except ImportError:  # This worker is also invoked directly inside the container.
+    sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
+    from rules.environment import matches as environment_matches
+
+
+def rerun_environment_failures(results, launch_class, settings, wait=time.sleep):
+    pending=[r for r in results if r['state']!='pass' and environment_matches(r.get('retry_message') or r.get('message',''),settings['patterns'])]
+    for result in pending:
+        result['environment_attempts']=[dict(state=result['state'],message=result.get('retry_message') or result.get('message',''))]
+    for attempt in range(1,settings['max_reruns']+1):
+        if not pending:break
+        wait(settings['backoff_seconds'])
+        observations=launch_class(attempt)
+        for result in pending:
+            state,message=observations[result['id']]
+            result.update(state=state,message=message,flaky=False,environment_reruns=attempt)
+            result['environment_attempts'].append(dict(state=state,message=message))
+        pending=[r for r in pending if r['state']!='pass']
+
+
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary=path.with_suffix(path.suffix+'.tmp')
@@ -62,7 +84,9 @@ def parse_reports(folder):
             if problem is None:problem=case.find('failure')
             kind=problem.get('type','') if problem is not None else ''
             state='absent' if case.find('skipped') is not None else ('fail' if 'Assertion' in kind or kind.endswith(('ComparisonFailure','MultipleFailuresError')) else 'error') if problem is not None else 'pass'
-            observations[(case.get('classname'),name.group(1))].append(dict(state=state,message=(problem.get('message','') or problem.text or '')[:4000] if problem is not None else '',raw_name=case.get('name')))
+            message=(problem.get('message','') or problem.text or '') if problem is not None else ''
+            if kind and kind not in message:message=kind+': '+message
+            observations[(case.get('classname'),name.group(1))].append(dict(state=state,message=message[:4000],raw_name=case.get('name')))
     return observations
 
 
@@ -80,7 +104,7 @@ def selectors(rows,runtime,folder):
     selected={}
     for cls in sorted({r['class'] for r in rows}):
         log=folder/('selectors-'+cls+'.txt')
-        run=execute(['java','-Xmx'+JVM['launcher'],'-cp',runtime,str(HELPERS/'MethodSelectors.java'),cls],REPO,log,TIMEOUTS['test_class'])
+        run=execute(['java','-Xmx'+JVM['launcher'],'-cp',runtime,str(HELPERS/'MethodSelectors.java'),cls,TEST_FRAMEWORK],REPO,log,TIMEOUTS['test_class'])
         choices=collections.defaultdict(list)
         if run['exit_code']==0:
             for line in log.read_text().splitlines():
@@ -91,12 +115,20 @@ def selectors(rows,runtime,folder):
     return selected
 
 
+def jacoco_version(classes):
+    for path in classes.rglob('*.class'):
+        with path.open('rb') as stream:header=stream.read(8)
+        if header[:4]==b'\xca\xfe\xba\xbe' and int.from_bytes(header[6:8],'big')>66:
+            return '0.8.14'
+    return '0.8.12'
+
+
 def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,retry=True,precompiled=None):
     folder,cp=classpath(index)
     part.mkdir(parents=True,exist_ok=True)
     classes=part/'classes';classes.mkdir(exist_ok=True)
     source=EXP/filename
-    sourcepath=EXP/'dev/src-test-t/java' if group=='dev' else source.parent
+    sourcepath=EXP/'dev/src-test-t/java' if DEVELOPER else source.parent
     if precompiled is not None:
         classes,compile_run=precompiled
     else:
@@ -108,7 +140,7 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
     runtime=':'.join([str(classes),cp,str(EXP/'dev/src-test-t/resources'),str(EXP/'dev/src-test-t/suite')])
     selection=selectors(members,runtime,part)
     base=['java','-Xmx'+JVM['launcher'],'-XX:+UseSerialGC']
-    if coverage_file:base+=[f'-javaagent:{SHARED}/work/libs/org.jacoco.agent-0.8.12-runtime.jar=destfile={coverage_file},append=true']
+    if coverage_file:base+=[f'-javaagent:{SHARED}/work/libs/org.jacoco.agent-{jacoco_version(folder/"target/classes")}-runtime.jar=destfile={coverage_file},append=true']
     base+=['-cp',runtime,'org.junit.platform.console.ConsoleLauncher','--disable-banner','--disable-ansi-colors','--fail-if-no-tests','--details','summary']
     def launch(chosen,label):
         reports=part/label;reports.mkdir(exist_ok=True)
@@ -125,14 +157,22 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
         states=[method_state(row,obs,run) for run,obs in runs]
         state,message=next(((s,m) for s,m in states if s!='pass'),('pass',''))
         result={**row,'state':state,'message':message,'flaky':False,'initial_state':state,'selector':selection[row['id']],'baseline_states':[s for s,_ in states]}
-        for retry_number in range(FLAKY_RERUN if retry and state in ['fail','error'] else 0):
+        for retry_number in range(FLAKY_RERUN if retry and state in ['fail','error'] and not environment_matches(message,ENVIRONMENT_ERRORS['patterns']) else 0):
             rerun,obs=launch([row],'retry-'+row['method']+'-'+str(retry_number))
             retry_state,retry_message=method_state(row,obs,rerun)
             result.update(retry_state=retry_state,retry_message=retry_message)
             if retry_state=='pass':
                 result.update(state='pass',flaky=True)
                 break
+            if environment_matches(retry_message,ENVIRONMENT_ERRORS['patterns']):
+                result.update(state=retry_state,message=retry_message)
+                break
         record['methods'].append(result)
+    if retry and ENVIRONMENT_ERRORS['patterns']:
+        def launch_class(attempt):
+            run,observations=launch(members,'environment-'+str(attempt))
+            return {r['id']:method_state(r,observations,run) for r in members}
+        rerun_environment_failures(record['methods'],launch_class,ENVIRONMENT_ERRORS)
     return record
 
 
@@ -183,7 +223,7 @@ def run_group(job):
     by_file=collections.defaultdict(list)
     for row in rows:by_file[row['file']].append(row)
     files=[];suite_compile=None;precompiled=None
-    if group=='dev':
+    if DEVELOPER:
         folder,cp=classpath(index)
         suite_classes=work/'suite-classes';suite_classes.mkdir()
         sources=sorted((EXP/'dev/src-test-t/java').rglob('*.java'))
@@ -193,13 +233,13 @@ def run_group(job):
         if suite_compile['exit_code']==0:precompiled=(suite_classes,suite_compile)
     for number,(filename,members) in enumerate(sorted(by_file.items())):
         files.append(run_file(index,group,filename,members,work/str(number),execfile if coverage else None,
-                              repetitions=job.get('repeats',1),retry=phase in ['A','B'],precompiled=precompiled))
+                              repetitions=job.get('repeats',1),retry=job.get('retry',phase in ['A','B']),precompiled=precompiled))
     result=dict(index=index,sha=job['sha'],group=group,phase=phase,status='evaluated',input_sha256=job['input_sha256'],
                 runner_sha256=job['runner_sha256'],files=files,methods=[m for f in files for m in f['methods']],requested_ids=[r['id'] for r in rows])
     if suite_compile is not None:result['whole_frozen_suite_compile']=suite_compile
     if coverage:
-        folder,_=classpath(index);xml=RESULTS/f'coverage/{index}-{group}.xml';xml.parent.mkdir(parents=True,exist_ok=True)
-        result['coverage_report']=execute(['java','-Xmx'+JVM['jacoco'],'-jar',str(EXP/'work/libs/org.jacoco.cli-0.8.12-nodeps.jar'),'report',*([str(execfile)] if execfile.exists() else []),'--classfiles',str(folder/'target/classes'),'--sourcefiles',str(folder/'src/main/java'),'--xml',str(xml)],folder,work/'coverage-report.txt',TIMEOUTS['compile'])
+        folder,_=classpath(index);xml=EXP/job.get('coverage_xml',f'results/coverage/{index}-{group}.xml');xml.parent.mkdir(parents=True,exist_ok=True)
+        result['coverage_report']=execute(['java','-Xmx'+JVM['jacoco'],'-jar',str(EXP/f'work/libs/org.jacoco.cli-{jacoco_version(folder/"target/classes")}-nodeps.jar'),'report',*([str(execfile)] if execfile.exists() else []),'--classfiles',str(folder/'target/classes'),'--sourcefiles',str(folder/'src/main/java'),'--xml',str(xml)],folder,work/'coverage-report.txt',TIMEOUTS['compile'])
         if result['coverage_report']['exit_code']==0:
             with xml.with_name(xml.stem+'-lines.csv').open('w',newline='') as stream:
                 writer=csv.DictWriter(stream,fieldnames=['file','line','covered'],lineterminator='\n');writer.writeheader()
@@ -213,7 +253,7 @@ def run_group(job):
 def screen_file(job):
     work=EXP/job['work'];work.mkdir(parents=True,exist_ok=True)
     source=EXP/job['file']
-    parse=execute(['java','-Xmx'+JVM['javac'],str(HELPERS/'SourceInventory.java'),str(source)],REPO,work/'inventory.tsv',TIMEOUTS['compile'])
+    parse=execute(['java','-Xmx'+JVM['javac'],str(HELPERS/'SourceInventory.java'),str(source),TEST_FRAMEWORK],REPO,work/'inventory.tsv',TIMEOUTS['compile'])
     members=[]
     if parse['exit_code']==0:
         for line in (work/'inventory.tsv').read_text().splitlines():
@@ -279,12 +319,14 @@ def repair(job):
 
 
 def main():
-    global EXP,REPO,RESULTS,SHARED,HELPERS,JVM,TIMEOUTS,MODULE,FLAKY_RERUN
+    global EXP,REPO,RESULTS,SHARED,HELPERS,JVM,TIMEOUTS,MODULE,FLAKY_RERUN,TEST_FRAMEWORK,DEVELOPER,ENVIRONMENT_ERRORS
     job=json.loads(Path(sys.argv[1]).read_text())
     EXP=Path(job['experiment']);RESULTS=EXP/'results';SHARED=EXP
     HELPERS=Path(__file__).parent/'java'
     MODULE=job['module'];REPO=EXP/'work/checkouts/0'/MODULE
     JVM=job['jvm'];TIMEOUTS=job['timeouts'];FLAKY_RERUN=job.get('flaky_rerun',1)
+    TEST_FRAMEWORK=job.get('test_framework','junit5');DEVELOPER=job.get('developer',job.get('group')=='dev')
+    ENVIRONMENT_ERRORS=job.get('environment_errors',{'patterns':[],'max_reruns':3,'backoff_seconds':5})
     if job['action']=='setup':setup()
     elif job['action']=='screen':screen_file(job)
     elif job['action']=='repair':repair(job)

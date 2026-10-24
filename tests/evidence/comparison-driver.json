@@ -1,11 +1,13 @@
 {
   "pid": 61997,
-  "status": "running",
+  "status": "stopped",
   "started": "2026-10-24T11:57:30.064779+00:00",
   "replay": "/Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-replay",
   "serial": "/Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-replay-serial",
   "runtime_commit": "19f93afe8c944e1df10b203466100e0c28995eb5",
   "runtime_path": "/Users/donggi/_projects/experiment-projects/test-survival/tests/evidence/comparison-runtime",
   "step": "waiting for the active serial run without restarting it",
-  "updated": "2026-10-24T11:57:30.064959+00:00"
+  "updated": "2026-10-24T11:57:30.064959+00:00",
+  "finished": "2026-10-24T12:26:30.617098+00:00",
+  "reason": "User changed direction; configured comparison accepted; partial serial records retained; frozen runtime deleted"
 }

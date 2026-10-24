@@ -13,8 +13,3 @@ def advance(alive, methods, *, evaluated=True):
                     raise ValueError('Unknown method state: '+row['state'])
                 remaining.remove(row['id']);lost.append(dict(row))
     return remaining,lost
-
-
-def unchanged_module(paths,module='.'):
-    prefix=module.rstrip('/')+'/' if module!='.' else ''
-    return not any(p==prefix+'pom.xml' or p.startswith(prefix+'src/') for p in paths)

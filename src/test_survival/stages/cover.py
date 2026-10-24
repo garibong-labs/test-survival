@@ -5,6 +5,8 @@ import re
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
+from ..config import group_names
+from .survive import skipped_commits
 
 
 def changed_lines(diff, module='.'):
@@ -25,11 +27,12 @@ def changed_lines(diff, module='.'):
 
 
 def aggregate(exp,config):
-    groups=['dev',*[g['name'] for g in config['generators']]]
+    groups=group_names(config)
     commits=read_csv(exp/'results/commits.csv')
     curves={int(r['index']):r for r in read_csv(exp/'results/survival.csv')}
     scope={r['file'] for r in read_json(exp/'population/scope.json')['classes']}
     indices=[int(r['index']) for r in read_csv(exp/'results/coverage-commits.csv')]
+    aliases=read_json(exp/'results/coverage-index-aliases.json',{})
     maps={};missing=[];identical=[];mismatches=[]
     for i in indices:
         maps[i]={}
@@ -50,7 +53,7 @@ def aggregate(exp,config):
         if commit['changes-src-main']!='yes' or not config['coverage']['changed_line']:continue
         i=int(commit['index']);change=read_json(exp/f'results/changes/{i}.json')
         post=flatten(change['post_image']);pre=flatten(change['pre_image'])
-        current=maps[i];previous=maps[i-1];available=[m for m in current.values() if m is not None]
+        current=maps[i];previous=maps[aliases.get(str(i-1),i-1)];available=[m for m in current.values() if m is not None]
         row={k:commit[k] for k in ['index','sha','date','subject']}
         for category,changed in [('all',post),('scope',{p for p in post if p[0] in scope}),('other',{p for p in post if p[0] not in scope})]:
             executable=changed&available[0].keys() if available else None
@@ -76,15 +79,23 @@ def aggregate(exp,config):
 def run(exp,config):
     adapter=JavaMavenAdapter(exp,config);adapter.setup_runner()
     commits=read_csv(exp/'results/commits.csv');indices={0} if config['coverage']['at_anchor'] else set()
+    skipped=skipped_commits(exp,config,commits);aliases={}
+    def previous_evaluated(index):
+        original=index
+        while index in skipped:index-=1
+        if original!=index:aliases[str(original)]=index
+        return index
     if config['coverage']['changed_line']:
         for row in commits:
             if row['changes-src-main']!='yes':continue
-            i=int(row['index']);indices.update([i,i-1]);sha=row['sha'];parent=adapter.git('rev-parse',sha+'^1')
+            i=int(row['index']);indices.update([i,previous_evaluated(i-1)]);sha=row['sha'];parent=adapter.git('rev-parse',sha+'^1')
             module=config['project']['module'].removeprefix('./').rstrip('/')
             prefix=module+'/' if module not in ['', '.'] else ''
             diff=adapter.git('diff','--no-ext-diff','--find-renames','-U0',parent,sha,'--',prefix+'src/main/java')
             pre,post=changed_lines(diff,module)
             write_json(exp/f'results/changes/{i}.json',dict(index=i,sha=sha,parent=parent,pre_image=pre,post_image=post,diff=diff))
+    indices-=set(skipped)
+    write_json(exp/'results/coverage-index-aliases.json',aliases)
     write_csv(exp/'results/coverage-commits.csv',[dict(index=i) for i in sorted(indices)],['index'])
     alive=read_json(exp/'results/alive-entering.json');frozen=read_json(exp/'results/frozen-denominators.json')
     def job(i,g):
@@ -101,7 +112,9 @@ def run(exp,config):
         if not path.exists():continue
         change=read_json(path)
         for key,image_index in [('pre_image',i-1),('post_image',i)]:
-            universe_path=exp/f'results/coverage/{image_index}-dev-lines.csv'
+            image_index=aliases.get(str(image_index),image_index)
+            first_dev=config['dev']['groups'][0]['name']
+            universe_path=exp/f'results/coverage/{image_index}-{first_dev}-lines.csv'
             if universe_path.exists():
                 universe={(r['file'],int(r['line'])) for r in read_csv(universe_path)}
                 change[key]={f:[n for n in ns if (f,n) in universe] for f,ns in change[key].items()}
