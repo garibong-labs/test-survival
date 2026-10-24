@@ -168,7 +168,7 @@ class JavaMavenAdapter:
         return rows
 
     def provenance(self):
-        paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py')]
+        paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py']
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
     def worker(self, job):

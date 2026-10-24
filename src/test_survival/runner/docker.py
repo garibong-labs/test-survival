@@ -1,5 +1,6 @@
 """Container command execution with explicit path translation and evidence."""
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -28,7 +29,7 @@ class DockerRunner:
     def argument(self, value):
         value = str(value)
         for host, container in sorted(self.mounts.items(), key=lambda pair: -len(pair[0])):
-            value = value.replace(host, container)
+            value = re.sub(r'(^|[=:])'+re.escape(host)+r'(?=/|:|,|$)',lambda m:m.group(1)+container,value)
         return value
 
     def command(self, command, cwd):
