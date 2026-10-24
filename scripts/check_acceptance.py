@@ -44,7 +44,12 @@ else:
     for name in names:
         name='results/'+name
         if name.endswith('first-failures.csv'):
-            check(name,sorted(csvrows(a.replay,name),key=str),sorted(csvrows(a.reference,name),key=str))
+            from compare_full_replay import compare_file
+            comparison=compare_file(a.replay,a.reference,'first-failures.csv')
+            item={'file':name,'identical':comparison['status']=='identical'}
+            if comparison['status']=='differs':
+                item.update(first_differing_line=comparison['first_differing_line'],actual=comparison['replay'],expected=comparison['reference'],replay_line=comparison['replay_line'],reference_line=comparison['reference_line'])
+            results.append(item)
         elif name.endswith('consistency.md'):
             def block(root):return json.loads(re.search(r'```json\n(.*?)\n```',(root/name).read_text(),re.S)[1])
             check(name+' JSON block',block(a.replay),block(a.reference))

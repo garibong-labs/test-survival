@@ -1,0 +1,17 @@
+{
+  "recorded": "2026-10-24T07:12:51.755321+00:00",
+  "experiment": "/Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-replay",
+  "runner_sha256": {
+    "AccessorAudit.java": "8c082858b2264ef33b1688dc04692630d2506184a3fc586c1f817d9b0ea9da9a",
+    "DependencyInventory2.java": "366cec31e3bad91f6479a06b2461565ad61bc9f987f001fca21aa0fb8d79fb7c",
+    "MethodSelectors.java": "99773d74020f468d45057c3ecb5e3b82e130a821779bf72137259727b48094dd",
+    "SourceInventory.java": "5eaac1bea662151eae6736ead40ac99f92505236be13182aa68a2cb43701331c",
+    "classpath-artifacts.json": "de2ed7a43586d39711ee4ded11fe126113797dfc3d22fefe0818b2c77fbec671",
+    "java_maven.py": "aca0d0641f03304176ff5d7d5218da8b74fa83d3403afb0ebe124e0237d86ceb",
+    "java_worker.py": "95f38020e531ada5a2a086310467f6823ee35213b3dbaa09028a1e9db0c6d35a",
+    "docker.py": "83d32b9595ae7cb0afcccc7fd93572e32a9cd92f912b6aca7af534642307c180",
+    "cache.py": "ff317e6af7c69897a851cb2aee029aabee2278111d76c4bb83f54246e86a41d5"
+  },
+  "survive_workers": 4,
+  "note": "Runner components are held fixed across the configured and requested single-worker comparisons."
+}

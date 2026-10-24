@@ -1,0 +1,393 @@
+{
+  "method_selector_source_identical": true,
+  "cases": [
+    {
+      "index": 5,
+      "id": "dev/src-test-t/java/com/networknt/schema/JsonSchemaTestSuiteExtrasTest.java|com.networknt.schema.JsonSchemaTestSuiteExtrasTest|draft201909",
+      "same_frozen_source": true,
+      "same_selectors": true,
+      "same_jar_order": true,
+      "parsed_junit_reports": [
+        {
+          "experiment": "commit-survival-run2",
+          "runs": [
+            {
+              "log": "work/phase-a/5/dev/50/run1/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: should fail   schema: \"$\" : {\"$schema\":\"https://json-schema.org/draft/2019-09/schema\",\"minContains\":0.5}   data: []   errors:     /minContains: must be a no"
+            },
+            {
+              "log": "work/phase-a/5/dev/50/retry-draft201909/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: should fail   schema: \"$\" : {\"$schema\":\"https://json-schema.org/draft/2019-09/schema\",\"minContains\":0.5}   data: []   errors:     /minContains: must be a no"
+            },
+            {
+              "log": "work/phase-a/5/dev/50/retry-draft7/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            }
+          ]
+        },
+        {
+          "experiment": "commit-survival-replay",
+          "runs": [
+            {
+              "log": "work/phase-A/5/dev/50/run1/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            },
+            {
+              "log": "work/phase-A/5/dev/50/retry-draft201909-0/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: should fail   schema: \"$\" : {\"$schema\":\"https://json-schema.org/draft/2019-09/schema\",\"minContains\":0.5}   data: []   errors:     /minContains: must be a no"
+            },
+            {
+              "log": "work/phase-A/5/dev/50/retry-draft7-0/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-A/5/dev/50/retry-draft6-0/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "id": "dev/src-test-t/java/com/networknt/schema/JsonSchemaTestSuiteExtrasTest.java|com.networknt.schema.JsonSchemaTestSuiteExtrasTest|draft7",
+      "same_frozen_source": true,
+      "same_selectors": true,
+      "same_jar_order": true,
+      "parsed_junit_reports": [
+        {
+          "experiment": "commit-survival-run2",
+          "runs": [
+            {
+              "log": "work/phase-a/5/dev/50/run1/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: OneOf Validation removes validations, making invalid data appear valid   schema: \"$\" : {\"title\":\"PetArray\",\"type\":\"object\",\"properties\":{\"pets\":{\"type\":\"arr"
+            },
+            {
+              "log": "work/phase-a/5/dev/50/retry-draft201909/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/5/dev/50/retry-draft7/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: OneOf Validation removes validations, making invalid data appear valid   schema: \"$\" : {\"title\":\"PetArray\",\"type\":\"object\",\"properties\":{\"pets\":{\"type\":\"arr"
+            }
+          ]
+        },
+        {
+          "experiment": "commit-survival-replay",
+          "runs": [
+            {
+              "log": "work/phase-A/5/dev/50/run1/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            },
+            {
+              "log": "work/phase-A/5/dev/50/retry-draft201909-0/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-A/5/dev/50/retry-draft7-0/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: OneOf Validation removes validations, making invalid data appear valid   schema: \"$\" : {\"title\":\"PetArray\",\"type\":\"object\",\"properties\":{\"pets\":{\"type\":\"arr"
+            },
+            {
+              "log": "work/phase-A/5/dev/50/retry-draft6-0/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "id": "dev/src-test-t/java/com/networknt/schema/UnevaluatedItemsTest.java|com.networknt.schema.UnevaluatedItemsTest|draft201909",
+      "same_frozen_source": true,
+      "same_selectors": true,
+      "same_jar_order": true,
+      "parsed_junit_reports": [
+        {
+          "experiment": "commit-survival-run2",
+          "runs": [
+            {
+              "log": "work/phase-a/5/dev/68/run1/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            },
+            {
+              "log": "work/phase-a/5/dev/68/retry-draft201909/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            }
+          ]
+        },
+        {
+          "experiment": "commit-survival-replay",
+          "runs": [
+            {
+              "log": "work/phase-A/5/dev/68/run1/console.txt",
+              "state": "pass",
+              "message": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "id": "dev/src-test-t/java/com/networknt/schema/CustomMessageTest.java|com.networknt.schema.CustomMessageTest|draft201909__customMessagesDisabled",
+      "same_frozen_source": true,
+      "same_selectors": true,
+      "same_jar_order": true,
+      "parsed_junit_reports": [
+        {
+          "experiment": "commit-survival-run2",
+          "runs": [
+            {
+              "log": "work/phase-a/6/dev/1/run1/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            },
+            {
+              "log": "work/phase-a/6/dev/1/retry-draft201909__customMessagesEnabled/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/1/retry-draft201909__customMessagesDisabled/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            }
+          ]
+        },
+        {
+          "experiment": "commit-survival-replay",
+          "runs": [
+            {
+              "log": "work/phase-A/6/dev/1/run1/console.txt",
+              "state": "pass",
+              "message": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "id": "dev/src-test-t/java/com/networknt/schema/Issue619Test.java|com.networknt.schema.Issue619Test|uriThatPointsToNodeThatDoesNotExistShouldFail_Ref",
+      "same_frozen_source": true,
+      "same_selectors": true,
+      "same_jar_order": true,
+      "parsed_junit_reports": [
+        {
+          "experiment": "commit-survival-run2",
+          "runs": [
+            {
+              "log": "work/phase-a/6/dev/36/run1/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-bundledSchemaLoadsAndValidatesCorrectly_Ref/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-bundledSchemaLoadsAndValidatesCorrectly_Uri/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriWithEmptyFragment_Ref/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriWithEmptyFragment_Uri/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToTwoShouldOnlyValidateTwo_Ref/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToOneShouldOnlyValidateOne_Uri/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToNodeThatInTurnReferencesOneShouldOnlyValidateOne_Ref/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToNodeThatInTurnReferencesOneShouldOnlyValidateOne_Uri/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToSchemaWithIdThatHasDifferentUri_Ref/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToSchemaWithIdThatHasDifferentUri_Uri/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToSchemaThatDoesNotExistShouldFail_Ref/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToSchemaThatDoesNotExistShouldFail_Uri/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToNodeThatDoesNotExistShouldFail_Ref/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            },
+            {
+              "log": "work/phase-a/6/dev/36/retry-uriThatPointsToNodeThatDoesNotExistShouldFail_Uri/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            }
+          ]
+        },
+        {
+          "experiment": "commit-survival-replay",
+          "runs": [
+            {
+              "log": "work/phase-A/6/dev/36/run1/console.txt",
+              "state": "pass",
+              "message": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "id": "dev/src-test-t/java/com/networknt/schema/JsonSchemaTestSuiteExtrasTest.java|com.networknt.schema.JsonSchemaTestSuiteExtrasTest|draft201909",
+      "same_frozen_source": true,
+      "same_selectors": true,
+      "same_jar_order": true,
+      "parsed_junit_reports": [
+        {
+          "experiment": "commit-survival-run2",
+          "runs": [
+            {
+              "log": "work/phase-a/6/dev/50/run1/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            },
+            {
+              "log": "work/phase-a/6/dev/50/retry-draft201909/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: should fail   schema: \"$\" : {\"$schema\":\"https://json-schema.org/draft/2019-09/schema\",\"minContains\":0.5}   data: []   errors:     /minContains: must be a no"
+            },
+            {
+              "log": "work/phase-a/6/dev/50/retry-draft7/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/50/retry-draft6/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            }
+          ]
+        },
+        {
+          "experiment": "commit-survival-replay",
+          "runs": [
+            {
+              "log": "work/phase-A/6/dev/50/run1/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: should fail   schema: \"$\" : {\"$schema\":\"https://json-schema.org/draft/2019-09/schema\",\"minContains\":0.5}   data: []   errors:     /minContains: must be a no"
+            },
+            {
+              "log": "work/phase-A/6/dev/50/retry-draft201909-0/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: should fail   schema: \"$\" : {\"$schema\":\"https://json-schema.org/draft/2019-09/schema\",\"minContains\":0.5}   data: []   errors:     /minContains: must be a no"
+            },
+            {
+              "log": "work/phase-A/6/dev/50/retry-draft7-0/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "id": "dev/src-test-t/java/com/networknt/schema/JsonSchemaTestSuiteExtrasTest.java|com.networknt.schema.JsonSchemaTestSuiteExtrasTest|draft7",
+      "same_frozen_source": true,
+      "same_selectors": true,
+      "same_jar_order": true,
+      "parsed_junit_reports": [
+        {
+          "experiment": "commit-survival-run2",
+          "runs": [
+            {
+              "log": "work/phase-a/6/dev/50/run1/console.txt",
+              "state": "error",
+              "message": "java.net.BindException: Address already in use"
+            },
+            {
+              "log": "work/phase-a/6/dev/50/retry-draft201909/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-a/6/dev/50/retry-draft7/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: OneOf Validation removes validations, making invalid data appear valid   schema: \"$\" : {\"title\":\"PetArray\",\"type\":\"object\",\"properties\":{\"pets\":{\"type\":\"arr"
+            },
+            {
+              "log": "work/phase-a/6/dev/50/retry-draft6/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            }
+          ]
+        },
+        {
+          "experiment": "commit-survival-replay",
+          "runs": [
+            {
+              "log": "work/phase-A/6/dev/50/run1/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: OneOf Validation removes validations, making invalid data appear valid   schema: \"$\" : {\"title\":\"PetArray\",\"type\":\"object\",\"properties\":{\"pets\":{\"type\":\"arr"
+            },
+            {
+              "log": "work/phase-A/6/dev/50/retry-draft201909-0/console.txt",
+              "state": "absent",
+              "message": "Method not reported by launcher"
+            },
+            {
+              "log": "work/phase-A/6/dev/50/retry-draft7-0/console.txt",
+              "state": "fail",
+              "message": "Expected Validation Messages   description: OneOf Validation removes validations, making invalid data appear valid   schema: \"$\" : {\"title\":\"PetArray\",\"type\":\"object\",\"properties\":{\"pets\":{\"type\":\"arr"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

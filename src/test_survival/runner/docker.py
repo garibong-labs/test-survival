@@ -1,4 +1,5 @@
 """Container command execution with explicit path translation and evidence."""
+from contextlib import contextmanager
 import os
 import re
 from pathlib import Path
@@ -6,12 +7,13 @@ import signal
 import subprocess
 import time
 
-from ..io import atomic_text
+from ..io import atomic_text, write_json, now
 
 
 class DockerRunner:
     def __init__(self, experiment, config):
         self.exp = Path(experiment).resolve()
+        self.container_id = None
         self.config = config
         docker = config['runner']['docker']
         self.mounts = {str(Path(h).resolve()): c.rstrip('/') for h, c in docker['mounts'].items()}
@@ -33,6 +35,8 @@ class DockerRunner:
         return value
 
     def command(self, command, cwd):
+        if self.container_id:
+            return ['docker', 'exec', '--workdir', self.path(cwd), self.container_id, *[self.argument(v) for v in command]]
         d = self.config['runner']['docker']
         if d['compose_files']:
             prefix = ['docker', 'compose']
@@ -69,3 +73,27 @@ class DockerRunner:
                 code = child.wait()
         return dict(command=[self.argument(c) for c in command], cwd=self.path(cwd), exit_code=code,
                     timeout=timed_out, seconds=round(time.monotonic()-started, 3), log=str(log.relative_to(self.exp)))
+
+    @contextmanager
+    def session(self, stage):
+        """Share the original runner's network and memory boundary across workers."""
+        command = self.command(['sleep', 'infinity'], self.exp)
+        command.insert(command.index('run') + 1, '--detach')
+        started = subprocess.run(command, capture_output=True, text=True)
+        if started.returncode:
+            path = self.exp / f'state/container-{stage}.log'
+            atomic_text(path, started.stderr)
+            raise RuntimeError('KTester container could not be started; see container stage log')
+        ident = started.stdout.strip().splitlines()[-1]
+        if not re.fullmatch(r'[0-9a-f]{12,64}', ident):
+            raise RuntimeError('Docker did not return a container identifier')
+        self.container_id = ident
+        record = dict(container=ident, stage=stage, started=now(), status='running')
+        write_json(self.exp / f'state/container-{stage}.json', record)
+        try:
+            yield self
+        finally:
+            subprocess.run(['docker', 'stop', '--time', '5', ident], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.container_id = None
+            record.update(status='stopped', finished=now())
+            write_json(self.exp / f'state/container-{stage}.json', record)

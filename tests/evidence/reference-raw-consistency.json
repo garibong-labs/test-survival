@@ -1,0 +1,14 @@
+{
+  "reference": "/Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-run2",
+  "survival_matches_raw": true,
+  "survival_mismatches": [],
+  "first_failures_match_raw": true,
+  "final_survivors": {
+    "dev": 4,
+    "ktester": 0,
+    "ouedraogo": 0,
+    "ouedraogo-adj": 0,
+    "ouedraogo-adj2": 0
+  },
+  "raw_records": 1145
+}
