@@ -1,0 +1,160 @@
+[
+  {
+    "filename": "apiguardian-api-1.1.2.jar",
+    "coordinate": "org.apiguardian:apiguardian-api:1.1.2",
+    "classifier": "",
+    "role": "test",
+    "sha256": "b509448ac506d607319f182537f0b35d71007582ec741832a1f111e5b5b70b38"
+  },
+  {
+    "filename": "byte-buddy-1.14.1.jar",
+    "coordinate": "net.bytebuddy:byte-buddy:1.14.1",
+    "classifier": "",
+    "role": "test",
+    "sha256": "63479f9a0a1b28f98313230d688a46b02bd80d09a700e127482d0bd635b47bad"
+  },
+  {
+    "filename": "byte-buddy-agent-1.14.1.jar",
+    "coordinate": "net.bytebuddy:byte-buddy-agent:1.14.1",
+    "classifier": "",
+    "role": "test",
+    "sha256": "f4809b9d0f00e71be98a61a25b3e14437f53f6821485694011beeb25e9231dde"
+  },
+  {
+    "filename": "commons-io-2.16.1.jar",
+    "coordinate": "commons-io:commons-io:2.16.1",
+    "classifier": "",
+    "role": "test",
+    "sha256": "f41f7baacd716896447ace9758621f62c1c6b0a91d89acee488da26fc477c84f"
+  },
+  {
+    "filename": "commons-lang3-3.14.0.jar",
+    "coordinate": "org.apache.commons:commons-lang3:3.14.0",
+    "classifier": "",
+    "role": "test",
+    "sha256": "7b96bf3ee68949abb5bc465559ac270e0551596fa34523fddf890ec418dde13c"
+  },
+  {
+    "filename": "hamcrest-2.2.jar",
+    "coordinate": "org.hamcrest:hamcrest:2.2",
+    "classifier": "",
+    "role": "test",
+    "sha256": "5e62846a89f05cd78cd9c1a553f340d002458380c320455dd1f8fc5497a8a1c1"
+  },
+  {
+    "filename": "junit-jupiter-5.11.4.jar",
+    "coordinate": "org.junit.jupiter:junit-jupiter:5.11.4",
+    "classifier": "",
+    "role": "test",
+    "sha256": "aa880e4afba87d447357e4c1fc098c5cb1d200cb9403496c00d3b35a5bd0e8db"
+  },
+  {
+    "filename": "junit-jupiter-api-5.10.2.jar",
+    "coordinate": "org.junit.jupiter:junit-jupiter-api:5.10.2",
+    "classifier": "",
+    "role": "test",
+    "sha256": "afff77c186cd317275803872fa5133aa801fd6ac40bd91c78a6cf8009b4b17cc"
+  },
+  {
+    "filename": "junit-jupiter-engine-5.10.2.jar",
+    "coordinate": "org.junit.jupiter:junit-jupiter-engine:5.10.2",
+    "classifier": "",
+    "role": "test",
+    "sha256": "b6df35da750a546ae932376f11b3c0df841f0c90c7cb2944cd39adb432886e4b"
+  },
+  {
+    "filename": "junit-jupiter-params-5.10.2.jar",
+    "coordinate": "org.junit.jupiter:junit-jupiter-params:5.10.2",
+    "classifier": "",
+    "role": "test",
+    "sha256": "edb1e43ff0b8067626ffb55e5e9eeca1d9ab2478141a7c7f253d115b29cc7cf2"
+  },
+  {
+    "filename": "junit-platform-commons-1.10.2.jar",
+    "coordinate": "org.junit.platform:junit-platform-commons:1.10.2",
+    "classifier": "",
+    "role": "test",
+    "sha256": "b56a5ec000a479df4973b18bba24c98fe0db8faa14c8907d3ef451d8c71fd8ae"
+  },
+  {
+    "filename": "junit-platform-console-standalone-1.9.3.jar",
+    "coordinate": "org.junit.platform:junit-platform-console-standalone:1.9.3",
+    "classifier": "",
+    "role": "test",
+    "sha256": "45e90d893561d813a64559554647eea5e74acaa9c8cb1fed1340d192f34689e2"
+  },
+  {
+    "filename": "junit-platform-engine-1.10.2.jar",
+    "coordinate": "org.junit.platform:junit-platform-engine:1.10.2",
+    "classifier": "",
+    "role": "test",
+    "sha256": "905cba9b4998ccc29d1239085a7fb1fe0e28024d7526152356d810edec0a49a3"
+  },
+  {
+    "filename": "mockito-core-5.2.0.jar",
+    "coordinate": "org.mockito:mockito-core:5.2.0",
+    "classifier": "",
+    "role": "test",
+    "sha256": "46e3f8dacd8ec62c8aa6fb11f8867624fb44a03e97fdfc628609346d5dc7e159"
+  },
+  {
+    "filename": "mockito-inline-5.2.0.jar",
+    "coordinate": "org.mockito:mockito-inline:5.2.0",
+    "classifier": "",
+    "role": "test",
+    "sha256": "ee52e1c299a632184fba274a9370993e09140429f5e516e6c5570fd6574b297f"
+  },
+  {
+    "filename": "mockito-junit-jupiter-5.2.0.jar",
+    "coordinate": "org.mockito:mockito-junit-jupiter:5.2.0",
+    "classifier": "",
+    "role": "test",
+    "sha256": "c7dd82180320799c167d714499ac64fb5ad4ae8790e1d93da531c82236febe07"
+  },
+  {
+    "filename": "objenesis-3.3.jar",
+    "coordinate": "org.objenesis:objenesis:3.3",
+    "classifier": "",
+    "role": "test",
+    "sha256": "02dfd0b0439a5591e35b708ed2f5474eb0948f53abf74637e959b8e4ef69bfeb"
+  },
+  {
+    "filename": "opentest4j-1.3.0.jar",
+    "coordinate": "org.opentest4j:opentest4j:1.3.0",
+    "classifier": "",
+    "role": "test",
+    "sha256": "48e2df636cab6563ced64dcdff8abb2355627cb236ef0bf37598682ddf742f1b"
+  },
+  {
+    "filename": "org.jacoco.agent-0.8.12-runtime.jar",
+    "coordinate": "org.jacoco:org.jacoco.agent:0.8.12",
+    "classifier": "runtime",
+    "role": "coverage",
+    "sha256": "115e8e6e6593ca3a9892dfef695df4d487c706e59e71e64dc0ab95716ee02622"
+  },
+  {
+    "filename": "org.jacoco.cli-0.8.12-nodeps.jar",
+    "coordinate": "org.jacoco:org.jacoco.cli:0.8.12",
+    "classifier": "nodeps",
+    "role": "coverage",
+    "sha256": "594c01125b84864a7fc5a9efab19b71b7de36b27346863f6d7cd0cd45400ceb0"
+  },
+  {
+    "filename": "junit-vintage-engine-5.10.2.jar",
+    "coordinate": "org.junit.vintage:junit-vintage-engine:5.10.2",
+    "role": "test",
+    "sha256": "f1f8d1d33572c750cbe9bc6ab81019af28e8de555d58c42d1d0b7248b3315769"
+  },
+  {
+    "filename": "junit-4.13.2.jar",
+    "coordinate": "junit:junit:4.13.2",
+    "role": "test",
+    "sha256": "8e495b634469d64fb8acfa3495a065cbacc8a0fff55ce1e31007be4c16dc57d3"
+  },
+  {
+    "filename": "hamcrest-core-1.3.jar",
+    "coordinate": "org.hamcrest:hamcrest-core:1.3",
+    "role": "test",
+    "sha256": "66fdef91e9739348df7a096aa384a5685f4e875584cce89386a7a47251c4d8e9"
+  }
+]
