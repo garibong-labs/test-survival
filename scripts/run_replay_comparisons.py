@@ -1,0 +1,93 @@
+"""Finish the authorized replay, then run the separate single-worker comparison."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+
+import yaml
+from test_survival.config import load
+from test_survival.io import read_json,write_json,now
+from test_survival.pipeline import process_alive
+
+
+def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--replay',type=Path,required=True)
+    parser.add_argument('--reference',type=Path,required=True)
+    parser.add_argument('--serial',type=Path,required=True)
+    args=parser.parse_args()
+    root=Path(__file__).resolve().parents[1]
+    evidence=root/'tests/evidence'
+    with (evidence/'comparison-driver.lock').open('w') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        state=dict(pid=os.getpid(),status='running',started=now(),replay=str(args.replay),serial=str(args.serial))
+        def checkpoint(step):
+            state.update(step=step,updated=now());write_json(evidence/'comparison-driver.json',state)
+            print(json.dumps({'time':now(),'step':step}),flush=True)
+        def command(*argv):
+            subprocess.run(list(map(str,argv)),check=True,cwd=root)
+        def run(exp,*options):
+            command(sys.executable,'-m','test_survival.cli','run',exp,*options)
+        def compare(include_serial):
+            command(sys.executable,root/'scripts/compare_full_replay.py','--reference',args.reference,
+                    '--replay','Configured replay='+str(args.replay),
+                    *(['--replay','Single-worker replay='+str(args.serial)] if include_serial else []),
+                    '--out',root/'.local/acceptance-report.md','--json-out',evidence/'full-comparisons.json')
+        try:
+            checkpoint('waiting for the active survive run')
+            while True:
+                stage=read_json(args.replay/'state/survive.json',{})
+                active=read_json(args.replay/'state/run.json',{})
+                if stage.get('status')=='completed' and active.get('status')!='running':break
+                if active.get('status')!='running' or not process_alive(active.get('pid')):
+                    raise RuntimeError('Active replay stopped before survival completed')
+                time.sleep(10)
+            checkpoint('configured replay: coverage and report')
+            run(args.replay,'--stage','cover')
+            run(args.replay,'--stage','report')
+            checkpoint('configured replay: complete step-6 comparison')
+            compare(False)
+            checkpoint('copying the replay for the single-worker run')
+            marker=args.serial/'state/comparison-copy.json'
+            owned=read_json(marker,{})
+            if args.serial.exists() and (owned.get('source')!=str(args.replay) or owned.get('purpose')!='single-worker comparison'):
+                raise RuntimeError('Serial destination is not this driver-owned copy')
+            if not owned or owned.get('status')=='copying':
+                owned=dict(source=str(args.replay),purpose='single-worker comparison',status='copying',started=now())
+                write_json(marker,owned)
+                shutil.copytree(args.replay,args.serial,dirs_exist_ok=True)
+                config=yaml.safe_load((args.serial/'experiment.yaml').read_text())
+                config['runner']['workers']['survive']=1
+                (args.serial/'experiment.yaml').write_text(yaml.safe_dump(config,sort_keys=False,allow_unicode=True))
+                owned.update(status='ready',finished=now());write_json(marker,owned)
+            if load(args.serial)['runner']['workers']['survive']!=1:
+                raise RuntimeError('Serial copy must have runner.workers.survive=1')
+            # Runner configuration participates in all upstream stage hashes.
+            # Revalidate those stages and import the exact archived generation;
+            # never rewrite hashes or make new model calls to bypass prerequisites.
+            checkpoint('single-worker copy: revalidating prerequisites')
+            run(args.serial,'--until','scope')
+            command(sys.executable,'-m','test_survival.cli','import',args.serial,'--from',args.replay,'--what','generated')
+            run(args.serial,'--until','control')
+            command(sys.executable,root/'scripts/check_acceptance.py',args.serial,args.replay,'--checkpoint','screen','--out',evidence/'serial-denominator-comparison.json')
+            checkpoint('single-worker replay: survive')
+            run(args.serial,'--stage','survive','--force')
+            checkpoint('single-worker replay: cover')
+            run(args.serial,'--stage','cover','--force')
+            checkpoint('single-worker replay: report')
+            run(args.serial,'--stage','report','--force')
+            checkpoint('both complete step-6 comparisons')
+            compare(True)
+            state.update(status='completed',finished=now());write_json(evidence/'comparison-driver.json',state)
+        except BaseException as exc:
+            state.update(status='failed',finished=now(),error_type=type(exc).__name__)
+            write_json(evidence/'comparison-driver.json',state)
+            raise
+
+
+if __name__=='__main__':main()
