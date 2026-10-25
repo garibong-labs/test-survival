@@ -69,16 +69,27 @@ def execute(command,cwd,log,timeout=600):
     return dict(command=command,cwd=str(cwd),exit_code=code,timeout=timed_out,seconds=round(time.monotonic()-start,3),log=str(log.relative_to(EXP)))
 
 
+PROJECT_CLASSPATH_EXCLUDES=('/org/junit/','/junit/junit/','/org/opentest4j/','/org/apiguardian/')
+
+
+def runner_test_jars(records):
+    """Manifest test jars in classpath order: the shaded console launcher last, so the unshaded JUnit jars win."""
+    return sorted([r['filename'] for r in records if r['role']=='test'],key=lambda name:name.startswith('junit-platform-console-standalone'))
+
+
+def project_jars(classpath_text):
+    """Project dependencies without the JUnit stack the runner jars already provide."""
+    return [p for p in classpath_text.strip().split(':') if p and not any(s in p for s in PROJECT_CLASSPATH_EXCLUDES)]
+
+
 def classpath(index):
     records=json.loads((HELPERS/'classpath-artifacts.json').read_text())
-    jars=sorted([r for r in records if r['role']=='test'],key=lambda r:r['filename'].startswith('junit-platform-console-standalone'))
-    testjars=[str(EXP/'work/libs'/r['filename']) for r in jars]
+    testjars=[str(EXP/'work/libs'/name) for name in runner_test_jars(records)]
     folder=EXP/f'work/checkouts/{index}'/MODULE
     build=json.loads((RESULTS/f'builds/{index}.json').read_text())
     cache=EXP/build['classpath']
     maven_dependencies.resolve(folder,cache,RESULTS/'builds/logs'/f'classpath-{index}',TIMEOUTS['build'],execute)
-    projectjars=[p for p in cache.read_text().strip().split(':') if p and not any(s in p for s in ['/org/junit/','/junit/junit/','/org/opentest4j/','/org/apiguardian/'])]
-    return folder,':'.join([str(folder/'target/classes'),*testjars,*projectjars])
+    return folder,':'.join([str(folder/'target/classes'),*testjars,*project_jars(cache.read_text())])
 
 
 def parse_reports(folder):
@@ -236,6 +247,11 @@ def setup(wait=time.sleep):
         if not source.exists() or hashlib.sha256(source.read_bytes()).hexdigest()!=r['sha256']:
             raise RuntimeError('Runner jar checksum mismatch '+r['filename'])
         shutil.copy2(source,dest)
+    # Drop jars an earlier manifest installed here, so no consumer can pick up a superseded version.
+    marker=RESULTS/'runner-setup.json'
+    installed={r['filename'] for r in (json.loads(marker.read_text()).get('jars',[]) if marker.exists() else [])}
+    for stale in installed-{r['filename'] for r in records}:
+        (libs/stale).unlink(missing_ok=True)
     digest=hashlib.sha256((REPO/'pom.xml').read_bytes()).hexdigest()
     maven_dependencies.resolve(REPO,EXP/'work/classpaths'/f'{digest}.txt',RESULTS/'builds/logs/runner-setup',
                                TIMEOUTS['build'],execute,prefetch=True,wait=wait)

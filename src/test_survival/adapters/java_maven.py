@@ -13,7 +13,7 @@ from ..config import as_written, canonical_hash, record_runner_inputs
 from ..io import read_json, write_json, write_csv
 from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
-from .java_worker import RUNNER_JAR_RETRIES, RUNNER_JAR_BACKOFF_SECONDS
+from .java_worker import RUNNER_JAR_RETRIES, RUNNER_JAR_BACKOFF_SECONDS, project_jars, runner_test_jars
 from .maven_dependencies import resolution_timeout
 
 
@@ -257,12 +257,12 @@ class JavaMavenAdapter:
     def compile_tests(self, index, files):
         results = []
         _, cache, _ = self.cache.resolve(self.folder(index), index)
-        jars = [self.exp/'work/libs'/r['filename'] for r in read_json(self.helpers/'classpath-artifacts.json') if r['role'] == 'test']
+        # The worker's launcher classpath: manifest jars shadow the project's own JUnit and Mockito versions.
+        jars = [self.runner.path(self.exp/'work/libs'/name) for name in runner_test_jars(read_json(self.helpers/'classpath-artifacts.json'))]
+        cp = ':'.join([self.runner.path(self.folder(index)/'target/classes'), *jars, *project_jars(cache.read_text())])
         for number, source in enumerate(files):
             part = self.exp/f'work/compile/{index}/{number}'
             part.mkdir(parents=True,exist_ok=True)
-            cp = self.runner.path(self.folder(index)/'target/classes')+':'+cache.read_text().strip()
-            cp += ':'+':'.join(self.runner.path(p) for p in jars)
             results.append(self.runner.execute(['javac','-J-Xmx'+self.config['runner']['jvm']['javac'],'-cp',cp,'-d',str(part),str(source)],self.folder(index),part/'javac.txt',self.config['runner']['timeouts']['compile']))
         return results
 
