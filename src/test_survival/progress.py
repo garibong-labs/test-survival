@@ -208,7 +208,7 @@ def generation_progress(exp, config, state):
     scope = read_json(exp/'population/scope.json', {})
     population = csv_rows(exp/'population/ktester-population.csv')
     completed, calls, responses, repairs = {}, {}, set(), set()
-    total, known = 0, True
+    total, known, repair_unknown = 0, True, False
     for group in config['generators']:
         name = group['name']
         if state.get('group') not in (None, name):
@@ -249,17 +249,9 @@ def generation_progress(exp, config, state):
                         elif record.get('status') == 'running':
                             active.append(record.get('class', path.stem))
                     if not repair_records and not (directory/'run.json').exists():
-                        # Older workers have no per-method progress records.
-                        # Only read a bounded log tail, never an entire long run.
-                        log = directory/'generation.log'
-                        if log.exists():
-                            with log.open('rb') as stream:
-                                stream.seek(max(0, log.stat().st_size-16384))
-                                tail = stream.read().decode(errors='replace')
-                            import re
-                            matches = re.findall(r'try to repair test class (.+?)\.\.\.', tail)
-                            if matches and 'Post process completed:' not in tail[tail.rfind('try to repair test class '):]:
-                                active.append(Path(matches[-1]).stem)
+                        # Legacy logs have repair starts but no per-class finish
+                        # events. They cannot establish which class is active.
+                        repair_unknown = True
                     repairs.update(active)
         else:
             classes = {row['class'].rsplit('.', 1)[-1]: row.get('m', 0) for row in scope.get('classes', [])}
@@ -284,7 +276,8 @@ def generation_progress(exp, config, state):
                             for method in range(classes.get(record['class_name'], 0)):
                                 completed[(name, label, record['class_name'], record['technique'], method)] = [path]
     return dict(completed=list(completed.values()), total=total if known else None,
-                calls=len(calls), responses=len(responses), repair=', '.join(sorted(repairs)))
+                calls=len(calls), responses=len(responses),
+                repair=', '.join(sorted(repairs)) if repairs else None if repair_unknown else '')
 
 
 def panel_items(exp, stage, config, state):
@@ -296,12 +289,14 @@ def panel_items(exp, stage, config, state):
         adapter = JavaMavenAdapter(exp, config)
         frozen = read_json(exp/'results/frozen-denominators.json')
         completed = []
+        provenance = adapter.provenance()
+        anchor = read_json(exp/'results/anchor.json', {}).get('sha')
         for group, methods in (frozen or {}).items():
             path = exp/f'results/control/0-{group}.json'
             record = read_json(path, {})
             if (record.get('input_sha256') == adapter.run_fingerprint(methods)
-                    and record.get('runner_sha256') == adapter.provenance()
-                    and record.get('sha') == read_json(exp/'results/anchor.json', {}).get('sha')):
+                    and record.get('runner_sha256') == provenance
+                    and record.get('sha') == anchor):
                 completed.extend([path] for _ in record.get('methods', []))
         return completed, sum(map(len, frozen.values())) if frozen is not None else None, 'methods', {}
     if stage == 'report':

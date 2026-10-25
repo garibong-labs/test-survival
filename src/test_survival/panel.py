@@ -26,10 +26,10 @@ def panel_lines(exp, config, width=160):
     bar = '#' * int(10*fraction) + '-' * (10-int(10*fraction)) if fraction is not None else '?'*10
     percent = f'{100*fraction:.0f}%' if fraction is not None else '?%'
     secondary = f'; calls {p["calls"]}' if p.get('calls') is not None else ''
-    repair = f'; repair {p["repair"]}' if p.get('repair') else ''
+    repair = ','.join(name.rsplit('.', 1)[-1] for name in p.get('repair', '').split(', ')) if p.get('repair') else ''
     first = (f'{current} [{bar}] {percent} {done}/{total if total is not None else "?"} {p["unit"]}'
              f'{secondary}; remaining {duration(p["remaining"])}; elapsed {duration(p["elapsed"])}; '
-             f'estimated finish {p["eta"]}{repair}')
+             f'estimated finish {p["eta"]}')
     if len(first) >= width:
         def short(seconds):
             if seconds is None:
@@ -52,9 +52,20 @@ def panel_lines(exp, config, width=160):
     for stage in STAGES:
         state = states[stage]
         complete = state.get('status') == 'completed' and state.get('config_hash') == stage_hash(config, stage)
-        mark = '>' if stage == current and state.get('status') == 'running' else '+' if complete else '!' if state.get('status') == 'failed' else '-'
+        mark = ('>' if stage == current and state.get('status') == 'running' else '+' if complete
+                else '~' if state.get('status') == 'completed' else '!' if state.get('status') == 'failed' else '-')
         marks.append(f'{mark}{stage}')
-    return first, ' '.join(marks)
+    second = ' '.join(marks)
+    if repair:
+        # Keep mandatory metrics and all eight stages; use the row with more
+        # spare space for the simple repair class name (ellipsized if needed).
+        row = 0 if len(first) <= len(second) else 1
+        lines = [first, second]
+        room = width-1-len(lines[row])-len(' repair ')
+        if room >= 3:
+            lines[row] += ' repair ' + (repair if len(repair) <= room else repair[:room-2]+'..')
+        first, second = lines
+    return first, second
 
 
 class Panel:
@@ -101,7 +112,7 @@ class Panel:
                 try:
                     self.stream.write(f'\x1b[r\x1b[{rows-1};1H\x1b[2K\x1b[{rows};1H\x1b[2K\x1b[{rows-1};1H')
                     self.stream.flush()
-                except (OSError, ValueError):
+                except Exception:
                     pass  # A disconnected terminal must not mask the run result.
                 finally:
                     self.size = None
@@ -110,7 +121,7 @@ class Panel:
 def notify(exp):
     monitor = _MONITORS.get(Path(exp).resolve())
     if monitor:
-        monitor.refresh()
+        monitor.wake.set()
 
 
 class LiveProgress:
@@ -119,6 +130,7 @@ class LiveProgress:
         self.exp, self.config = Path(exp).resolve(), config
         self.panel = Panel(exp, config, disabled=disabled)
         self.stop = threading.Event()
+        self.wake = threading.Event()
         self.last_log = time.monotonic()
         self.lock = threading.RLock()
 
@@ -126,6 +138,9 @@ class LiveProgress:
         with self.lock:
             try:
                 self.panel.refresh()
+            except Exception:
+                pass  # A rendering failure must not fail work or its heartbeat.
+            try:
                 state = read_json(self.exp/'state/generate.json', {})
                 if state.get('status') != 'running':
                     self.last_log = time.monotonic()
@@ -135,22 +150,29 @@ class LiveProgress:
                     if groups:
                         p = generation_progress(self.exp, {**self.config, 'generators': groups}, state)
                         line = (f'{now()} generate: {len(p["completed"])}/{p["total"] if p["total"] is not None else "?"} methods; '
-                                f'{p["responses"]} responses so far; class under repair: {p["repair"] or "none"}\n')
+                                f'{p["responses"]} responses so far; class under repair: '
+                                f'{"unknown" if p["repair"] is None else p["repair"] or "none"}\n')
                         with OUTPUT_LOCK:
                             with (self.exp/'state/log.txt').open('a') as stream:
                                 stream.write(line)
                     self.last_log = time.monotonic()
-            except (OSError, ValueError, KeyError, TypeError):
+            except Exception:
                 # Partial author output and terminal disconnects must not fail a run.
                 pass
 
     def loop(self):
-        while not self.stop.wait(5):
+        while True:
             self.refresh()
+            if self.stop.is_set():
+                return
+            notified = self.wake.wait(5)
+            self.wake.clear()
+            if notified:
+                # Coalesce bursts without making stage/model workers scan files.
+                self.stop.wait(.05)
 
     def __enter__(self):
         _MONITORS[self.exp] = self
-        self.refresh()
         self.thread = threading.Thread(target=self.loop, name='survival-progress', daemon=True)
         self.thread.start()
         self.previous_term = None
@@ -163,6 +185,7 @@ class LiveProgress:
 
     def __exit__(self, *exc):
         self.stop.set()
+        self.wake.set()
         self.thread.join()
         _MONITORS.pop(self.exp, None)
         self.panel.close()
@@ -187,3 +210,5 @@ def watch(exp, config, *, no_panel=False):
         pass
     finally:
         panel.close()
+    if panel.enabled:
+        print(status(exp, config), flush=True)

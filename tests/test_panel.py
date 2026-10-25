@@ -69,7 +69,7 @@ def test_old_author_worker_outputs_and_partial_response(tmp_path, config):
     write_json(root/'time/time_records.json', {'details': {'B': {'check_test_class': 3}}})
     p = generation_progress(tmp_path, config, {})
     assert len(p['completed']) == 2
-    assert p['repair'] == 'A_Test'
+    assert p['repair'] is None  # A log start cannot prove this class is still active.
     (root/'raw-responses/0003').mkdir()
     (root/'raw-responses/0003/response.json').write_text('{')
     # Response files are counted independently of an in-flight call record.
@@ -172,7 +172,7 @@ def test_watch_polls_five_seconds_finishes_and_never_writes(tmp_path, config, mo
     write_json(tmp_path/'state/run.json', {'status': 'running', 'pid': 42})
     original = (tmp_path/'state/run.json').read_bytes()
     alive = iter((True, False))
-    monkeypatch.setattr(pipeline, 'process_alive', lambda pid: next(alive))
+    monkeypatch.setattr(pipeline, 'process_alive', lambda pid: next(alive, False))
     sleeps = []
     monkeypatch.setattr(module.time, 'sleep', sleeps.append)
     watch(tmp_path, config)
@@ -232,15 +232,19 @@ def test_cli_flags_and_non_tty_watch(tmp_path, config, capsys):
 def test_foreground_refreshes_while_no_progress_events_arrive(tmp_path, config):
     monitor = LiveProgress(tmp_path, config, disabled=True)
     waits, refreshes = [], []
-    class Stop:
+    class Wake:
         def wait(self, interval):
             waits.append(interval)
-            return len(waits) == 3
-    monitor.stop = Stop()
+            if len(waits) == 2:
+                monitor.stop.set()
+            return False
+        def clear(self):
+            pass
+    monitor.wake = Wake()
     monitor.refresh = lambda: refreshes.append(True)
     monitor.loop()
-    assert waits == [5, 5, 5]
-    assert len(refreshes) == 2
+    assert waits == [5, 5]
+    assert len(refreshes) == 3  # Initial, idle, and final snapshots.
 
 
 def test_foreground_no_panel_and_ctrl_c_cleanup(tmp_path, config, monkeypatch):
@@ -256,3 +260,152 @@ def test_foreground_no_panel_and_ctrl_c_cleanup(tmp_path, config, monkeypatch):
         run(tmp_path, config, until='prepare', handlers={'prepare': interrupt})
     assert '\x1b[r' in terminal.getvalue()
     assert read_json(tmp_path/'state/run.json')['status'] == 'failed'
+
+
+@pytest.mark.parametrize('outcome', ['completed', 'idle', 'interrupt'])
+def test_watch_keeps_final_plain_status_after_terminal_reset(tmp_path, config, monkeypatch, outcome):
+    import test_survival.panel as module
+    import test_survival.pipeline as pipeline
+    output = Terminal()
+    monkeypatch.setattr(module.sys, 'stderr', output)
+    monkeypatch.setattr(module.sys, 'stdout', output)
+    if outcome != 'idle':
+        write_json(tmp_path/'state/run.json', {'status': 'running' if outcome == 'interrupt' else 'completed', 'pid': 42})
+    monkeypatch.setattr(pipeline, 'process_alive', lambda pid: True)
+    def interrupt(seconds):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(module.time, 'sleep', interrupt)
+    watch(tmp_path, config)
+    text = output.getvalue()
+    assert text.index('\x1b[r') < text.index('prepare    pending')
+    assert text.endswith('\n')
+
+
+def test_progress_events_do_not_block_workers_on_rendering(tmp_path, config):
+    import threading
+    from test_survival.panel import notify
+    entered, release, returned, next_render = (threading.Event() for _ in range(4))
+    monitor = LiveProgress(tmp_path, config, disabled=True)
+    renders = []
+    def render():
+        renders.append(threading.current_thread().name)
+        entered.set()
+        assert release.wait(2)
+        if len(renders) > 1:
+            next_render.set()
+    monitor.panel.refresh = render
+    try:
+        with monitor:
+            assert entered.wait(2)
+            worker = threading.Thread(target=lambda: (notify(tmp_path), returned.set()))
+            worker.start()
+            assert returned.wait(1), 'Progress notification blocked on an evidence scan'
+            worker.join(1)
+            release.set()
+            assert next_render.wait(2), 'An event during rendering was lost'
+    finally:
+        release.set()
+    assert all(name == 'survival-progress' for name in renders)
+
+
+@pytest.mark.parametrize('error', [AttributeError, IndexError])
+def test_renderer_failure_cannot_fail_stage(tmp_path, config, monkeypatch, error):
+    import test_survival.panel as module
+    def fail(self):
+        raise error('broken progress evidence')
+    monkeypatch.setattr(module.Panel, 'refresh', fail)
+    assert run(tmp_path, config, until='prepare', handlers={'prepare': lambda *args: 'ok'}) == ['prepare']
+    assert read_json(tmp_path/'state/run.json')['status'] == 'completed'
+
+
+def test_renderer_failure_does_not_suppress_author_heartbeat(tmp_path, config, monkeypatch):
+    generating(tmp_path)
+    evidence(tmp_path)
+    monitor = LiveProgress(tmp_path, config, disabled=True)
+    monitor.last_log -= 121
+    def broken():
+        raise AttributeError('invalid render record')
+    monkeypatch.setattr(monitor.panel, 'refresh', broken)
+    monitor.refresh()
+    assert '2/3 methods' in (tmp_path/'state/log.txt').read_text()
+
+
+def test_bad_author_progress_recovers_on_next_refresh(tmp_path, config):
+    generating(tmp_path)
+    root = evidence(tmp_path)
+    monitor = LiveProgress(tmp_path, config, disabled=True)
+    monitor.last_log -= 121
+    write_json(root/'progress/C.json', [])
+    monitor.refresh()  # Unexpected JSON shape must not escape or kill the loop.
+    assert not (tmp_path/'state/log.txt').exists()
+    write_json(root/'progress/C.json', {'class': 'C_Test', 'status': 'running'})
+    monitor.refresh()
+    assert 'class under repair: C_Test' in (tmp_path/'state/log.txt').read_text()
+
+
+@pytest.mark.parametrize('options', [{'stage': 'report'}, {'group': 'k'},
+                                     {'stage': 'generate', 'group': 'missing'},
+                                     {'stage': 'scope', 'until': 'report'}])
+def test_invalid_run_does_not_touch_terminal_or_signals(tmp_path, config, monkeypatch, options):
+    import signal
+    import sys
+    from test_survival.pipeline import PipelineError
+    terminal = Terminal()
+    monkeypatch.setattr(sys, 'stderr', terminal)
+    def unexpected(*args):
+        pytest.fail('Rejected run changed a signal handler')
+    monkeypatch.setattr(signal, 'signal', unexpected)
+    with pytest.raises(PipelineError):
+        run(tmp_path, config, **options)
+    assert terminal.getvalue() == ''
+
+
+@pytest.mark.parametrize('width', [80, 160])
+def test_repair_class_remains_visible_on_normal_terminals(tmp_path, config, width):
+    generating(tmp_path)
+    root = evidence(tmp_path)
+    write_json(root/'progress/C.json', {'class': 'com.example.long.package.C_Test', 'status': 'running'})
+    lines = panel_lines(tmp_path, config, width)
+    assert all(len(line) < width for line in lines)
+    assert ' repair C' in '\n'.join(lines)
+    assert all(stage in lines[1] for stage in STAGES)
+
+
+def test_stale_completed_stage_is_distinct_from_pending(tmp_path, config):
+    write_json(tmp_path/'state/prepare.json', {'status': 'completed', 'config_hash': 'old'})
+    _, stages = panel_lines(tmp_path, config)
+    assert '~prepare' in stages and '-scope' in stages
+
+
+def test_control_reuses_provenance_and_anchor_for_all_groups(tmp_path, config, monkeypatch):
+    import test_survival.progress as module
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    write_json(tmp_path/'results/frozen-denominators.json', {'dev': [], 'k': []})
+    write_json(tmp_path/'results/anchor.json', {'sha': 'anchor'})
+    adapter = JavaMavenAdapter(tmp_path, config)
+    for group in ('dev', 'k'):
+        write_json(tmp_path/f'results/control/0-{group}.json', {'sha': 'anchor', 'methods': [],
+                   'input_sha256': adapter.run_fingerprint([]), 'runner_sha256': adapter.provenance()})
+    reads, hashes = [], []
+    original_read, original_provenance = module.read_json, JavaMavenAdapter.provenance
+    def read(path, *args):
+        if path.name == 'anchor.json':
+            reads.append(path)
+        return original_read(path, *args)
+    def provenance(self):
+        hashes.append(True)
+        return original_provenance(self)
+    monkeypatch.setattr(module, 'read_json', read)
+    monkeypatch.setattr(JavaMavenAdapter, 'provenance', provenance)
+    assert snapshot(tmp_path, 'control', config)['total'] == 0
+    assert len(reads) == len(hashes) == 1
+
+
+def test_terminal_write_and_cleanup_errors_do_not_change_run_result(tmp_path, config, monkeypatch):
+    import sys
+    class BrokenTerminal(Terminal):
+        def write(self, text):
+            raise RuntimeError('terminal transport disconnected')
+    monkeypatch.setattr(sys, 'stderr', BrokenTerminal())
+    assert run(tmp_path, config, until='prepare', handlers={'prepare': lambda *args: 'ok'}) == ['prepare']
+    assert read_json(tmp_path/'state/run.json')['status'] == 'completed'

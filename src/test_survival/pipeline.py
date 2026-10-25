@@ -157,12 +157,6 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
     if not locked:
         with run_lock(exp):
             return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel)
-    from .panel import LiveProgress
-    with LiveProgress(exp, config, disabled=no_panel):
-        return _run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers)
-
-
-def _run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None):
     if stage and until:
         raise PipelineError('--stage and --until are mutually exclusive')
     if group and stage != 'generate':
@@ -175,6 +169,12 @@ def _run(exp, config, *, until=None, stage=None, force=False, group=None, handle
             previous = read_json(exp / 'state' / f'{earlier}.json', {})
             if previous.get('status') != 'completed' or previous.get('config_hash') != stage_hash(config, earlier):
                 raise PipelineError(f'{stage} requires completed, current stage {earlier}')
+    from .panel import LiveProgress
+    with LiveProgress(exp, config, disabled=no_panel):
+        return _run(exp, config, selected=selected, force=force, group=group, handlers=handlers)
+
+
+def _run(exp, config, *, selected, force=False, group=None, handlers=None):
     run_path = exp / 'state/run.json'
     record = read_json(run_path, {})
     log_path = record.get('log') if record.get('pid') == os.getpid() and record.get('status') == 'running' else str(exp / 'state/log.txt')

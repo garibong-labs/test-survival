@@ -111,6 +111,36 @@ def dataset():
     print(json.dumps(checked),flush=True)
 
 
+def observe_repairs(author, out):
+    """Best-effort observer: missing hooks or marker failures never skip repair."""
+    try:
+        repairer = author.Post.CodeRepairer
+        original_check = repairer.check_test_class
+        if not callable(original_check):
+            return
+
+        def marker(task_info, status):
+            try:
+                path = out/'progress'/(task_info['id']+'.json')
+                write_json(path, {'class': task_info['test-class'], 'status': status})
+            except Exception:
+                pass  # Observability must not change the author's result.
+
+        def check(self, task_info, *args, **kwargs):
+            marker(task_info, 'running')
+            try:
+                value = original_check(self, task_info, *args, **kwargs)
+            except BaseException:
+                marker(task_info, 'failed')
+                raise
+            marker(task_info, 'completed')
+            return value
+
+        repairer.check_test_class = check
+    except Exception:
+        pass  # Other author-tool revisions may not expose this optional hook.
+
+
 def generate():
     args=types.SimpleNamespace(round=JOB['round'],attempt=JOB['retry']+1)
     label=JOB['label']
@@ -181,22 +211,7 @@ def generate():
     start=time.monotonic();status='completed';error=None
     try:
         import generate_unit_test
-        # Observe the author method without changing its implementation or files.
-        # These records make active repair and completion visible to a watcher.
-        repairer=generate_unit_test.Post.CodeRepairer
-        original_check=repairer.check_test_class
-        def check(self,task_info,*a,**kw):
-            path=out/'progress'/(task_info['id']+'.json')
-            record={'class':task_info['test-class'],'status':'running'}
-            write_json(path,record)
-            try:
-                value=original_check(self,task_info,*a,**kw)
-            except BaseException:
-                write_json(path,{**record,'status':'failed'})
-                raise
-            write_json(path,{**record,'status':'completed'})
-            return value
-        repairer.check_test_class=check
+        observe_repairs(generate_unit_test,out)
         generate_unit_test.run()
     except Exception as exc:
         status='failed';error=type(exc).__name__
