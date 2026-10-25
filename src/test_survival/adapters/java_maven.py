@@ -257,11 +257,12 @@ class JavaMavenAdapter:
     def compile_tests(self, index, files):
         results = []
         _, cache, _ = self.cache.resolve(self.folder(index), index)
+        jars = [self.exp/'work/libs'/r['filename'] for r in read_json(self.helpers/'classpath-artifacts.json') if r['role'] == 'test']
         for number, source in enumerate(files):
             part = self.exp/f'work/compile/{index}/{number}'
             part.mkdir(parents=True,exist_ok=True)
             cp = self.runner.path(self.folder(index)/'target/classes')+':'+cache.read_text().strip()
-            cp += ':'+':'.join(self.runner.path(p) for p in sorted((self.exp/'work/libs').glob('*.jar')))
+            cp += ':'+':'.join(self.runner.path(p) for p in jars)
             results.append(self.runner.execute(['javac','-J-Xmx'+self.config['runner']['jvm']['javac'],'-cp',cp,'-d',str(part),str(source)],self.folder(index),part/'javac.txt',self.config['runner']['timeouts']['compile']))
         return results
 
