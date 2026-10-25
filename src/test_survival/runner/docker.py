@@ -49,6 +49,8 @@ class DockerRunner:
             prefix += [d['service']]
         elif d['image']:
             prefix = ['docker', 'run', '--rm', '--workdir', self.path(cwd)]
+            if '/root/.m2' not in self.mounts.values():
+                prefix += ['--volume', d['m2_volume']+':/root/.m2']
             for host, container in self.mounts.items():
                 prefix += ['--volume', f'{host}:{container}' + (':ro' if host == str(self.package) else '')]
             if d['env_file']:

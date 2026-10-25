@@ -7,7 +7,9 @@ def _read(config):
     value = os.environ.get(config['env_key'])
     if value:
         return value
-    path = Path(config['env_file'])
+    if not config.get('env_file'):
+        return None
+    path = Path(config['env_file']).expanduser()
     if not path.is_file():
         return None
     for line in path.read_text().splitlines():

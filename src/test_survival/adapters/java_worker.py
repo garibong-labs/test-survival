@@ -197,9 +197,18 @@ def setup():
         source=Path('/root/.m2/repository')/group.replace('.','/')/artifact/version/r['filename']
         if not source.exists():
             coordinate=r['coordinate']+(':jar:'+r['classifier'] if r.get('classifier') else '')
-            result=execute(['mvn','-q','dependency:get','-Dartifact='+coordinate,'-Dtransitive=false'],REPO,RESULTS/f'runner-dependency-{artifact}.txt',TIMEOUTS['build'])
+            evidence=RESULTS/f'runner-dependency-{artifact}.json'
+            attempts=json.loads(evidence.read_text()).get('attempts',[]) if evidence.exists() else []
+            number=len(attempts)+1
+            log=RESULTS/f'runner-dependency-{artifact}-{number}.txt'
+            while log.exists():
+                number+=1
+                log=RESULTS/f'runner-dependency-{artifact}-{number}.txt'
+            result=execute(['mvn','-q','org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get','-Dartifact='+coordinate,'-Dtransitive=false'],REPO,log,TIMEOUTS['build'])
+            attempts.append(result)
+            write_json(evidence,dict(coordinate=coordinate,attempts=attempts))
             if result['exit_code']:
-                raise RuntimeError('Cannot resolve runner jar '+r['filename'])
+                raise RuntimeError('Cannot resolve runner jar '+r['filename']+'; see '+str(log.relative_to(EXP)))
         if hashlib.sha256(source.read_bytes()).hexdigest()!=r['sha256']:
             raise RuntimeError('Runner jar checksum mismatch '+r['filename'])
         shutil.copy2(source,dest)

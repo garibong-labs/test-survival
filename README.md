@@ -44,6 +44,8 @@ docker build --build-arg JDK_VERSION=25 -t survival-java:25 docker/java
 
 Build the image once and reuse it across experiments. Change the build argument and tag when you need another JDK version.
 
+Image mode mounts the named Docker volume `survival-m2` at `/root/.m2` by default. Maven downloads survive container removal. Set `runner.docker.m2_volume` to use a different named volume; Compose keeps its own volume configuration.
+
 All Java builds, inventories, test launches, and JaCoCo runs execute inside Docker. The CLI and native model client run on the host.
 
 Store your API key in an env file outside the repositories, such as `/absolute/path/to/private/model.env`. Never commit this file.
@@ -63,6 +65,8 @@ model:
 ```
 
 Credentials are read privately and excluded from model-call records. An environment variable with the configured key name takes precedence over the file.
+
+Omit `model.env_file` to read credentials only from the process environment. Host paths beginning with `~` expand to your home directory when loaded; configuration hashes retain the paths as written.
 
 KTester also needs the existing KTester author tool and its container dependencies. Create a Compose override for each target project, alongside that fork's experiment configuration or Docker files.
 

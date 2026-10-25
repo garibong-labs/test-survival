@@ -1,13 +1,13 @@
 name: jsv-commit-survival-run2
-project: {repo: /Users/donggi/_projects/experiment-projects/json-schema-validator, language: java, build: maven, module: "."}
+project: {repo: ~/_projects/experiment-projects/json-schema-validator, language: java, build: maven, module: "."}
 anchor: "1.1.0"
 range: {branch: origin/master, end: 1b57102e7c13acbfc9c82be20693efafb3983256, mode: first-parent, limit: null}
 scope: {rule: change-ranked, min_methods: 3, exclude_accessor_heavy: true, target_methods: [50, 80], max_classes: 10, classes: [], min_classes: 1}
 dev: {denominator: project, stable_runs: 3}
-model: {provider: openrouter, name: openai/gpt-oss-120b, env_file: /Users/donggi/_projects/experiment-projects/KTester/docker/.env, env_key: OPENROUTER_API_KEY}
+model: {provider: openrouter, name: openai/gpt-oss-120b, env_file: ~/_projects/experiment-projects/KTester/docker/.env, env_key: OPENROUTER_API_KEY}
 generators:
   - {name: ktester, display: KTester, method: ktester, impl: author-tool,
-     tool_path: /Users/donggi/_projects/experiment-projects/KTester,
+     tool_path: ~/_projects/experiment-projects/KTester,
      params: {fix_tries: 5, temperature: 0.5, workers: 8}, rounds: {max: 1}}
   - {name: ouedraogo, display: Ouédraogo, method: ouedraogo, impl: native,
      params: {prompts: [ZSL, FSL, CoT, ToT, GToT], temperature: 0.7, max_tokens: 16384},
@@ -25,13 +25,13 @@ survival: {definition: cumulative-fixed-denominator, flaky_rerun: 1, build_fail:
 coverage: {changed_line: true, at_anchor: true, groups: alive-entering}
 runner:
   docker:
-    compose_files: [/Users/donggi/_projects/experiment-projects/KTester/docker/compose.yml,
-                    /Users/donggi/_projects/experiment-projects/KTester/docker/compose.commit-survival.yml]
+    compose_files: [~/_projects/experiment-projects/KTester/docker/compose.yml,
+                    ~/_projects/experiment-projects/KTester/docker/compose.commit-survival.yml]
     service: ktester
-    mounts: {/Users/donggi/_projects/experiment-projects/json-schema-validator: /repo,
-             /Users/donggi/_projects/experiment-projects/KTester: /work}
+    mounts: {~/_projects/experiment-projects/json-schema-validator: /repo,
+             ~/_projects/experiment-projects/KTester: /work}
   reuse:
-    checkouts: /Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival/checkouts
+    checkouts: ~/_projects/experiment-projects/json-schema-validator/experiments/commit-survival/checkouts
     classpath_cache: null
   workers: {build: 4, survive: 4, cover: 4}
   timeouts: {build: 600, compile: 300, test_class: 120}

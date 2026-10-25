@@ -35,7 +35,7 @@ dev:
 model:
   provider: openrouter
   name: openai/gpt-oss-120b
-  env_file: /Users/donggi/_projects/experiment-projects/KTester/docker/.env
+  env_file: ~/_projects/experiment-projects/KTester/docker/.env # optional; omit to use the process environment only
   env_key: OPENROUTER_API_KEY
 
 generators:                     # list. Group name is `name`. `dev` is implicit and always present.
@@ -80,6 +80,7 @@ runner:
     compose_files: []           # list of compose files, run via `docker compose -f ... run --rm <service>`
     service: ktester
     image: null                 # alternative to compose: a plain image run with `docker run --rm`
+    m2_volume: survival-m2       # image mode: persistent named volume mounted at /root/.m2
     mounts: {}                  # host path -> container path, used to translate paths in commands
     env_file: null              # passed to the container when image is used
   reuse:

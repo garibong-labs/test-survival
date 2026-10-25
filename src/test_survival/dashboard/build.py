@@ -58,14 +58,14 @@ READERS={'unified':unified,'per-group':per_group,'testpilot-ss':testpilot_ss}
 
 
 def build(experiments,out):
-    experiments,out=Path(experiments),Path(out)
+    experiments,out=Path(experiments).expanduser(),Path(out).expanduser()
     config=yaml.safe_load(experiments.read_text())
     if not isinstance(config,dict) or set(config)!={'experiments'} or not isinstance(config['experiments'],list):raise ValueError('experiments.yaml must contain an experiments list')
     data=[]
     for item in config['experiments']:
         if set(item)-{'path','title','layout'}:raise ValueError('Unknown experiment entry key')
         if item['layout'] not in READERS:raise ValueError('layout must be unified, per-group, or testpilot-ss')
-        path=Path(item['path']);path=path if path.is_absolute() else experiments.parent/path
+        path=Path(item['path']).expanduser();path=path if path.is_absolute() else experiments.parent/path
         result=READERS[item['layout']](path)
         result['title']=item.get('title',result['project']);data.append(result)
     payload=json.dumps(data,ensure_ascii=False).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')

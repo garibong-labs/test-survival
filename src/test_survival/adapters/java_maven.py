@@ -188,7 +188,7 @@ class JavaMavenAdapter:
     def worker(self, job):
         developer=job.get('group') in {g['name'] for g in self.config['dev']['groups']}
         job.update(experiment=self.runner.path(self.exp), module=self.config['project']['module'],
-                   test_framework=self.test_framework() if developer else 'auto', developer=developer, environment_errors=self.config['survival']['environment_errors'], jvm=self.config['runner']['jvm'], timeouts=self.config['runner']['timeouts'], flaky_rerun=self.config['survival']['flaky_rerun'])
+                   test_framework=self.test_framework() if developer or job.get('action') == 'setup' else 'auto', developer=developer, environment_errors=self.config['survival']['environment_errors'], jvm=self.config['runner']['jvm'], timeouts=self.config['runner']['timeouts'], flaky_rerun=self.config['survival']['flaky_rerun'])
         path = self.exp/job.get('work','work/runner-setup')/'job.json'
         # The worker clears its work directory; keep its input outside that directory.
         path = path.parent.with_name(path.parent.name+'-job.json')
