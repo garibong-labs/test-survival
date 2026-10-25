@@ -2,7 +2,7 @@ import pytest
 import yaml
 
 from test_survival.cli import main
-from test_survival.config import STAGES, load, stage_hash
+from test_survival.config import STAGES, load, stage_hash, legacy_stage_hash
 from test_survival.io import read_json, write_json
 from test_survival.pipeline import PipelineError, rehash, run_lock
 
@@ -13,10 +13,11 @@ def files(exp):
 
 
 def test_rehash_changes_only_completed_stage_config_hashes(tmp_path, capsys):
-    (tmp_path/'experiment.yaml').write_text(yaml.safe_dump(dict(name='migration', project={'repo': '/unused'}, anchor='t')))
+    (tmp_path/'experiment.yaml').write_text(yaml.safe_dump(dict(name='migration', project={'repo': '/unused'}, anchor='t', runner={'workers': {'build': 2}})))
+    config = load(tmp_path)
     for i, stage in enumerate(STAGES):
         write_json(tmp_path/f'state/{stage}.json', dict(status=['completed', 'failed', 'completed', 'pending'][i%4],
-                   config_hash='old', started='start', finished='finish', notes='retained', group_hashes={'k': 'old-group'}))
+                   config_hash=legacy_stage_hash(config, stage), started='start', finished='finish', notes='retained', group_hashes={'k': 'old-group'}))
     write_json(tmp_path/'state/run.json', {'status': 'completed', 'config_hash': 'unchanged'})
     write_json(tmp_path/'state/import.json', {'source': 'unchanged'})
     write_json(tmp_path/'results/evidence.json', {'config_hash': 'unchanged'})
@@ -39,6 +40,21 @@ def test_rehash_changes_only_completed_stage_config_hashes(tmp_path, capsys):
             assert after[relative] == content
     assert rehash(tmp_path, load(tmp_path)) == 0
     assert files(tmp_path) == after
+
+
+def test_rehash_does_not_bless_configuration_changes(tmp_path, capsys):
+    from test_survival.config import validate
+    config = validate(dict(name='changed', project={'repo': '/unused'}, anchor='t', runner={'workers': {'build': 2}}))
+    for stage in STAGES:
+        write_json(tmp_path/f'state/{stage}.json', {'status': 'completed', 'config_hash': legacy_stage_hash(config, stage)})
+    (tmp_path/'state/run.lock').touch()
+    before = files(tmp_path)
+    config['anchor'] = 'new-anchor'
+    assert rehash(tmp_path, config) == 0
+    assert files(tmp_path) == before
+    output = capsys.readouterr().out
+    for stage in STAGES:
+        assert f'{stage}: configuration changed after that stage completed' in output
 
 
 def test_rehash_refuses_an_active_run_without_modifying_state(tmp_path):

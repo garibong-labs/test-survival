@@ -14,23 +14,37 @@ def test_longest_mount_and_argv_are_preserved(tmp_path):
 
 
 def test_classpath_resolution_once_per_pom(tmp_path):
+    from test_survival.adapters import maven_dependencies
+    from test_survival.io import read_json, write_json
     c=validate({'name':'x','anchor':'v1','project':{'repo':'/host/project'}})
     calls=[]
-    class Runner:
-        def execute(self, cmd, cwd, log, timeout):
-            calls.append(cmd)
+    jar=tmp_path/'m2/test.jar';jar.parent.mkdir();jar.touch()
+    def execute(cmd, cwd, log, timeout):
+        calls.append(cmd)
+        if 'dependency:build-classpath' in cmd:
             path=Path(next(a.split('=',1)[1] for a in cmd if a.startswith('-Dmdep.outputFile=')))
-            path.write_text('/m2/test.jar')
+            path.write_text(str(jar))
+            jar.touch()
+        return {'exit_code':0}
+    class Runner:
+        path = staticmethod(str)
+        def execute(self, cmd, cwd, log, timeout):
+            job=read_json(cmd[-1])
+            attempts=maven_dependencies.resolve(Path(job['folder']),tmp_path/job['cache'],tmp_path/'logs',10,execute)
+            write_json(tmp_path/job['output'],{'attempts':attempts})
             return {'exit_code':0}
     folder=tmp_path/'project';folder.mkdir();(folder/'pom.xml').write_text('<project/>')
     cache=ClasspathCache(tmp_path,c,Runner())
     first=cache.resolve(folder,0)
     second=cache.resolve(folder,1)
     assert first[:2]==second[:2]
-    assert len(calls)==1
+    assert len(calls)==2
+    jar.unlink()
+    assert cache.resolve(folder,1)[:2]==first[:2]
+    assert jar.exists() and len(calls)==3
     (folder/'pom.xml').write_text('<project><version>2</version></project>')
     assert cache.resolve(folder,2)[0]!=first[0]
-    assert len(calls)==2
+    assert len(calls)==5
 
 
 def test_image_mode_reuses_named_maven_volume_and_honors_explicit_mount(tmp_path):

@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import shutil
 import threading
+from ..io import read_json, write_json
 
 _LOCK = threading.Lock()
 
@@ -21,15 +22,18 @@ class ClasspathCache:
             reuse = self.config['runner']['reuse']['classpath_cache']
             if enabled and reuse and not cache.exists() and (Path(reuse) / cache.name).is_file():
                 shutil.copy2(Path(reuse) / cache.name, cache)
-            if not enabled or not cache.exists():
-                for attempt, offline in enumerate((True, False), 1):
-                    result = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), 'dependency:build-classpath',
-                                                  '-DincludeScope=test', '-Dmdep.outputFile='+str(cache)], folder,
-                                                 self.exp / f'results/builds/logs/classpath-{index}-{attempt}.txt',
-                                                 self.config['runner']['timeouts']['build'])
-                    attempts.append(result)
-                    if result['exit_code'] == 0 and cache.exists():
-                        break
-            if not cache.exists():
-                raise RuntimeError('Maven classpath resolution failed; see build logs')
+            # Maven paths belong to the container, not the orchestrator's filesystem.
+            from ..adapters.maven_dependencies import RETRIES, BACKOFF_SECONDS
+            job = self.exp / f'work/classpath-jobs/{index}.json'
+            output = f'work/classpath-jobs/{index}-result.json'
+            write_json(job, dict(action='classpath', experiment=self.runner.path(self.exp),
+                                folder=self.runner.path(folder), module=self.config['project']['module'],
+                                cache=str(cache.relative_to(self.exp)), index=index, force=not enabled,
+                                jvm={}, timeouts=self.config['runner']['timeouts'], output=output))
+            timeout = 2*((RETRIES+2)*self.config['runner']['timeouts']['build']+RETRIES*BACKOFF_SECONDS)+600
+            result = self.runner.execute(['python3', str(Path(__file__).parents[1]/'adapters/java_worker.py'), str(job)],
+                                         folder, self.exp/f'results/builds/logs/classpath-{index}.txt', timeout)
+            if result['exit_code'] or not cache.exists():
+                raise RuntimeError('Maven classpath resolution failed; see '+result['log'])
+            attempts = read_json(self.exp/output)['attempts']
         return digest, cache, attempts

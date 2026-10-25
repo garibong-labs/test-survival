@@ -46,6 +46,8 @@ Build the image once and reuse it across experiments. Change the build argument 
 
 Image mode mounts the named Docker volume `survival-m2` at `/root/.m2` by default. Maven downloads survive container removal. Set `runner.docker.m2_volume` to use a different named volume; Compose keeps its own volume configuration.
 
+Runner setup resolves the anchor project's dependencies after the runner jars. New POM digests also run `dependency:go-offline`, first offline and then online if needed, with retries for HTTP 429 and transfer failures. Classpath entries are checked inside the container before compilation, test execution, coverage, and import repair. Missing entries trigger `dependency:build-classpath`; only a validated replacement is published to `work/classpaths/`.
+
 An explicit bind mount at `/root/.m2` or a parent directory takes precedence over the named volume.
 
 All Java builds, inventories, test launches, and JaCoCo runs execute inside Docker. The CLI and native model client run on the host.
@@ -311,8 +313,10 @@ unrecognizable, and the resume invalidates and reruns them):
 survival rehash /absolute/path/to/target-fork/experiments/first-run
 ```
 
-This recomputes only `config_hash` in completed stage state files using the current
-configuration. It preserves failed/pending stages, other state fields, group and
+This updates only `config_hash` in completed stage state files whose stored value
+matches the current configuration hashed under the previous scheme. Stages whose
+hash matches neither scheme are left unchanged, with a message that the configuration
+changed after that stage completed. It preserves failed/pending stages, other state fields, group and
 round hashes, evidence, and logs. It refuses to run while the experiment lock is held,
 and requires the existing `state/run.lock` created by a run (never deletes or replaces
 that lock inode). Recognizable legacy completed-stage hashes stop a normal resume

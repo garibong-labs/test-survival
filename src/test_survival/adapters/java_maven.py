@@ -77,6 +77,7 @@ class JavaMavenAdapter:
             return previous
         self.checkout(index, sha)
         folder = self.folder(index)
+        digest, cache, runs = self.cache.resolve(folder, index)
         attempts = []
         for number, offline in enumerate((True, False), 1):
             attempt = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), '-DskipTests', 'compile'], folder,
@@ -86,7 +87,6 @@ class JavaMavenAdapter:
                 break
         result = dict(index=index, sha=sha, build='ok' if attempts[-1]['exit_code'] == 0 else 'fail', attempts=attempts, input_sha256=fingerprint)
         if result['build'] == 'ok':
-            digest, cache, runs = self.cache.resolve(folder, index)
             result.update(pom_sha256=digest, classpath=str(cache.relative_to(self.exp)), classpath_attempts=runs)
         write_json(record, result)
         return result
@@ -146,6 +146,7 @@ class JavaMavenAdapter:
             record_path = self.exp / f'results/baseline-run{repeat}.json'
             destination = self.exp / f'results/baseline-reports/run{repeat}'
             if not record_path.exists():
+                self.cache.resolve(folder, 0)
                 reports = folder/'target/surefire-reports'
                 if reports.exists():
                     shutil.rmtree(reports)
@@ -193,7 +194,7 @@ class JavaMavenAdapter:
         return rows
 
     def provenance(self):
-        paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py', Path(__file__).parents[1]/'rules/environment.py']
+        paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).with_name('maven_dependencies.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py', Path(__file__).parents[1]/'rules/environment.py']
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
     def worker(self, job):
@@ -205,10 +206,12 @@ class JavaMavenAdapter:
         # The worker clears its work directory; keep its input outside that directory.
         path = path.parent.with_name(path.parent.name+'-job.json')
         write_json(path, job)
-        timeout = (self.config['runner']['timeouts']['compile'] + self.config['runner']['timeouts']['test_class'] * 8) * max(1,len(job.get('methods', []))) + 600
+        # A stale classpath can require both dependency goals, each offline then online.
+        dependency_timeout = 2*((RUNNER_JAR_RETRIES+2)*self.config['runner']['timeouts']['build'] + RUNNER_JAR_RETRIES*RUNNER_JAR_BACKOFF_SECONDS)
+        timeout = (self.config['runner']['timeouts']['compile'] + self.config['runner']['timeouts']['test_class'] * 8) * max(1,len(job.get('methods', []))) + dependency_timeout + 600
         if job['action'] == 'setup':
             # Allow every sequential jar its configured attempt timeout and backoffs.
-            timeout = len(read_json(self.helpers/'classpath-artifacts.json')) * ((RUNNER_JAR_RETRIES+1)*self.config['runner']['timeouts']['build'] + RUNNER_JAR_RETRIES*RUNNER_JAR_BACKOFF_SECONDS) + 600
+            timeout = len(read_json(self.helpers/'classpath-artifacts.json')) * ((RUNNER_JAR_RETRIES+1)*self.config['runner']['timeouts']['build'] + RUNNER_JAR_RETRIES*RUNNER_JAR_BACKOFF_SECONDS) + dependency_timeout + 600
         result = self.runner.execute(['python3', str(Path(__file__).with_name('java_worker.py')), str(path)], self.folder(0), path.with_suffix('.log'), timeout)
         if result['exit_code']:
             raise RuntimeError('Java worker failed; see '+str(path.with_suffix('.log')))
@@ -216,7 +219,8 @@ class JavaMavenAdapter:
 
     def setup_runner(self):
         record = read_json(self.exp/'results/runner-setup.json',{})
-        if record.get('status') != 'completed' or record.get('jars') != read_json(self.helpers/'classpath-artifacts.json'):
+        digest = hashlib.sha256((self.folder(0)/'pom.xml').read_bytes()).hexdigest()
+        if record.get('status') != 'completed' or record.get('jars') != read_json(self.helpers/'classpath-artifacts.json') or record.get('project_dependencies') != digest:
             self.worker({'action':'setup'})
 
     def screen_fingerprint(self, source, repeats, *, provenance=None):
@@ -242,11 +246,11 @@ class JavaMavenAdapter:
 
     def compile_tests(self, index, files):
         results = []
+        _, cache, _ = self.cache.resolve(self.folder(index), index)
         for number, source in enumerate(files):
             part = self.exp/f'work/compile/{index}/{number}'
             part.mkdir(parents=True,exist_ok=True)
-            build = read_json(self.exp/f'results/builds/{index}.json')
-            cp = self.runner.path(self.folder(index)/'target/classes')+':'+(self.exp/build['classpath']).read_text().strip()
+            cp = self.runner.path(self.folder(index)/'target/classes')+':'+cache.read_text().strip()
             cp += ':'+':'.join(self.runner.path(p) for p in sorted((self.exp/'work/libs').glob('*.jar')))
             results.append(self.runner.execute(['javac','-J-Xmx'+self.config['runner']['jvm']['javac'],'-cp',cp,'-d',str(part),str(source)],self.folder(index),part/'javac.txt',self.config['runner']['timeouts']['compile']))
         return results

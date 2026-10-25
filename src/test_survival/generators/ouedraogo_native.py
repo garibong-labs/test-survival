@@ -44,10 +44,26 @@ class OuedraogoNative:
                 atomic_text(path,rendered)
                 jobs.append((name,technique,rendered))
         write_json(directory/'prompts/pre-call-check.json',dict(passed=True,checked_at=now(),blocks=blocks,empty_angle_brackets=False,headers_have_modifiers=True))
+        def check_request(folder,prompt):
+            expected=dict(model=self.config['model']['name'],temperature=self.group['params']['temperature'],
+                          max_tokens=self.group['params']['max_tokens'],messages=[dict(role='user',content=prompt)])
+            if read_json(folder/'request.json')!=expected:
+                raise RuntimeError('Existing call has different request parameters')
+        records=read_json(directory/'generation.json')
+        if records is not None:
+            # Model work is committed before import repair; check its inputs but
+            # never invoke the model client for an already recorded round.
+            for name,technique,prompt in jobs:
+                check_request(directory/'runs'/name/technique,prompt)
+            return self.finish(directory,records)
         client=OpenRouter(self.config['model'])
         def call(job):
             name,technique,prompt=job
             folder=directory/'runs'/name/technique
+            saved=read_json(directory/'records'/f'{name}-{technique}.json')
+            if saved is not None:
+                check_request(folder,prompt)
+                return saved
             attempts=[]
             for attempt in (1,2):
                 record,text=client.complete(prompt,self.group['params'],folder if attempt==1 else folder/'attempt-2')
@@ -69,6 +85,9 @@ class OuedraogoNative:
             return result
         with ThreadPoolExecutor(max_workers=2) as pool:records=list(pool.map(call,jobs))
         write_json(directory/'generation.json',records)
+        return self.finish(directory,records)
+
+    def finish(self,directory,records):
         if self.group['postprocess']['import_repair']['enabled']:
             self.adapter.setup_runner()
             postprocess.repair(self.adapter,directory,self.group['postprocess']['import_repair']['passes'])
