@@ -20,15 +20,18 @@ class PipelineError(RuntimeError):
 
 
 def log(exp, message, config=None):
+    from .panel import OUTPUT_LOCK, notify
     stage = message.partition(':')[0]
     if config is not None and stage in STAGES:
         message += ' | ' + describe(exp, stage, config)
     line = f'{now()} {message}'
-    print(line, flush=True)
-    path = Path(exp) / 'state/log.txt'
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('a') as stream:
-        stream.write(line + '\n')
+    with OUTPUT_LOCK:
+        print(line, flush=True)
+        path = Path(exp) / 'state/log.txt'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open('a') as stream:
+            stream.write(line + '\n')
+    notify(exp)
 
 
 def process_alive(pid):
@@ -149,11 +152,17 @@ def default_handler(stage):
     return importlib.import_module(f'test_survival.stages.{stage}').run
 
 
-def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False):
+def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False):
     exp = Path(exp).resolve()
     if not locked:
         with run_lock(exp):
-            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True)
+            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel)
+    from .panel import LiveProgress
+    with LiveProgress(exp, config, disabled=no_panel):
+        return _run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers)
+
+
+def _run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None):
     if stage and until:
         raise PipelineError('--stage and --until are mutually exclusive')
     if group and stage != 'generate':

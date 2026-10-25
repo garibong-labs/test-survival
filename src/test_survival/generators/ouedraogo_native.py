@@ -64,6 +64,8 @@ class OuedraogoNative:
                         extraction={k:v for k,v in extracted.items() if k!='combine_v2'},file=str(file.relative_to(self.exp)) if file else None)
             write_json(directory/'records'/f'{name}-{technique}.json',result)
             write_json(directory/'raw-responses'/f'{name}-{technique}.json',read_json((folder if len(attempts)==1 else folder/'attempt-2')/'raw-response.json'))
+            from ..panel import notify
+            notify(self.exp)
             return result
         with ThreadPoolExecutor(max_workers=2) as pool:records=list(pool.map(call,jobs))
         write_json(directory/'generation.json',records)

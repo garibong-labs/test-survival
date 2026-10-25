@@ -181,6 +181,22 @@ def generate():
     start=time.monotonic();status='completed';error=None
     try:
         import generate_unit_test
+        # Observe the author method without changing its implementation or files.
+        # These records make active repair and completion visible to a watcher.
+        repairer=generate_unit_test.Post.CodeRepairer
+        original_check=repairer.check_test_class
+        def check(self,task_info,*a,**kw):
+            path=out/'progress'/(task_info['id']+'.json')
+            record={'class':task_info['test-class'],'status':'running'}
+            write_json(path,record)
+            try:
+                value=original_check(self,task_info,*a,**kw)
+            except BaseException:
+                write_json(path,{**record,'status':'failed'})
+                raise
+            write_json(path,{**record,'status':'completed'})
+            return value
+        repairer.check_test_class=check
         generate_unit_test.run()
     except Exception as exc:
         status='failed';error=type(exc).__name__

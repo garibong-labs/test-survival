@@ -203,10 +203,11 @@ cd /absolute/path/to/target-fork/experiments/first-run
 tail -f state/log.txt
 ```
 
-Poll status every minute from any directory with `watch`:
+Watch a two-line progress panel from any directory (refreshes every five seconds,
+exits when the run finishes or you press Ctrl+C):
 
 ```sh
-watch -n 60 survival status /absolute/path/to/target-fork/experiments/first-run
+survival status /absolute/path/to/target-fork/experiments/first-run --watch
 ```
 
 You can also run status once, or inspect a saved stage summary:
@@ -217,6 +218,20 @@ survival show /absolute/path/to/target-fork/experiments/first-run screen
 ```
 
 Status and stage log lines show elapsed time, completed/total items, and an estimated finish time. Prepare counts builds including the anchor; generate counts model calls; screen counts files; survive counts commits; cover counts indices.
+
+Foreground runs automatically reserve the bottom two terminal rows for the same
+panel when stderr is a TTY, with logs scrolling above. Use `--no-panel` on `run`
+or `status --watch` to disable it; redirected output stays plain. The panel shows
+stage progress, percent, remaining time, elapsed time, and estimated finish;
+`+` marks completed stages, `>` the current stage, `-` pending stages, and `!` failures.
+Its units are builds, items, methods, files, methods, commits, indices, and tables
+for prepare through report. Generation counts focal methods per round/prompt,
+with calls as a secondary count. KTester counts completed case generation or
+repair from its output directory, not initial Java frameworks or repair calls.
+While an author tool runs, `state/log.txt` also receives a plain progress line every
+two minutes with methods done/total, responses so far, and the class under repair.
+Watching an already-running experiment only reads its evidence; the periodic
+log lines require the run itself to have started with this version.
 
 The estimate uses that stage's throughput in the current attempt. Cached records count toward completion but not toward the current attempt's throughput.
 

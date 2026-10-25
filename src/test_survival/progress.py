@@ -182,3 +182,160 @@ def describe(exp, stage, config, *, at=None):
     hours, remainder = divmod(int(elapsed), 3600)
     minutes, seconds = divmod(remainder, 60)
     return f'elapsed {hours:02}:{minutes:02}:{seconds:02}; {done}/{total if total is not None else "?"} {unit}; estimated finish {eta}'
+
+
+UNITS = dict(prepare='builds', scope='items', generate='methods', screen='files',
+             control='methods', survive='commits', cover='indices', report='tables')
+
+
+def duration(seconds):
+    if seconds is None:
+        return '?'
+    hours, remainder = divmod(int(max(0, seconds)), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f'{hours:02}:{minutes:02}:{seconds:02}'
+
+
+def generation_progress(exp, config, state):
+    """Count focal methods, never framework files or adaptive repair calls.
+
+    A method is counted once per planned generation (round/prompt). KTester
+    gencode_response is written after insertion of generated cases; time records
+    and wrapper repair records also attest completion. Archive copies share keys.
+    """
+    from .importer import rounds
+    exp = Path(exp)
+    scope = read_json(exp/'population/scope.json', {})
+    population = csv_rows(exp/'population/ktester-population.csv')
+    completed, calls, responses, repairs = {}, {}, set(), set()
+    total, known = 0, True
+    for group in config['generators']:
+        name = group['name']
+        if state.get('group') not in (None, name):
+            continue
+        root = exp/'generated'/name
+        manifest = read_json(root/'rounds.json', {})
+        bases = (exp/'work/ktester'/name/'rounds', root) if group['method'] == 'ktester' else (root,)
+        directories = {}
+        for base in bases:
+            for directory in rounds(base):
+                directories.setdefault(directory.name, []).append(directory)
+        count = len(directories) if manifest.get('stopped') else max(group['rounds']['max'], len(directories))
+        if group['method'] == 'ktester':
+            methods = len(population) if population else scope.get('m')
+            if methods is None:
+                known = False
+            else:
+                total += methods*count
+            for label, copies in directories.items():
+                for directory in copies:
+                    for path in directory.glob('raw-responses/*/call.json'):
+                        if read_json(path, {}).get('status'):
+                            calls[(name, label, path.parent.name)] = path
+                    for path in directory.glob('raw-responses/*/response.json'):
+                        responses.add((name, label, path.parent.name))
+                    for path in directory.glob('*/responses/*/gencode_response.md'):
+                        completed[(name, label, path.parent.name)] = [path]
+                    timing = directory/'time/time_records.json'
+                    for ident, record in read_json(timing, {}).get('details', {}).items():
+                        if any(k in record for k in ('process_case_response', 'process_test_response', 'check_test_class')):
+                            completed[(name, label, ident)] = [timing]
+                    active = []
+                    repair_records = list(directory.glob('progress/*.json'))
+                    for path in repair_records:
+                        record = read_json(path, {})
+                        if record.get('status') == 'completed':
+                            completed[(name, label, path.stem)] = [path]
+                        elif record.get('status') == 'running':
+                            active.append(record.get('class', path.stem))
+                    if not repair_records and not (directory/'run.json').exists():
+                        # Older workers have no per-method progress records.
+                        # Only read a bounded log tail, never an entire long run.
+                        log = directory/'generation.log'
+                        if log.exists():
+                            with log.open('rb') as stream:
+                                stream.seek(max(0, log.stat().st_size-16384))
+                                tail = stream.read().decode(errors='replace')
+                            import re
+                            matches = re.findall(r'try to repair test class (.+?)\.\.\.', tail)
+                            if matches and 'Post process completed:' not in tail[tail.rfind('try to repair test class '):]:
+                                active.append(Path(matches[-1]).stem)
+                    repairs.update(active)
+        else:
+            classes = {row['class'].rsplit('.', 1)[-1]: row.get('m', 0) for row in scope.get('classes', [])}
+            if not classes or not all(classes.values()):
+                # Full method inventory is available even with a minimal scope record.
+                inventory = csv_rows(exp/'population/methods.csv')
+                for row in inventory:
+                    key = row['class'].rsplit('.', 1)[-1]
+                    if not classes.get(key):
+                        classes[key] = sum(r['class'] == row['class'] for r in inventory)
+            if not classes or not all(classes.values()):
+                known = False
+            total += sum(classes.values())*len(group['params']['prompts'])*count
+            for label, copies in directories.items():
+                for directory in copies:
+                    for path in directory.glob('runs/*/*/**/run.json'):
+                        if read_json(path, {}).get('status'):
+                            calls[(name, label, str(path.relative_to(directory)))] = path
+                    for path in directory.glob('records/*.json'):
+                        record = read_json(path, {})
+                        if record.get('status'):
+                            for method in range(classes.get(record['class_name'], 0)):
+                                completed[(name, label, record['class_name'], record['technique'], method)] = [path]
+    return dict(completed=list(completed.values()), total=total if known else None,
+                calls=len(calls), responses=len(responses), repair=', '.join(sorted(repairs)))
+
+
+def panel_items(exp, stage, config, state):
+    if stage == 'generate':
+        p = generation_progress(exp, config, state)
+        return p['completed'], p['total'], UNITS[stage], p
+    if stage == 'control':
+        from .adapters.java_maven import JavaMavenAdapter
+        adapter = JavaMavenAdapter(exp, config)
+        frozen = read_json(exp/'results/frozen-denominators.json')
+        completed = []
+        for group, methods in (frozen or {}).items():
+            path = exp/f'results/control/0-{group}.json'
+            record = read_json(path, {})
+            if (record.get('input_sha256') == adapter.run_fingerprint(methods)
+                    and record.get('runner_sha256') == adapter.provenance()
+                    and record.get('sha') == read_json(exp/'results/anchor.json', {}).get('sha')):
+                completed.extend([path] for _ in record.get('methods', []))
+        return completed, sum(map(len, frozen.values())) if frozen is not None else None, 'methods', {}
+    if stage == 'report':
+        names = ('table1-survival-by-event.md', 'table2-breaking-commits.md',
+                 'table3-changed-line-coverage.md', 'table4-exposure-vs-break.md', 'coverage-t.md')
+        start = datetime.fromisoformat(state['started']).timestamp() if state.get('started') else float('inf')
+        completed = [[p] for name in names if (p := exp/'results'/name).exists() and p.stat().st_mtime >= start]
+        return completed, len(names), 'tables', {}
+    completed, total, unit = items(exp, stage, config, state)
+    return completed, total, unit, {}
+
+
+def snapshot(exp, stage, config, *, at=None):
+    """Panel metrics are separate from describe's established plain log format."""
+    exp = Path(exp)
+    at = at or datetime.now(timezone.utc)
+    state = read_json(exp/'state'/f'{stage}.json', {})
+    start = datetime.fromisoformat(state['started']) if state.get('started') else None
+    finish = datetime.fromisoformat(state['finished']) if state.get('finished') else None
+    elapsed = max(0, ((finish or at)-start).total_seconds()) if start else 0
+    try:
+        completed, total, unit, extra = panel_items(exp, stage, config, state)
+        fresh = sum(bool(paths) and max(p.stat().st_mtime for p in paths) >= start.timestamp()
+                    for paths in completed) if start else 0
+    except (OSError, ValueError, KeyError, TypeError):
+        completed, total, unit, extra, fresh = [], None, UNITS[stage], {}, 0
+    done = len(completed)
+    remaining = None
+    eta = 'unknown'
+    if state.get('status') == 'completed' and finish:
+        remaining, eta = 0, finish.isoformat(timespec='seconds')
+    elif state.get('status') == 'running' and fresh and elapsed and total is not None:
+        remaining = elapsed*max(0, total-done)/fresh
+        eta = (at+timedelta(seconds=remaining)).isoformat(timespec='seconds')
+    return dict(done=done, total=total, unit=unit, elapsed=elapsed, remaining=remaining,
+                eta=eta, status=state.get('status', 'pending'),
+                **{k: v for k, v in extra.items() if k not in ('completed', 'total')})

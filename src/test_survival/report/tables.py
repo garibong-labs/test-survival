@@ -2,6 +2,7 @@ from ..config import group_names,group_labels
 """Report tables retain the reference's ordering, punctuation, and rounding."""
 from collections import Counter
 from ..io import read_csv,read_json,atomic_text,write_json
+from ..panel import notify
 
 
 def md(value):return str(value).replace('|','\\|').replace('\n',' ')
@@ -18,6 +19,7 @@ def build(exp,config):
     lines=['# Table 1. Survival by event','','| Index | Date | Subject | '+' | '.join(labels[g] for g in groups)+' |','|---:|---|---|'+'---:|'*len(groups)]
     for r in events:lines.append('| '+' | '.join([r['index'],r['date'][:10],md(r['subject']),*[pct(int(r[g+'_alive']),counts[g]) for g in groups]])+' |')
     atomic_text(exp/'results/table1-survival-by-event.md','\n'.join(lines)+'\n')
+    notify(exp)
     lines=['# Table 2. Breaking commits','','Cells show methods lost and first-failure kinds.','','| Index | '+' | '.join(labels[g] for g in groups)+' |','|---:|'+'---|'*len(groups)]
     for index in sorted({int(r['index']) for r in losses}):
         cells=[]
@@ -27,6 +29,7 @@ def build(exp,config):
             cells.append(str(len(subset))+(' ('+', '.join(f'{k}: {v}' for k,v in sorted(kinds.items()))+')' if subset else ''))
         lines.append('| '+str(index)+' | '+' | '.join(cells)+' |')
     atomic_text(exp/'results/table2-breaking-commits.md','\n'.join(lines)+'\n')
+    notify(exp)
     rows=read_csv(exp/'results/changed-lines.csv')
     for row in rows:
         for key in row:
@@ -51,6 +54,7 @@ def build(exp,config):
         lines.append('')
     lines.append(f'Production-change commits: {len(rows)}. Commits with zero executable changed lines: {coverage["zero_executable_change_commits"]}. Commits without an executable-line measurement: {coverage["unavailable_commits"]}.')
     atomic_text(exp/'results/table3-changed-line-coverage.md','\n'.join(lines)+'\n')
+    notify(exp)
     lines=['# Table 4. Exposure versus break','','Exposure is coverage at c−1 of at least one executable pre-image changed line. Break is any cumulative first failure at c. Pure insertions are unexposed.','','| Exposure / break | '+' | '.join(labels[g] for g in groups)+' |','|---|'+'---:|'*len(groups)]
     exposure={g:Counter() for g in groups}
     for row in rows:
@@ -61,6 +65,7 @@ def build(exp,config):
     for label,key in [('Exposed / lost',(True,True)),('Exposed / no loss',(True,False)),('Unexposed / lost',(False,True)),('Unexposed / no loss',(False,False)),('Unavailable','unavailable')]:
         lines.append('| '+label+' | '+' | '.join(str(exposure[g][key]) for g in groups)+' |')
     atomic_text(exp/'results/table4-exposure-vs-break.md','\n'.join(lines)+'\n')
+    notify(exp)
     lines=['# Coverage at t','','| Scope file | Executable lines | '+' | '.join(labels[g] for g in groups)+' |','|---|---:|'+'---:|'*len(groups)]
     scope={r['file'] for r in read_json(exp/'population/scope.json')['classes']}
     maps={}
@@ -74,4 +79,5 @@ def build(exp,config):
         baseline[file]=dict(executable=len(keys),**covered)
         lines.append('| '+file+' | '+str(len(keys))+' | '+' | '.join(pct(covered[g],len(keys)) if covered[g] is not None else 'unavailable' for g in groups)+' |')
     atomic_text(exp/'results/coverage-t.md','\n'.join(lines)+'\n')
+    notify(exp)
     coverage.update(totals=totals,baseline=baseline);write_json(exp/'results/coverage-consistency.json',coverage)
