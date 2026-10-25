@@ -5,6 +5,7 @@ import re
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
+from ..runner import measurement_session
 from ..config import group_names
 from .survive import skipped_commits
 
@@ -78,11 +79,10 @@ def aggregate(exp,config):
 
 
 def run(exp,config):
-    from ..dev_results import imported_groups, imported_record, require_record
-    imported = imported_groups(exp, config, 'cover')
+    from ..dev_results import load_provenance, imported_groups, imported_record, require_record
+    provenance = load_provenance(exp)
+    imported = imported_groups(exp, config, 'cover', provenance=provenance)
     adapter=JavaMavenAdapter(exp,config)
-    if set(group_names(config)) - imported.keys():
-        adapter.setup_runner()
     commits=read_csv(exp/'results/commits.csv');indices={0} if config['coverage']['at_anchor'] else set()
     skipped=skipped_commits(exp,config,commits);aliases={}
     def previous_evaluated(index):
@@ -108,7 +108,6 @@ def run(exp,config):
         raw=adapter.coverage(i,[],methods,group=g)
         if raw['status']!='evaluated':raise RuntimeError('Coverage report failed')
         log(exp,f'cover: {i} {g} recorded',config)
-    provenance = read_json(exp/'state/import.json', {}).get('dev-results', {})
     shas = {int(r['index']): r['sha'] for r in commits}
     shas[0] = read_json(exp/'results/anchor.json')['sha']
     for i in sorted(indices):
@@ -119,9 +118,10 @@ def run(exp,config):
             if raw.get('status') != 'evaluated':
                 raise RuntimeError('Imported coverage report failed')
             require_record(exp, provenance, f'results/coverage/{i}-{g}-lines.csv')
-    from contextlib import nullcontext
-    with (adapter.runner.session('cover') if set(frozen) - imported.keys() else nullcontext()), ThreadPoolExecutor(max_workers=config['runner']['workers']['cover']) as pool:
-        jobs=[pool.submit(job,i,g) for i in sorted(indices) for g in frozen if g not in imported and (i==0 or read_json(exp/f'results/builds/{i}.json')['build']=='ok')]
+    pending = [(i, g) for i in sorted(indices) for g in frozen if g not in imported
+               and (i == 0 or read_json(exp/f'results/builds/{i}.json')['build'] == 'ok')]
+    with measurement_session(adapter, 'cover', bool(pending)), ThreadPoolExecutor(max_workers=config['runner']['workers']['cover']) as pool:
+        jobs = [pool.submit(job, i, g) for i, g in pending]
         for future in as_completed(jobs):future.result()
     # Restrict the stored changed-line images to executable coordinates.
     for row in commits:

@@ -9,7 +9,7 @@ import subprocess
 import tarfile
 import xml.etree.ElementTree as ET
 
-from ..config import as_written, canonical_hash
+from ..config import as_written, canonical_hash, record_runner_inputs
 from ..io import read_json, write_json, write_csv
 from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
@@ -57,7 +57,7 @@ class JavaMavenAdapter:
         return target
 
     def build_fingerprint(self, sha):
-        runner = as_written(self.config['runner'], include_defaults=True)
+        runner = record_runner_inputs(as_written(self.config['runner'], include_defaults=True))
         # Preserve pre-volume build records when the new cache default is implicit.
         if 'm2_volume' not in as_written(self.config['runner']['docker']):
             runner['docker'].pop('m2_volume', None)
@@ -247,7 +247,7 @@ class JavaMavenAdapter:
 
     def run_fingerprint(self, methods, repeats=1):
         return canonical_hash({'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
-                               'project':self.config['project'], 'survival':self.config['survival'], 'runner':self.config['runner'], 'repeats':repeats})
+                               'project':self.config['project'], 'survival':self.config['survival'], 'runner':record_runner_inputs(self.config['runner']), 'repeats':repeats})
 
     def run_group(self,index,group,methods,phase='A',repeats=1):
         fingerprint=self.run_fingerprint(methods,repeats)
@@ -266,7 +266,7 @@ class JavaMavenAdapter:
         xml=f'results/dev-method-coverage-t/{name}.xml'
         output=f'results/dev-method-coverage-t/{name}.json'
         fingerprint=canonical_hash({'method':method,'source':hashlib.sha256((self.exp/method['file']).read_bytes()).hexdigest(),
-                                    'project':self.config['project'],'runner':self.config['runner'],
+                                    'project':self.config['project'],'runner':record_runner_inputs(self.config['runner']),
                                     'environment_errors':self.config['survival']['environment_errors']})
         previous=read_json(self.exp/output,{})
         provenance=self.provenance()

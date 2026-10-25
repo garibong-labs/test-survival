@@ -1,6 +1,6 @@
 import shutil
 from datetime import datetime,timezone
-from ..config import stage_hash
+from ..config import stage_hash,legacy_stage_hash
 from ..generators.ouedraogo_native import OuedraogoNative
 from ..io import read_csv,read_json,write_json
 from ..pipeline import log
@@ -23,7 +23,10 @@ def run(exp,config,group=None,force=False):
         digest=stage_hash(config,'generate',g['name'])
         path=exp/'generated'/g['name']/'rounds.json'
         old=read_json(path,{})
-        if old.get('config_hash')==digest and old.get('stopped'):
+        saved = read_json(exp/'state/generate.json', {})
+        trusted = saved.get('group_hashes', {}).get(g['name']) == digest
+        trusted = trusted or (saved.get('status') == 'completed' and saved.get('config_hash') == stage_hash(config, 'generate'))
+        if (trusted or old.get('config_hash') in (digest, legacy_stage_hash(config, 'generate', g['name']))) and old.get('stopped'):
             summaries.append(g['name']+': already generated');continue
         history=[];entries=[];kept=[];round_no=1
         while True:

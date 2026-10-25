@@ -4,6 +4,7 @@ from ..adapters.java_maven import JavaMavenAdapter
 from ..config import group_names
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
+from ..runner import measurement_session
 from ..rules.survival import advance
 from ..rules.commits import skip_reason
 from ..rules.dev_denominator import derive_record,validate_derived_subsets
@@ -63,12 +64,10 @@ def aggregate(exp,config):
 
 
 def run(exp,config):
-    from ..dev_results import imported_groups, imported_record
-    imported = imported_groups(exp, config, 'survive')
-    provenance = read_json(exp/'state/import.json', {}).get('dev-results', {})
+    from ..dev_results import load_provenance, imported_groups, imported_record
+    provenance = load_provenance(exp)
+    imported = imported_groups(exp, config, 'survive', provenance=provenance)
     adapter=JavaMavenAdapter(exp,config)
-    if set(group_names(config)) - imported.keys():
-        adapter.setup_runner()
     frozen=read_json(exp/'results/frozen-denominators.json');groups=group_names(config)
     validate_derived_subsets(config['dev']['groups'],frozen)
     commits=read_csv(exp/'results/commits.csv');skipped=skipped_commits(exp,config,commits)
@@ -91,8 +90,7 @@ def run(exp,config):
             source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);source.replace(dest)
             raise RuntimeError('Worker killed; quarantined raw record')
         log(exp,f'survive: {i} {g} recorded',config)
-    from contextlib import nullcontext
-    with (adapter.runner.session('survive') if measured else nullcontext()), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
+    with measurement_session(adapter, 'survive', bool(measured and evaluated)), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
         jobs=[pool.submit(job,row,g) for row in evaluated for g in measured]
         for future in as_completed(jobs):future.result()
     pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g.get('derive_from') and g['name'] not in imported}

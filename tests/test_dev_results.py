@@ -278,3 +278,205 @@ def test_stale_source_denominator_cannot_overwrite_an_unmatched_group(experiment
     original = (target/'dev/local-denominator.csv').read_bytes()
     import_experiment(target, source, 'dev-results')
     assert (target/'dev/local-denominator.csv').read_bytes() == original
+
+
+@pytest.mark.parametrize('section,keys,value', [
+    ('runner', ('docker', 'image'), 'jdk:21'),
+    ('runner', ('timeouts', 'test_class'), 60),
+    ('runner', ('jvm', 'launcher'), '2g'),
+    ('survival', ('flaky_rerun',), 0),
+    ('survival', ('environment_errors', 'patterns'), ['java.net.BindException']),
+    ('project', ('module',), 'other-module'),
+    ('project', ('test_framework',), 'junit4'),
+    ('dev', ('stable_runs',), 5),
+    ('coverage', ('at_anchor',), False),
+    ('coverage', ('changed_line',), False),
+])
+def test_result_affecting_settings_refuse_import_before_copy(experiments, section, keys, value):
+    source, target, _ = experiments
+    settings = yaml.safe_load((target/'experiment.yaml').read_text())
+    parent = settings.setdefault(section, {})
+    for key in keys[:-1]:
+        parent = parent.setdefault(key, {})
+    parent[keys[-1]] = value
+    (target/'experiment.yaml').write_text(yaml.safe_dump(settings))
+    with pytest.raises(PipelineError, match='result-affecting measurement settings'):
+        import_experiment(target, source, 'dev-results')
+    assert not (target/'results/raw').exists()
+    assert not (target/'state/import.json').exists()
+
+
+def test_operational_settings_and_obsolete_generation_options_allow_import(experiments):
+    source, target, _ = experiments
+    settings = yaml.safe_load((source/'experiment.yaml').read_text())
+    settings['generators'] = [{'obsolete_generator': True, 'rounds': {'retry_on_zero_compile': 1}}]
+    settings['survival'] = {'dev_cache': 'none'}
+    settings['obsolete_report_option'] = True
+    (source/'experiment.yaml').write_text(yaml.safe_dump(settings))
+    target_settings = yaml.safe_load((target/'experiment.yaml').read_text())
+    target_settings['runner'] = {'workers': {'survive': 1}, 'reuse': {'checkouts': '/cache'},
+                                 'docker': {'mounts': {'/host': '/repo'}, 'env_file': '/private/docker.env'}}
+    (target/'experiment.yaml').write_text(yaml.safe_dump(target_settings))
+    import_experiment(target, source, 'dev-results')
+    assert set(read_json(target/'state/import.json')['dev-results']['groups']) == {'dev-all', 'dev-scope'}
+
+
+def test_unknown_archived_measurement_setting_is_not_silently_ignored(experiments):
+    source, target, _ = experiments
+    settings = yaml.safe_load((source/'experiment.yaml').read_text())
+    settings['runner'] = {'unknown_measurement_option': 'unsafe-to-guess'}
+    (source/'experiment.yaml').write_text(yaml.safe_dump(settings))
+    with pytest.raises(PipelineError, match='source compatibility configuration'):
+        import_experiment(target, source, 'dev-results')
+    assert not (target/'results/raw').exists()
+
+
+def test_import_hashes_copied_bytes_and_retains_identical_tree(experiments, monkeypatch):
+    import test_survival.dev_results as module
+    source, target, _ = experiments
+    changed = 'results/raw/1-dev-all.json'
+    tree_path = target/'dev/src-test-t/java/p/T.java'
+    before = tree_path.stat()
+    original_copy = module.shutil.copy2
+    copies = []
+    def copy(src, dst):
+        copies.append(str(src))
+        assert 'src-test-t' not in str(src)
+        if src == source/changed:
+            record = read_json(src)
+            record['late_observation'] = True
+            write_json(src, record)
+        return original_copy(src, dst)
+    monkeypatch.setattr(module.shutil, 'copy2', copy)
+    import_experiment(target, source, 'dev-results')
+    record = read_json(target/'state/import.json')['dev-results']
+    assert record['files'][changed] == file_hash(target/changed)
+    assert read_json(target/changed)['late_observation']
+    after = tree_path.stat()
+    assert (before.st_ino, before.st_mtime_ns, before.st_ctime_ns) == (after.st_ino, after.st_mtime_ns, after.st_ctime_ns)
+    assert copies
+    assert read_json(target/'state/prepare.json')['dev_baseline']['source'] == str(source)
+
+
+def test_digest_cache_avoids_repeated_reads_and_detects_same_size_changes(tmp_path, monkeypatch):
+    import os
+    import test_survival.dev_results as module
+    path = tmp_path/'result.json'
+    path.write_text('AAAA')
+    module._file_hash.cache_clear()
+    original_read = Path.read_bytes
+    reads = []
+    def read(self):
+        reads.append(self)
+        return original_read(self)
+    monkeypatch.setattr(Path, 'read_bytes', read)
+    old = module.file_hash(path)
+    stat = path.stat()
+    assert module.file_hash(path) == old
+    assert len(reads) == 1
+    path.write_text('BBBB')
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert module.file_hash(path) != old  # ctime changed even with the old mtime.
+    assert len(reads) == 2
+    replacement = tmp_path/'replacement'
+    replacement.write_text('CCCC')
+    os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    replacement.replace(path)
+    module.file_hash(path)
+    assert len(reads) == 3
+
+
+def test_repeated_validation_and_progress_use_cached_digests(experiments, monkeypatch):
+    import test_survival.dev_results as module
+    source, target, _ = experiments
+    import_experiment(target, source, 'dev-results')
+    module._file_hash.cache_clear()
+    reads = []
+    original_read = Path.read_bytes
+    def read(self):
+        reads.append(self)
+        return original_read(self)
+    monkeypatch.setattr(Path, 'read_bytes', read)
+    provenance = module.load_provenance(target)
+    groups = module.imported_groups(target, load(target), 'survive', provenance=provenance)
+    initial_reads = len(reads)
+    assert initial_reads > 0
+    for _ in range(2):
+        module.imported_groups(target, load(target), 'survive', provenance=provenance)
+        for group in groups:
+            folder = 'raw-derived' if group == 'dev-scope' else 'raw'
+            relative = f'results/{folder}/1-{group}.json'
+            module.imported_record(target, relative, provenance=provenance)
+            assert module.imported_file_valid(target, relative, provenance['files'])
+    assert len(reads) == initial_reads
+
+
+def test_import_invalidates_scope_and_rebuilds_llm_subsampling_and_funnels(experiments, monkeypatch):
+    from test_survival.config import STAGES, stage_hash
+    source, target, _ = experiments
+    settings = yaml.safe_load((target/'experiment.yaml').read_text())
+    settings['screen'] = {'matching': 'subsample-to-dev'}
+    (target/'experiment.yaml').write_text(yaml.safe_dump(settings))
+    config = load(target)
+    for stage in STAGES:
+        write_json(target/f'state/{stage}.json', {'status': 'completed', 'config_hash': stage_hash(config, stage)})
+    write_csv(target/'dev/dev-denominator.csv', [], ['class', 'method', 'kind'])
+    root = target/'generated/llm/round1'
+    java = root/'sources/ZSL/L.java'
+    java.parent.mkdir(parents=True)
+    java.write_text('class L {}')
+    write_json(root/'funnel.json', {'developer_denominator': 0, 'ratio_to_dev': None})
+    def screen_file(self, group, round_name, source_file, repeats, number):
+        methods = [dict(file=str(source_file.relative_to(target)), **{'class': 'L'}, method=m,
+                        kind='plain', id=m, body_hash=m, round='round1', technique='ZSL', state='pass') for m in ('one', 'two')]
+        return {'compile': {'exit_code': 0}, 'methods': methods, 'file': str(source_file.relative_to(target))}
+    monkeypatch.setattr(screen.JavaMavenAdapter, 'screen_file', screen_file, raising=False)
+    import_experiment(target, source, 'dev-results')
+    assert read_json(target/'state/prepare.json')['status'] == 'completed'
+    assert all(read_json(target/f'state/{s}.json')['status'] == 'pending' for s in STAGES[1:])
+    screen.run(target, config)
+    assert len(read_json(target/'results/frozen-denominators.json')['llm']) == 1
+    funnel = read_json(root/'funnel.json')
+    assert funnel['developer_denominator'] == 1 and funnel['ratio_to_dev'] == 2
+
+
+def test_cover_runner_lifecycle_uses_submitted_jobs_even_with_extra_frozen_group(experiments):
+    import shutil
+    source, target, calls = experiments
+    settings = yaml.safe_load((target/'experiment.yaml').read_text())
+    settings['generators'] = []
+    settings['dev']['groups'] = [g for g in settings['dev']['groups'] if g['name'] != 'local']
+    (target/'experiment.yaml').write_text(yaml.safe_dump(settings))
+    frozen = read_json(target/'results/frozen-denominators.json')
+    frozen.pop('local')
+    write_json(target/'results/frozen-denominators.json', frozen)
+    import_experiment(target, source, 'dev-results')
+    for name in ('alive-entering.json', 'survival.csv'):
+        shutil.copy2(source/'results'/name, target/'results'/name)
+    cover.run(target, load(target))
+    assert calls[0] == ('setup',)
+    assert [(phase, group) for phase, _, group in calls[1:]] == [('B', 'llm')]*3
+
+
+def test_cover_does_not_start_runner_when_no_measurement_jobs_exist(experiments):
+    import shutil
+    source, target, calls = experiments
+    settings = yaml.safe_load((target/'experiment.yaml').read_text())
+    settings['coverage'] = {'at_anchor': False, 'changed_line': False}
+    (target/'experiment.yaml').write_text(yaml.safe_dump(settings))
+    for index in (1, 3):
+        write_json(target/f'results/builds/{index}.json', {'build': 'fail'})
+    for name in ('alive-entering.json', 'survival.csv'):
+        shutil.copy2(source/'results'/name, target/'results'/name)
+    cover.run(target, load(target))
+    assert calls == []
+
+
+def test_imported_baseline_validation_preserves_source_stability_set(experiments):
+    from test_survival.dev_results import imported_baseline
+    source, target, _ = experiments
+    import_experiment(target, source, 'dev-results')
+    assert imported_baseline(target, load(target))
+    write_csv(target/'dev/dev-methods-all.csv', [], ['class', 'method', 'stable'])
+    with pytest.raises(PipelineError, match='dev-methods-all.csv'):
+        imported_baseline(target, load(target))

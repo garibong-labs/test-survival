@@ -3,18 +3,19 @@ from ..io import read_json, write_json, atomic_text
 
 
 def run(exp,config):
-    from ..dev_results import imported_groups, imported_record
-    imported = imported_groups(exp, config, 'control')
-    provenance = read_json(exp/'state/import.json', {}).get('dev-results', {})
+    from ..dev_results import load_provenance, imported_groups, imported_record
+    provenance = load_provenance(exp)
+    imported = imported_groups(exp, config, 'control', provenance=provenance)
     adapter=JavaMavenAdapter(exp,config)
     frozen=read_json(exp/'results/frozen-denominators.json')
     if set(frozen) - imported.keys():
         adapter.setup_runner()
     records={}
+    anchor_sha = read_json(exp/'results/anchor.json')['sha']
     for group,rows in frozen.items():
         if group in imported:
             raw = imported_record(exp, f'results/control/0-{group}.json',
-                                  sha=read_json(exp/'results/anchor.json')['sha'],
+                                  sha=anchor_sha,
                                   method_ids=[r['id'] for r in rows], provenance=provenance)
         else:
             raw = adapter.run_group(0,group,rows,'control')

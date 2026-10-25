@@ -62,7 +62,8 @@ def run(exp, config):
     if anchor_build != 'ok':
         raise RuntimeError('Anchor build failed')
     imported = read_json(exp/'state/import.json', {})
-    if not imported.get('dev-baseline'):
+    from ..dev_results import imported_baseline
+    if not imported.get('dev-baseline') and not imported_baseline(exp, config):
         baseline = adapter.baseline()
         log(exp, f'prepare: baseline has {sum(r["stable"]=="yes" for r in baseline)} stable methods', config)
     def build(row):

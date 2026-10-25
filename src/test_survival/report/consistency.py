@@ -28,7 +28,8 @@ def build(exp,config):
     environment_reruns={g:sum(m.get('environment_reruns',0) for path in raw_paths[g] for m in read_json(path).get('methods',[])) for g in groups}
     verification=dict(nonincreasing=survival['nonincreasing'],raw_count_matches=survival['raw_count_matches'],missing_survival_records=len(survival['missing_records']),missing_coverage_records=len(coverage['missing']))
     summary=dict(environment_reruns=environment_reruns,environment_rerun_unit='method attempts; derived groups inherit their source observations',status='completed' if not survival['missing_records'] and not coverage['missing'] else 'completed-with-unavailable-measurements',finished=now(),denominators=counts,final_survivors=final,model_rounds=rounds,phase_seconds=timings,final_verification=verification,survival_consistency=survival,coverage_consistency=coverage,pushed=False)
-    imported = read_json(exp/'state/import.json', {}).get('dev-results')
+    from ..dev_results import load_provenance
+    imported = load_provenance(exp)
     if imported:
         summary['imported_dev_results'] = dict(source=imported['source'], groups=sorted(imported['groups']),
                                               imported=imported['imported'], source_sha256=imported['source_sha256'])

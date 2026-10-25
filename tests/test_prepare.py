@@ -48,7 +48,8 @@ def test_off_first_parent_anchor_names_first_containing_commit_and_compares_modu
 
 
 @pytest.mark.parametrize('setup_fails', [False, True])
-def test_runner_setup_finishes_before_parallel_builds(tmp_path, monkeypatch, setup_fails):
+@pytest.mark.parametrize('has_import', [False, True])
+def test_runner_setup_finishes_before_parallel_builds(tmp_path, monkeypatch, setup_fails, has_import):
     from test_survival.stages import prepare
     events = []
     class Adapter:
@@ -63,7 +64,9 @@ def test_runner_setup_finishes_before_parallel_builds(tmp_path, monkeypatch, set
         def build(self, index, sha):
             events.append(f'build-{index}')
             return {'build': 'ok'}
-        def baseline(self): return []
+        def baseline(self):
+            assert not has_import, 'Imported baseline was recomputed'
+            return []
         def setup_runner(self):
             events.append('setup')
             if setup_fails: raise RuntimeError('setup failed')
@@ -72,6 +75,8 @@ def test_runner_setup_finishes_before_parallel_builds(tmp_path, monkeypatch, set
         def __enter__(self): return self
         def __exit__(self, *args): pass
         def map(self, fn, rows): return map(fn, rows)
+    from test_survival import dev_results
+    monkeypatch.setattr(dev_results, 'imported_baseline', lambda *args: has_import)
     monkeypatch.setattr(prepare, 'JavaMavenAdapter', Adapter)
     monkeypatch.setattr(prepare, 'ThreadPoolExecutor', Pool)
     monkeypatch.setattr(prepare, 'log', lambda *args: None)

@@ -107,8 +107,8 @@ def items(exp, stage, config, state):
             total += len(paths) if manifest.get('stopped') else max(planned, len(paths))
         return completed, None if unknown else total, 'calls' if stage == 'generate' else 'files'
     if stage in ('survive', 'cover'):
-        from .dev_results import imported_file_valid
-        imported_files = read_json(exp/'state/import.json', {}).get('dev-results', {}).get('files', {})
+        from .dev_results import imported_file_valid, load_provenance
+        imported_files = load_provenance(exp).get('files', {})
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
         adapter = JavaMavenAdapter(exp, config)
@@ -287,8 +287,8 @@ def panel_items(exp, stage, config, state):
         p = generation_progress(exp, config, state)
         return p['completed'], p['total'], UNITS[stage], p
     if stage == 'control':
-        from .dev_results import imported_file_valid
-        imported_files = read_json(exp/'state/import.json', {}).get('dev-results', {}).get('files', {})
+        from .dev_results import imported_file_valid, load_provenance
+        imported_files = load_provenance(exp).get('files', {})
         from .adapters.java_maven import JavaMavenAdapter
         adapter = JavaMavenAdapter(exp, config)
         frozen = read_json(exp/'results/frozen-denominators.json')

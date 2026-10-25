@@ -1,17 +1,49 @@
 """Portable, checksummed developer measurements for repeated experiments."""
+from functools import lru_cache
 import hashlib
 from pathlib import Path
 import re
 import shutil
 
-from .config import canonical_hash, load
+import yaml
+
+from .config import ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate
 from .io import now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
 from .rules.dev_denominator import denominator_file
 
 
-def file_hash(path):
+@lru_cache(maxsize=16384)
+def _file_hash(path, device, inode, size, mtime_ns, ctime_ns):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def file_hash(path):
+    """Reuse digests only while the file identity and change metadata match."""
+    path = Path(path).resolve()
+    stat = path.stat()
+    return _file_hash(path, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+def load_provenance(exp):
+    return read_json(exp/'state/import.json', {}).get('dev-results', {})
+
+
+def archived_config(source):
+    """Ignore obsolete generation/report options, but validate measurement inputs."""
+    try:
+        raw = yaml.load((source/'experiment.yaml').read_text(), Loader=UniqueLoader)
+        selected = {k: raw[k] for k in ('project', 'runner', 'survival', 'coverage', 'dev') if k in raw}
+        selected.update(name='dev-results-source', anchor=raw.get('anchor', 'archived'))
+        selected['range'] = {'skip_untouched': raw.get('range', {}).get('skip_untouched', 'none')}
+        # This removed option controlled cache use, not measured outcomes.
+        if 'survival' in selected:
+            selected['survival'] = {k: v for k, v in selected['survival'].items() if k != 'dev_cache'}
+        return validate(selected)
+    except yaml.YAMLError as exc:
+        raise PipelineError('dev-results source compatibility configuration is invalid YAML') from exc
+    except (ConfigError, AttributeError, TypeError) as exc:
+        raise PipelineError(f'dev-results source compatibility configuration is invalid: {exc}') from exc
 
 
 def tree_hash(root):
@@ -31,12 +63,16 @@ def identity(exp, config):
         raise PipelineError(f'dev-results requires an indexed commit sha sequence: {commits_path}')
     return dict(project_repo=str(Path(config['project']['repo']).resolve()), anchor_sha=anchor['sha'],
                 commit_shas=[row['sha'] for row in commits], skip_untouched=config['range']['skip_untouched'],
-                dev_tree_sha256=tree_hash(exp/'dev/src-test-t'))
+                dev_tree_sha256=tree_hash(exp/'dev/src-test-t'),
+                measurement_settings=dict(project={k: v for k, v in config['project'].items() if k != 'repo'},
+                                          runner=runner_inputs(config['runner']), survival=config['survival'],
+                                          stable_runs=config['dev']['stable_runs'], coverage=config['coverage']))
 
 
 def check_identity(actual, expected):
     labels = dict(project_repo='project repo', anchor_sha='anchor sha', commit_shas='commit sha sequence',
                   skip_untouched='skip_untouched', dev_tree_sha256='dev/src-test-t tree hash')
+    labels['measurement_settings'] = 'result-affecting measurement settings'
     for key, label in labels.items():
         if actual.get(key) != expected.get(key):
             raise PipelineError(f'dev-results refused: {label} differs')
@@ -44,7 +80,7 @@ def check_identity(actual, expected):
 
 def import_results(exp, source, config):
     """Preflight all compatibility checks and files before copying any evidence."""
-    source_config = load(source)
+    source_config = archived_config(source)
     source_identity = identity(source, source_config)
     check_identity(identity(exp, config), source_identity)
     source_groups = {g['name']: (i, g) for i, g in enumerate(source_config['dev']['groups'])}
@@ -56,12 +92,9 @@ def import_results(exp, source, config):
     plan, groups = {}, {}
     # Shared baselines/sources are portable. Group-specific denominators must be
     # mapped by name, since the first group's filename is always dev-denominator.
-    specific = {denominator_file(g, i) for i, g in enumerate(source_config['dev']['groups'])}
-    specific.update(f'dev/{g["name"]}-excluded.csv' for g in source_config['dev']['groups'])
     for path in sorted((source/'dev').rglob('*')):
         relative = str(path.relative_to(source))
-        if (path.is_file() and relative not in specific
-                and not path.name.endswith(('-denominator.csv', '-excluded.csv'))):
+        if path.is_file() and not path.name.endswith(('-denominator.csv', '-excluded.csv')):
             plan[relative] = path
     for index, group in matched:
         name = group['name']
@@ -97,27 +130,37 @@ def import_results(exp, source, config):
     for target, path in plan.items():
         if not path.is_file():
             raise PipelineError(f'dev-results: missing source file {path}')
-    hashes = {target: file_hash(path) for target, path in plan.items()}
+    hashes = {}
     for target, path in plan.items():
         destination = exp/target
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, destination)
+        # Identical frozen source files need no rewrite. Their retained bytes
+        # are still included in the manifest, just like copied baseline files.
+        if not target.startswith('dev/src-test-t/'):
+            shutil.copy2(path, destination)
+        hashes[target] = file_hash(destination)
     destination_frozen = read_json(exp/'results/frozen-denominators.json', {})
     destination_frozen.update({name: record['frozen'] for name, record in groups.items()})
     write_json(exp/'results/frozen-denominators.json', destination_frozen)
     counts = read_json(exp/'results/denominators.json', {})
     counts.update({name: len(record['frozen']) for name, record in groups.items()})
     write_json(exp/'results/denominators.json', counts)
-    # Rebuild aggregates and control summaries using the imported observations.
-    invalidate(exp, 'screen')
+    # Baselines/populations feed scope selection and LLM subsampling/funnels.
+    # Keep generated call evidence, but rebuild all dependent stage summaries.
+    invalidate(exp, 'prepare')
+    prepare_path = exp/'state/prepare.json'
+    prepare = read_json(prepare_path, {})
+    prepare['dev_baseline'] = dict(status='completed', source=str(source),
+                                  source_hash=canonical_hash({p: h for p, h in hashes.items() if p.startswith('dev/')}))
+    write_json(prepare_path, prepare)
     return dict(source=str(source), imported=now(), compatibility=source_identity, groups=groups,
                 files=hashes, source_files={target: str(path.relative_to(source)) for target, path in plan.items()},
                 source_sha256=canonical_hash(hashes))
 
 
-def imported_groups(exp, config, stage=None):
+def imported_groups(exp, config, stage=None, *, provenance=None):
     """Validate a saved import before bypassing measurement or cache fingerprints."""
-    record = read_json(exp/'state/import.json', {}).get('dev-results')
+    record = load_provenance(exp) if provenance is None else provenance
     if not record:
         return {}
     current = {g['name']: g for g in config['dev']['groups']}
@@ -148,7 +191,7 @@ def require_record(exp, provenance, relative):
 
 
 def imported_record(exp, relative, *, sha=None, method_ids=None, provenance=None):
-    provenance = provenance if provenance is not None else read_json(exp/'state/import.json', {}).get('dev-results', {})
+    provenance = provenance if provenance is not None else load_provenance(exp)
     require_record(exp, provenance, relative)
     record = read_json(exp/relative)
     if sha is not None and record.get('sha') != sha:
@@ -161,6 +204,15 @@ def imported_record(exp, relative, *, sha=None, method_ids=None, provenance=None
 def imported_file_valid(exp, relative, files=None):
     """Read-only progress display may count imports despite old runner fingerprints."""
     if files is None:
-        files = read_json(exp/'state/import.json', {}).get('dev-results', {}).get('files', {})
+        files = load_provenance(exp).get('files', {})
     expected = files.get(relative)
     return bool(expected and (exp/relative).is_file() and file_hash(exp/relative) == expected)
+
+
+def imported_baseline(exp, config):
+    record = load_provenance(exp)
+    if not record:
+        return False
+    check_identity(identity(exp, config), record['compatibility'])
+    require_record(exp, record, 'dev/dev-methods-all.csv')
+    return True

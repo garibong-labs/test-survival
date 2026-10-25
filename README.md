@@ -297,7 +297,9 @@ wiring do not affect stage hashes: `runner.workers`, `runner.reuse`,
 `runner.docker.mounts`, `runner.docker.env_file`, and `model.env_file` are ignored.
 Docker mounts and env files in generator overrides are ignored as well.
 `runner.docker.image`, `runner.docker.compose_files`, timeouts, and JVM settings
-remain in the hash.
+remain in the hash. Build, raw test-run, and per-method coverage cache keys also
+ignore scheduling and host wiring. Runner implementation/provenance changes can
+still invalidate cached measurements.
 
 Run `rehash` **once on experiments created before this hash-policy change**, after
 any active run has finished and before changing result-affecting configuration:
@@ -308,7 +310,12 @@ survival rehash /absolute/path/to/target-fork/experiments/first-run
 
 This recomputes only `config_hash` in completed stage state files using the current
 configuration. It preserves failed/pending stages, other state fields, group and
-round hashes, evidence, and logs. It refuses to run while the experiment lock is held.
+round hashes, evidence, and logs. It refuses to run while the experiment lock is held,
+and requires the existing `state/run.lock` created by a run (never deletes or replaces
+that lock inode). Recognizable legacy completed-stage hashes stop a normal resume
+with a `rehash` instruction before any stage is invalidated. When generation is
+subsequently entered, compatible legacy group/round ledgers are reused; forcing one
+group does not force unrelated groups to generate again.
 It does not validate or rerun results; subsequent result-affecting configuration
 changes should go through normal stage invalidation.
 
@@ -391,23 +398,31 @@ survival run /absolute/path/to/target-fork/experiments/weekly
 Before copying evidence, `dev-results` requires identical project repo paths,
 anchor SHAs, ordered commit SHAs in `results/commits.csv`, `skip_untouched`, and
 `dev/src-test-t` tree hashes (relative file paths and contents). It refuses an
-incompatible import with the differing field named in the error.
+incompatible import with the differing field named in the error. Result-affecting
+runner/runtime settings, project module and test framework, baseline stability runs,
+survival rules, and coverage settings must also match. Scheduling and host wiring
+may differ. Archived generation/report options are not validated; unknown measurement
+options are refused instead of silently assuming compatibility.
 
 Every Dev group with the same name and denominator rule is reused. The import
-copies shared `dev/` sources and baselines, maps each matching group's denominator
-by name, and copies its raw survival, derived survival, coverage XML/line maps,
+retains the already-identical frozen test tree, copies shared baselines, maps each
+matching group's denominator by name, and copies its raw survival, derived survival, coverage XML/line maps,
 raw coverage, and control records. Unmatched groups retain their denominators.
 Scope and screen retain the imported frozen populations. Control, survive, and
 cover skip imported Dev groups and run the remaining groups; report recomputes
 aggregates from both imported and newly measured records.
 
 `state/import.json` records the source experiment, compatibility values, groups,
-file mappings, and checksums. The source is read-only and is not needed after the
-copy. Imported evidence is checked before reuse; missing, changed, or incompatible
+file mappings, and checksums of the destination bytes. `state/prepare.json` records
+the imported baseline, which prepare reuses after validating its compatibility and
+checksum. Digest caches use file identity, size, mtime, and ctime, so unchanged files
+are not repeatedly read during validation or progress refreshes. The source is
+read-only and is not needed after the copy. Imported evidence is checked before reuse; missing, changed, or incompatible
 records are refused instead of silently skipping a measurement. Use a completed
 source with all records needed by the destination. `results/final-summary.json`
-records the source under `imported_dev_results`. The import invalidates control
-and later stage state so their summaries are rebuilt.
+records the source under `imported_dev_results`. The import invalidates scope
+and all later stage state so population summaries, LLM subsampling, funnels, and
+reports are rebuilt using the imported baseline and denominators.
 
 ## 9. Dashboard
 
