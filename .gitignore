@@ -7,3 +7,5 @@ __pycache__/
 build/
 dist/
 tests/evidence/comparison-runtime/
+.DS_Store
+tests/evidence/
