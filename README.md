@@ -68,7 +68,7 @@ model:
 
 Credentials are read privately and excluded from model-call records. An environment variable with the configured key name takes precedence over the file.
 
-Omit `model.env_file` to read credentials only from the process environment. Host paths beginning with `~` expand to your home directory when loaded; configuration hashes retain the paths as written.
+Omit `model.env_file` to read credentials only from the process environment. Host paths beginning with `~` expand to your home directory when loaded; result-affecting paths retain their written spelling in configuration hashes.
 
 KTester also needs the existing KTester author tool and its container dependencies. Create a Compose override for each target project, alongside that fork's experiment configuration or Docker files.
 
@@ -291,11 +291,30 @@ Stage exceptions are saved in `state/<stage>-error.txt`. The failure log line na
 
 ## 7. Changing configuration after a run
 
-The CLI hashes the YAML configuration as written, before filling defaults. Changes invalidate the affected stage and all later stages.
+The CLI hashes result-affecting YAML settings as written, before filling defaults.
+Changes invalidate the affected stage and all later stages. Scheduling and host
+wiring do not affect stage hashes: `runner.workers`, `runner.reuse`,
+`runner.docker.mounts`, `runner.docker.env_file`, and `model.env_file` are ignored.
+Docker mounts and env files in generator overrides are ignored as well.
+`runner.docker.image`, `runner.docker.compose_files`, timeouts, and JVM settings
+remain in the hash.
+
+Run `rehash` **once on experiments created before this hash-policy change**, after
+any active run has finished and before changing result-affecting configuration:
+
+```sh
+survival rehash /absolute/path/to/target-fork/experiments/first-run
+```
+
+This recomputes only `config_hash` in completed stage state files using the current
+configuration. It preserves failed/pending stages, other state fields, group and
+round hashes, evidence, and logs. It refuses to run while the experiment lock is held.
+It does not validate or rerun results; subsequent result-affecting configuration
+changes should go through normal stage invalidation.
 
 | Changed setting | Earliest affected stage |
 | --- | --- |
-| `project`, `anchor`, `range`, `runner`, or `dev.stable_runs` | prepare |
+| `project`, `anchor`, `range`, result-affecting `runner` settings, or `dev.stable_runs` | prepare |
 | `scope`, other `dev` settings, or generator names and methods | scope |
 | `model` or other generator settings | generate |
 | `screen` | screen |
@@ -358,6 +377,37 @@ survival run /absolute/path/to/target-fork/experiments/replay
 ```
 
 Imports record copied-file hashes and synthesize round manifests from archived directories and funnels. See the [reference replay configuration](examples/jsv-run2/experiment.yaml) for a complete example.
+
+For weekly reruns, reuse completed developer measurements while regenerating LLM tests.
+Prepare the destination first so both experiments have resolved anchors, commit
+sequences, and frozen test snapshots, then import:
+
+```sh
+survival run /absolute/path/to/target-fork/experiments/weekly --until prepare
+survival import /absolute/path/to/target-fork/experiments/weekly --from /absolute/path/to/previous-experiment --what dev-results
+survival run /absolute/path/to/target-fork/experiments/weekly
+```
+
+Before copying evidence, `dev-results` requires identical project repo paths,
+anchor SHAs, ordered commit SHAs in `results/commits.csv`, `skip_untouched`, and
+`dev/src-test-t` tree hashes (relative file paths and contents). It refuses an
+incompatible import with the differing field named in the error.
+
+Every Dev group with the same name and denominator rule is reused. The import
+copies shared `dev/` sources and baselines, maps each matching group's denominator
+by name, and copies its raw survival, derived survival, coverage XML/line maps,
+raw coverage, and control records. Unmatched groups retain their denominators.
+Scope and screen retain the imported frozen populations. Control, survive, and
+cover skip imported Dev groups and run the remaining groups; report recomputes
+aggregates from both imported and newly measured records.
+
+`state/import.json` records the source experiment, compatibility values, groups,
+file mappings, and checksums. The source is read-only and is not needed after the
+copy. Imported evidence is checked before reuse; missing, changed, or incompatible
+records are refused instead of silently skipping a measurement. Use a completed
+source with all records needed by the destination. `results/final-summary.json`
+records the source under `imported_dev_results`. The import invalidates control
+and later stage state so their summaries are rebuilt.
 
 ## 9. Dashboard
 

@@ -465,11 +465,36 @@ def range_fingerprint(config):
     return canonical_hash(as_written({k: config[k] for k in ('project', 'anchor', 'range')}, include_defaults=True))
 
 
+def result_inputs(config):
+    """Hash result-affecting settings, excluding scheduling and host wiring."""
+    c = as_written(config)
+    runner = c.get('runner', {})
+    for key in ('workers', 'reuse'):
+        runner.pop(key, None)
+    docker_configs = [runner.get('docker', {})]
+    docker_configs.extend(g.get('docker') for g in c.get('generators', []) if g.get('docker') is not None)
+    for docker in docker_configs:
+        for key in ('mounts', 'env_file'):
+            docker.pop(key, None)
+    if 'docker' in runner and not runner['docker']:
+        runner.pop('docker')
+    if 'runner' in c and not runner:
+        c.pop('runner')
+    for g in c.get('generators', []):
+        if g.get('docker') == {}:
+            g.pop('docker')
+    model = c.get('model', {})
+    model.pop('env_file', None)
+    if 'model' in c and not model:
+        c.pop('model')
+    return c
+
+
 def stage_inputs(c, stage, group=None):
     if stage not in STAGES:
         raise ConfigError(f'stage: allowed values: {", ".join(STAGES)}')
     index = STAGES.index(stage)
-    c = as_written(c)
+    c = result_inputs(c)
     data = {k: c[k] for k in ('project', 'anchor', 'range', 'runner') if k in c}
     if 'stable_runs' in c.get('dev', {}):
         data['dev'] = {'stable_runs': c['dev']['stable_runs']}

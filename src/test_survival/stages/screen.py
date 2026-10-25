@@ -68,6 +68,8 @@ def screen_round(exp,config,g,directory,prior=()):
 def run(exp,config):
     adapter=JavaMavenAdapter(exp,config);adapter.setup_runner()
     frozen={g['name']:[frozen_method(r) for r in read_csv(exp/denominator_file(g,i))] for i,g in enumerate(config['dev']['groups'])}
+    from ..dev_results import imported_groups
+    frozen.update({name: item['frozen'] for name, item in imported_groups(exp, config).items()})
     validate_derived_subsets(config['dev']['groups'],frozen)
     first_dev=config['dev']['groups'][0]['name']
     for g in config['generators']:

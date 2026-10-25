@@ -284,3 +284,35 @@ def status(exp, config):
         if lines:
             rows.append('Last log: ' + lines[-1])
     return '\n'.join(rows)
+
+
+def rehash(exp, config):
+    """Migrate only completed-stage config_hash fields; never bless pending work."""
+    exp = Path(exp).resolve()
+    if not (exp/'state').is_dir():
+        raise PipelineError('No stage state to rehash')
+    lock_path = exp/'state/run.lock'
+    try:
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+        created_lock = True
+    except FileExistsError:
+        fd = os.open(lock_path, os.O_RDWR)
+        created_lock = False
+    with run_lock(exp, fd):
+        try:
+            updates = []
+            for stage in STAGES:
+                path = exp/'state'/f'{stage}.json'
+                state = read_json(path, {})
+                if state.get('status') == 'completed':
+                    digest = stage_hash(config, stage)
+                    if state.get('config_hash') != digest:
+                        updates.append((path, {**state, 'config_hash': digest}))
+            for path, state in updates:
+                write_json(path, state)
+        finally:
+            # Remove only our temporary guard, while still owning its lock.
+            # Existing lock files and every non-stage artifact remain untouched.
+            if created_lock:
+                lock_path.unlink()
+    return len(updates)

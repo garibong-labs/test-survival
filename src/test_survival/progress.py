@@ -107,6 +107,8 @@ def items(exp, stage, config, state):
             total += len(paths) if manifest.get('stopped') else max(planned, len(paths))
         return completed, None if unknown else total, 'calls' if stage == 'generate' else 'files'
     if stage in ('survive', 'cover'):
+        from .dev_results import imported_file_valid
+        imported_files = read_json(exp/'state/import.json', {}).get('dev-results', {}).get('files', {})
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
         adapter = JavaMavenAdapter(exp, config)
@@ -145,7 +147,7 @@ def items(exp, stage, config, state):
                 key = (group, tuple(m['id'] for m in methods))
                 if key not in fingerprints:
                     fingerprints[key] = adapter.run_fingerprint(methods)
-                valid = (raw.get('input_sha256') == fingerprints[key] and raw.get('runner_sha256') == provenance
+                valid = ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or (raw.get('input_sha256') == fingerprints[key] and raw.get('runner_sha256') == provenance))
                          and bool(commit.get('sha')) and raw.get('sha') == commit['sha'])
                 if stage == 'cover':
                     valid = valid and raw.get('status') == 'evaluated' and (exp/f'results/coverage/{index}-{group}-lines.csv').exists()
@@ -285,6 +287,8 @@ def panel_items(exp, stage, config, state):
         p = generation_progress(exp, config, state)
         return p['completed'], p['total'], UNITS[stage], p
     if stage == 'control':
+        from .dev_results import imported_file_valid
+        imported_files = read_json(exp/'state/import.json', {}).get('dev-results', {}).get('files', {})
         from .adapters.java_maven import JavaMavenAdapter
         adapter = JavaMavenAdapter(exp, config)
         frozen = read_json(exp/'results/frozen-denominators.json')
@@ -294,8 +298,9 @@ def panel_items(exp, stage, config, state):
         for group, methods in (frozen or {}).items():
             path = exp/f'results/control/0-{group}.json'
             record = read_json(path, {})
-            if (record.get('input_sha256') == adapter.run_fingerprint(methods)
-                    and record.get('runner_sha256') == provenance
+            if ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or
+                 (record.get('input_sha256') == adapter.run_fingerprint(methods)
+                  and record.get('runner_sha256') == provenance))
                     and record.get('sha') == anchor):
                 completed.extend([path] for _ in record.get('methods', []))
         return completed, sum(map(len, frozen.values())) if frozen is not None else None, 'methods', {}
