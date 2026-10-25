@@ -71,3 +71,17 @@ def test_explicit_scope_preserves_supplied_order(rank_by):
     config=dict(rule='explicit',rank_by=rank_by,classes=['p.B','p.A'],min_methods=3,exclude_accessor_heavy=True,target_methods=[50,80],max_classes=10)
     assert [r['class'] for r in select_scope(rows,config)[0]]==['p.B','p.A']
 
+
+def test_all_eligible_ignores_caps_but_preserves_eligibility_and_ranking():
+    from test_survival.config import validate
+    config = validate({'name': 'all', 'project': {'repo': '/unused'}, 'anchor': 't',
+                       'scope': {'rule': 'all-eligible', 'max_classes': 1, 'min_classes': 2,
+                                 'target_methods': [1, 2]}})['scope']
+    rows = [{'class': 'A', 'm': 100, 'c': 1, 'accessors': 0, 'has_test': 'no'},
+            {'class': 'B', 'm': 50, 'c': 2, 'accessors': 25, 'has_test': 'yes'},
+            {'class': 'C', 'm': 2, 'c': 9, 'accessors': 0},
+            {'class': 'D', 'm': 10, 'c': 9, 'accessors': 6}]
+    chosen, count = select_scope(rows, config)
+    assert [r['class'] for r in chosen] == ['B', 'A']
+    assert count == 2
+

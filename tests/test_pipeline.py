@@ -101,3 +101,74 @@ def test_detached_child_records_its_completion(tmp_path, config):
     assert 'report: already completed; skipped' in log_path.read_text()
     # Reap our child so this test does not leave a zombie in a long-lived runner.
     os.waitpid(pid, 0)
+
+
+def test_failure_before_evidence_leaves_exception_file(tmp_path, config, capsys):
+    def fail(exp, config):
+        raise RuntimeError('missing anchor v404')
+    with pytest.raises(RuntimeError, match='missing anchor v404'):
+        run(tmp_path, config, until='prepare', handlers={'prepare': fail})
+    assert (tmp_path/'state/prepare-error.txt').read_text() == 'RuntimeError: missing anchor v404\n'
+    assert 'state/prepare-error.txt' in read_json(tmp_path/'state/prepare.json')['notes']
+    output = capsys.readouterr().out
+    assert 'state/prepare-error.txt' in output
+    assert 'missing anchor v404' not in output
+
+
+@pytest.mark.parametrize('detached', [False, True])
+def test_stop_terminates_recorded_run_marks_only_running_stage_and_releases_lock(tmp_path, detached):
+    import subprocess
+    import sys
+    from test_survival.io import write_json
+    write_json(tmp_path/'state/prepare.json', {'status': 'completed'})
+    script = '''
+import os, sys, time
+from pathlib import Path
+from test_survival.io import now, write_json
+from test_survival.pipeline import run_lock
+from test_survival.lifecycle import process_identity
+exp = Path(sys.argv[1])
+with run_lock(exp):
+    write_json(exp/'state/run.json', dict(pid=os.getpid(), identity=process_identity(os.getpid()), run_id='test-run', status='running', started=now()))
+    write_json(exp/'state/scope.json', dict(status='running', started=now()))
+    print('ready', flush=True)
+    time.sleep(30)
+'''
+    child = subprocess.Popen([sys.executable, '-c', script, str(tmp_path)], stdout=subprocess.PIPE,
+                             text=True, start_new_session=detached)
+    try:
+        assert child.stdout.readline().strip() == 'ready'
+        inode = (tmp_path/'state/run.lock').stat().st_ino
+        assert main(['stop', str(tmp_path)]) == 0
+        child.wait(timeout=5)
+        assert child.returncode < 0
+        for path in ('run', 'scope'):
+            record = read_json(tmp_path/f'state/{path}.json')
+            assert record['status'] == 'failed'
+            assert record['notes'] == 'stopped by user'
+            assert record['finished']
+        assert read_json(tmp_path/'state/prepare.json')['status'] == 'completed'
+        with run_lock(tmp_path):
+            assert (tmp_path/'state/run.lock').stat().st_ino == inode
+        assert main(['stop', str(tmp_path)]) == 2
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait()
+
+
+def test_stop_recovers_dead_run_and_rejects_own_pid(tmp_path):
+    import subprocess
+    import sys
+    from test_survival.io import write_json
+    from test_survival.pipeline import stop
+    child = subprocess.Popen([sys.executable, '-c', 'pass'])
+    child.wait()
+    write_json(tmp_path/'state/run.json', {'status': 'running', 'pid': child.pid})
+    write_json(tmp_path/'state/survive.json', {'status': 'running'})
+    assert stop(tmp_path) == child.pid
+    with run_lock(tmp_path):
+        pass
+    write_json(tmp_path/'state/run.json', {'status': 'running', 'pid': os.getpid()})
+    with pytest.raises(PipelineError, match='invalid run PID'):
+        stop(tmp_path)

@@ -8,6 +8,7 @@ from ..config import generator_config
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,write_json
 from ..model.credentials import _read
+from ..lifecycle import launch
 
 
 class KTesterTool:
@@ -35,7 +36,8 @@ class KTesterTool:
                 target=self.config['runner']['docker']['service'] if self.config['runner']['docker']['compose_files'] else self.config['runner']['docker']['image']
                 pos=command.index(target);command[pos:pos]=['--env',self.config['model']['env_key']]
             with state.with_suffix('.log').open('w') as stream:
-                result=subprocess.run(command,env=env,stdout=stream,stderr=subprocess.STDOUT)
+                with launch(self.exp,command,env=env,stdout=stream,stderr=subprocess.STDOUT) as result:
+                    result.wait()
             write_json(state,dict(status='completed' if result.returncode==0 else 'failed',exit_code=result.returncode))
             if result.returncode:raise RuntimeError('KTester '+action+' failed; archived output retained')
         sources=sorted(directory.rglob('test_classes/*.java'))

@@ -102,7 +102,7 @@ def run(exp,config):
         selected=set(alive[str(i)][g]);methods=[r for r in frozen[g] if r['id'] in selected]
         raw=adapter.coverage(i,[],methods,group=g)
         if raw['status']!='evaluated':raise RuntimeError('Coverage report failed')
-        log(exp,f'cover: {i} {g} recorded')
+        log(exp,f'cover: {i} {g} recorded',config)
     with adapter.runner.session('cover'), ThreadPoolExecutor(max_workers=config['runner']['workers']['cover']) as pool:
         jobs=[pool.submit(job,i,g) for i in sorted(indices) for g in frozen if i==0 or read_json(exp/f'results/builds/{i}.json')['build']=='ok']
         for future in as_completed(jobs):future.result()

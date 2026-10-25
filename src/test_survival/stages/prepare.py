@@ -16,8 +16,18 @@ def run(exp, config):
     saved_end = resolution.get('end') if resolution.get('config_hash') == resolution_hash else None
     end = config['range']['end'] or saved_end or adapter.git('rev-parse', config['range']['branch'])
     end = adapter.git('rev-parse', end+'^{commit}')
-    if anchor_sha not in adapter.git('rev-list', '--first-parent', end).splitlines():
-        raise RuntimeError('anchor is not on the range endpoint first-parent history')
+    first_parents = adapter.git('rev-list', '--first-parent', end).splitlines()
+    if anchor_sha not in first_parents:
+        descendants = set(adapter.git('rev-list', '--ancestry-path', anchor_sha+'..'+end).splitlines())
+        containing = next((sha for sha in reversed(first_parents) if sha in descendants), None)
+        message = 'anchor is not on the range endpoint first-parent history'
+        if containing:
+            module = config['project']['module'].removeprefix('./').rstrip('/')
+            identical = not adapter.git('diff', '--no-ext-diff', '--no-renames', '--name-only', anchor_sha, containing, '--', module or '.')
+            message += f'; first first-parent commit containing anchor: {containing}; module tree identical to anchor: {"yes" if identical else "no"}; set anchor to {containing}'
+        else:
+            message += '; no first-parent commit at this endpoint contains the anchor'
+        raise RuntimeError(message)
     write_json(exp/'state/resolved-range.json', {'config_hash':resolution_hash, 'end':end})
     shas = adapter.git('rev-list', '--first-parent', '--reverse', anchor_sha+'..'+end).splitlines()
     if config['range']['limit'] is not None:
@@ -47,20 +57,23 @@ def run(exp, config):
                                'changes-pom': 'yes' if prefix+'pom.xml' in paths else 'no'}))
     write_csv(exp/'results/commits.csv',commits,['index','sha','date','subject','changes-src-main','changes-pom'])
     write_json(exp/'results/commit-paths.json', touches)
-    if adapter.build(0, anchor_sha)['build'] != 'ok':
+    anchor_build = adapter.build(0, anchor_sha)['build']
+    log(exp, f'prepare: anchor build {anchor_build}', config)
+    if anchor_build != 'ok':
         raise RuntimeError('Anchor build failed')
     imported = read_json(exp/'state/import.json', {})
     if not imported.get('dev-baseline'):
         baseline = adapter.baseline()
-        log(exp, f'prepare: baseline has {sum(r["stable"]=="yes" for r in baseline)} stable methods')
+        log(exp, f'prepare: baseline has {sum(r["stable"]=="yes" for r in baseline)} stable methods', config)
     def build(row):
         reason=skip_reason(touches[str(row['index'])],config['project']['module'],config['range']['skip_untouched'])
         if reason:
             result=dict(index=row['index'],sha=row['sha'],build='skipped-untouched',attempts=[],reason=reason)
             write_json(exp/f'results/builds/{row["index"]}.json',result)
+            log(exp, f'prepare: build {row["index"]}/{len(commits)} skipped-untouched', config)
             return result
         result = adapter.build(row['index'], row['sha'])
-        log(exp, f'prepare: build {row["index"]}/{len(commits)} {result["build"]}')
+        log(exp, f'prepare: build {row["index"]}/{len(commits)} {result["build"]}', config)
         return result
     with ThreadPoolExecutor(max_workers=config['runner']['workers']['build']) as pool:
         builds = list(pool.map(build, commits))

@@ -55,9 +55,12 @@ class JavaMavenAdapter:
         write_json(marker, {'sha': sha, 'seeded_from': str(source) if seed_ok else None})
         return target
 
+    def build_fingerprint(self, sha):
+        return canonical_hash({'sha': sha, 'runner': self.config['runner'], 'module': self.config['project']['module']})
+
     def build(self, index, sha):
         record = self.exp / f'results/builds/{index}.json'
-        fingerprint = canonical_hash({'sha': sha, 'runner': self.config['runner'], 'module': self.config['project']['module']})
+        fingerprint = self.build_fingerprint(sha)
         previous = read_json(record, {})
         if previous.get('input_sha256') == fingerprint and previous.get('build') == 'ok' and (self.folder(index)/'target/classes').exists():
             return previous
@@ -201,10 +204,14 @@ class JavaMavenAdapter:
         if record.get('status') != 'completed' or record.get('jars') != read_json(self.helpers/'classpath-artifacts.json'):
             self.worker({'action':'setup'})
 
+    def screen_fingerprint(self, source, repeats, *, provenance=None):
+        return canonical_hash({'source':hashlib.sha256(source.read_bytes()).hexdigest(), 'repeats':repeats,
+                               'runner':self.provenance() if provenance is None else provenance})
+
     def screen_file(self, group, round_name, source, repeats, number):
         relative = str(source.relative_to(self.exp))
         output = f'generated/{group}/{round_name}/validation/{number}.json'
-        key = canonical_hash({'source':hashlib.sha256(source.read_bytes()).hexdigest(),'repeats':repeats,'runner':self.provenance()})
+        key = self.screen_fingerprint(source, repeats)
         old = read_json(self.exp/output,{})
         if old.get('input_sha256') == key:
             return old
@@ -229,9 +236,12 @@ class JavaMavenAdapter:
             results.append(self.runner.execute(['javac','-J-Xmx'+self.config['runner']['jvm']['javac'],'-cp',cp,'-d',str(part),str(source)],self.folder(index),part/'javac.txt',self.config['runner']['timeouts']['compile']))
         return results
 
+    def run_fingerprint(self, methods, repeats=1):
+        return canonical_hash({'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
+                               'project':self.config['project'], 'survival':self.config['survival'], 'runner':self.config['runner'], 'repeats':repeats})
+
     def run_group(self,index,group,methods,phase='A',repeats=1):
-        fingerprint=canonical_hash({'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
-                                    'project':self.config['project'], 'survival':self.config['survival'], 'runner':self.config['runner'], 'repeats':repeats})
+        fingerprint=self.run_fingerprint(methods,repeats)
         provenance=self.provenance()
         folder='raw' if phase=='A' else 'raw-coverage' if phase=='B' else phase
         output=f'results/{folder}/{index}-{group}.json'

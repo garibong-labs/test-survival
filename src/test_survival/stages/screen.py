@@ -7,6 +7,7 @@ import re
 from ..adapters.java_maven import JavaMavenAdapter
 from ..importer import rounds
 from ..io import read_csv, read_json, write_csv, write_json, atomic_text
+from ..pipeline import log
 from ..rules.matching import subsample
 from ..rules.dev_denominator import frozen_method,denominator_file,validate_derived_subsets
 
@@ -34,7 +35,10 @@ def screen_round(exp,config,g,directory,prior=()):
     else:sources=sorted((directory/'sources').rglob('*.java'))
     def validate(pair):
         number,path=pair
-        return adapter.screen_file(g['name'],directory.name,path,config['screen']['stable_runs'],number)
+        record = adapter.screen_file(g['name'],directory.name,path,config['screen']['stable_runs'],number)
+        stage = 'screen' if read_json(exp/'state/screen.json', {}).get('status') == 'running' else 'generate'
+        log(exp, f'{stage}: {g["name"]} {directory.name} screened {path.name}', config)
+        return record
     with ThreadPoolExecutor(max_workers=config['runner']['workers']['build']) as pool:
         records=list(pool.map(validate,enumerate(sources)))
     seen={r['body_hash'] for r in prior};kept=list(prior);stable=duplicate=0

@@ -8,6 +8,7 @@ import subprocess
 import time
 
 from ..io import atomic_text, write_json, now
+from ..lifecycle import container_options, launch
 
 
 class DockerRunner:
@@ -55,6 +56,7 @@ class DockerRunner:
             prefix += [d['image']]
         else:
             raise RuntimeError('runner.docker requires compose_files or image')
+        prefix[prefix.index('run')+1:prefix.index('run')+1] = container_options(self.exp)
         return prefix + [self.argument(v) for v in command]
 
     def execute(self, command, cwd, log, timeout=600):
@@ -63,7 +65,7 @@ class DockerRunner:
         started = time.monotonic()
         timed_out = False
         with log.open('w') as stream:
-            child = subprocess.Popen(self.command(command, cwd), stdout=stream, stderr=subprocess.STDOUT,
+            child = launch(self.exp, self.command(command, cwd), stdout=stream, stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL, start_new_session=True)
             try:
                 code = child.wait(timeout=timeout)
@@ -79,12 +81,13 @@ class DockerRunner:
         """Share the original runner's network and memory boundary across workers."""
         command = self.command(['sleep', 'infinity'], self.exp)
         command.insert(command.index('run') + 1, '--detach')
-        started = subprocess.run(command, capture_output=True, text=True)
-        if started.returncode:
+        with launch(self.exp, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
+            output, error = child.communicate()
+        if child.returncode:
             path = self.exp / f'state/container-{stage}.log'
-            atomic_text(path, started.stderr)
+            atomic_text(path, error)
             raise RuntimeError('KTester container could not be started; see container stage log')
-        ident = started.stdout.strip().splitlines()[-1]
+        ident = output.strip().splitlines()[-1]
         if not re.fullmatch(r'[0-9a-f]{12,64}', ident):
             raise RuntimeError('Docker did not return a container identifier')
         self.container_id = ident

@@ -79,7 +79,7 @@ def run(exp,config):
         if any(run.get('exit_code') in [-9,137] for f in record['files'] for run in [f['compile'],*f['runs']]):
             source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);source.replace(dest)
             raise RuntimeError('Worker killed; quarantined raw record')
-        log(exp,f'survive: {i} {g} recorded')
+        log(exp,f'survive: {i} {g} recorded',config)
     with adapter.runner.session('survive'), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
         jobs=[pool.submit(job,row,g) for row in evaluated for g in measured]
         for future in as_completed(jobs):future.result()
