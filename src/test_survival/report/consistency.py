@@ -11,7 +11,7 @@ def build(exp,config):
     survival=read_json(exp/'results/survival-consistency.json');coverage=read_json(exp/'results/coverage-consistency.json')
     counts=read_json(exp/'results/denominators.json');curves=read_csv(exp/'results/survival.csv')
     final={g:int(curves[-1][g+'_alive']) for g in groups}
-    raw_paths={g:[p for row in curves[1:] if (p:=exp/f'results/{raw_folder(g,config)}/{row["index"]}-{g}.json').exists()] for g in groups}
+    raw_paths={g:[p for row in curves[1:] if int(row['index']) not in survival.get('build_fail_indices', []) if (p:=exp/f'results/{raw_folder(g,config)}/{row["index"]}-{g}.json').exists()] for g in groups}
     text='# Consistency checks\n\n```json\n'+json.dumps(survival,indent=2)+'\n```\n'
     text+=f'\nCoverage: identical executable line sets across all {len(groups)} groups at {len(coverage["identical_executable_line_sets"])} indices. Required indices: {coverage["coverage_indices"]}. Missing measurements: {len(coverage["missing"])} (enumerated in coverage-consistency.json).\n'
     number={3:'Three',4:'Four',5:'Five'}.get(len(groups),str(len(groups)))
@@ -28,5 +28,10 @@ def build(exp,config):
     environment_reruns={g:sum(m.get('environment_reruns',0) for path in raw_paths[g] for m in read_json(path).get('methods',[])) for g in groups}
     verification=dict(nonincreasing=survival['nonincreasing'],raw_count_matches=survival['raw_count_matches'],missing_survival_records=len(survival['missing_records']),missing_coverage_records=len(coverage['missing']))
     summary=dict(environment_reruns=environment_reruns,environment_rerun_unit='method attempts; derived groups inherit their source observations',status='completed' if not survival['missing_records'] and not coverage['missing'] else 'completed-with-unavailable-measurements',finished=now(),denominators=counts,final_survivors=final,model_rounds=rounds,phase_seconds=timings,final_verification=verification,survival_consistency=survival,coverage_consistency=coverage,pushed=False)
+    from ..dev_results import load_provenance
+    imported = load_provenance(exp)
+    if imported:
+        summary['imported_dev_results'] = dict(source=imported['source'], groups=sorted(imported['groups']),
+                                              imported=imported['imported'], source_sha256=imported['source_sha256'])
     write_json(exp/'results/final-summary.json',summary)
     return summary

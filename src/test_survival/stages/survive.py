@@ -4,6 +4,7 @@ from ..adapters.java_maven import JavaMavenAdapter
 from ..config import group_names
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
+from ..runner import measurement_session
 from ..rules.survival import advance
 from ..rules.commits import skip_reason
 from ..rules.dev_denominator import derive_record,validate_derived_subsets
@@ -52,7 +53,7 @@ def aggregate(exp,config):
     write_csv(exp/'results/survival.csv',curves,['index','sha','date','subject','evaluated']+[g+s for g in groups for s in ['_alive','_lost']])
     write_csv(exp/'results/first-failures.csv',failures,['index','sha','group','id','class','method','kind','flaky'])
     write_json(exp/'results/alive-entering.json',entering)
-    counts={folder:sum((exp/f'results/{folder}/{r["index"]}-{g}.json').exists() for g in groups if raw_folder(g,config)==folder for r in commits) for folder in ['raw','raw-derived']}
+    counts={folder:sum((exp/f'results/{folder}/{r["index"]}-{g}.json').exists() for g in groups if raw_folder(g,config)==folder for r in commits if int(r['index']) not in failed) for folder in ['raw','raw-derived']}
     n=len(commits)-len(failed)
     expected=sum(raw_folder(g,config)=='raw' for g in groups)*n
     derived_expected=sum(raw_folder(g,config)=='raw-derived' for g in groups)*n
@@ -63,7 +64,9 @@ def aggregate(exp,config):
 
 
 def run(exp,config):
-    adapter=JavaMavenAdapter(exp,config);adapter.setup_runner()
+    from ..dev_results import imported_for, imported_record
+    provenance, imported = imported_for(exp, config, 'survive')
+    adapter=JavaMavenAdapter(exp,config)
     frozen=read_json(exp/'results/frozen-denominators.json');groups=group_names(config)
     validate_derived_subsets(config['dev']['groups'],frozen)
     commits=read_csv(exp/'results/commits.csv');skipped=skipped_commits(exp,config,commits)
@@ -71,19 +74,25 @@ def run(exp,config):
     for row in commits:
         if int(row['index']) not in skipped:continue
         for group in groups:
+            if group in imported:
+                imported_record(exp, f'results/{raw_folder(group,config)}/{row["index"]}-{group}.json', sha=row['sha'], provenance=provenance)
+                continue
             write_json(exp/f'results/{raw_folder(group,config)}/{row["index"]}-{group}.json',dict(index=int(row['index']),sha=row['sha'],group=group,phase='A',status='skipped-untouched'))
     evaluated=[r for r in commits if int(r['index']) not in skipped and read_json(exp/f'results/builds/{r["index"]}.json')['build']=='ok']
-    measured=[g for g in groups if raw_folder(g,config)=='raw']
+    for row in evaluated:
+        for g in imported:
+            imported_record(exp, f'results/{raw_folder(g,config)}/{row["index"]}-{g}.json', sha=row['sha'], method_ids=[m['id'] for m in frozen[g]], provenance=provenance)
+    measured=[g for g in groups if raw_folder(g,config)=='raw' and g not in imported]
     def job(row,g):
         i=int(row['index']);record=adapter.run_group(i,g,frozen[g])
         if any(run.get('exit_code') in [-9,137] for f in record['files'] for run in [f['compile'],*f['runs']]):
             source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);source.replace(dest)
             raise RuntimeError('Worker killed; quarantined raw record')
         log(exp,f'survive: {i} {g} recorded',config)
-    with adapter.runner.session('survive'), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
+    with measurement_session(adapter, 'survive', bool(measured and evaluated)), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
         jobs=[pool.submit(job,row,g) for row in evaluated for g in measured]
         for future in as_completed(jobs):future.result()
-    pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g.get('derive_from')}
+    pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g.get('derive_from') and g['name'] not in imported}
     while pending:
         ready=[g for g,source in pending.items() if source not in pending]
         if not ready:raise RuntimeError('Derived group cycle')

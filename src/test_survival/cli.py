@@ -28,7 +28,7 @@ def parser():
     execute.add_argument('--group')
     execute.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
     execute.add_argument('--ready-fd', type=int, help=argparse.SUPPRESS)
-    for name in ('show', 'status', 'stop'):
+    for name in ('show', 'status', 'stop', 'rehash'):
         command = sub.add_parser(name)
         command.add_argument('exp_dir', type=Path)
         if name == 'show':
@@ -68,7 +68,10 @@ def main(argv=None):
             stop(args.exp_dir)
         else:
             config = load(args.exp_dir)
-            if args.command == 'status':
+            if args.command == 'rehash':
+                from .pipeline import rehash
+                print(f'Rehashed {rehash(args.exp_dir, config)} completed stages')
+            elif args.command == 'status':
                 if args.watch:
                     from .panel import watch
                     watch(args.exp_dir, config, no_panel=args.no_panel)

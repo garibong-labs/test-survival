@@ -8,25 +8,25 @@ from test_survival.config import ConfigError, STAGES, SCHEMA, Field, as_written,
 
 
 ORIGINAL_HASHES = {
-    'prepare': '8a421c9dfd509a39652f2b3e97ff611d6e9cdc9d7aaf3be8dd235f04cfc3fc23',
-    'scope': '5a6e85aa10441a021037dd57b190d8d7fcbd415c5cdf16f69540744fb94ca292',
-    'generate': '6ff923ca532074d3f0081a728ef4be47701eb63e765ebfcd1936638e071a27ec',
-    'screen': '022e1258fe4b243e112636917b7bc50f7f904371d92db540b4db12f15ca1dbb2',
-    'control': '022e1258fe4b243e112636917b7bc50f7f904371d92db540b4db12f15ca1dbb2',
-    'survive': '054652826351f0b40d1f5eee8b9c22ec3461a51332793a05e811bc53301d3a46',
-    'cover': '2d3d66f12bdc51bdcb4a10053e0e2bc8dffc8ea62b35f771f36ebec5d899485e',
-    'report': 'a511f93d8b290b9815bb02e307b7e5ac56a9881196d059734154a571a34a24e5',
+    'prepare': '411a76334ae02c686e52600ecd8856da787d3a9e8ca2ef13fe9755ed7570b939',
+    'scope': '644ba28297719d17cb21e438806ccea505b834b3b2a0285b927cc1a10aa4d640',
+    'generate': 'cf952eb408c7ffdc73b97dd8c77881d23e727572f8c1826e3a0d05ecc9df6a94',
+    'screen': 'ef2deb283b9e1470c9f9372d1495beb312309d5a72926b90f77cca68d6e80bca',
+    'control': 'ef2deb283b9e1470c9f9372d1495beb312309d5a72926b90f77cca68d6e80bca',
+    'survive': '5e1433d9f12119ec9acad05b14c94fc254fc3b36feaae091355177e4df159abf',
+    'cover': '9ad08fe086dc3fbecfaa0dc06ed6576cd523d8641d2aca26b7bb54437a192707',
+    'report': '159239ebe417b7decd25d8446bb7a508d84e0563858f727f3a7881137f30f525',
 }
 
 EXAMPLE_HASHES = {
-    'prepare': '492cf38a8fe6e8f9d70c0d0870fbc21f53b44a8c766c386fa37a2c8bb4e2549a',
-    'scope': '45df1b5d4d5356bdb59a7de00ea19ae4c10ff035947e0208be24cffb8147ef12',
-    'generate': '6a01e8175530c2c62c541192240fbd77235f8861ec201e95a95e358ba58c7043',
-    'screen': 'c825f2c1fe36ac39fdb6c1c09a18054cb505a124fd3768182726a735c8f9daf2',
-    'control': 'c825f2c1fe36ac39fdb6c1c09a18054cb505a124fd3768182726a735c8f9daf2',
-    'survive': '75ccd426be2ccab7779645ad04bea741357d29a0c3b39be33e3234ef8d6f2938',
-    'cover': 'ece627d971ff22448a66b00cef889b95c81c0fd200c53355cb435c91e7e15d9d',
-    'report': 'e16cafe95e6f359e0a23f2f651aec964b52b41f7d2b4271c4a85a9e79abbcefc',
+    'prepare': '1fa9dcdad95d323aa66e31cdc4c1b41fa1886dec4d54be3e306ddf006e16e89d',
+    'scope': 'f084348b8bbabf9c2ace514d6e8d1b926fb133d156f0d91f82741fe29bdb92c1',
+    'generate': '0e735d4ec7f02ea6b9ed6848146ccc0a3174478be01162c2c521fcdf0e3c3302',
+    'screen': '0a23e6358db39d24c15228d38d282b7c78d8b193ed0fab07266be17280f30cd6',
+    'control': '0a23e6358db39d24c15228d38d282b7c78d8b193ed0fab07266be17280f30cd6',
+    'survive': '54a02d916496c770e559ccf03c09807d1ee444888a949d1fdb0332169d581627',
+    'cover': '7609c0c68d22a41bd0deb25ea355c312602fc84388dd960dc055a539eb3d24d6',
+    'report': '89bde1a9ea1821852a0516a15d9f1390042945c5a9a63a252638ca578c3ccebf',
 }
 
 
@@ -277,3 +277,54 @@ def test_unresolvable_experiment_path_is_a_config_error(monkeypatch):
     monkeypatch.setattr(Path, 'expanduser', unavailable)
     with pytest.raises(ConfigError, match='experiment path: cannot expand home directory'):
         load('~unresolvable/experiment.yaml')
+
+
+@pytest.mark.parametrize('keys,value', [
+    (('runner', 'workers', 'build'), 9),
+    (('runner', 'workers', 'survive'), 2),
+    (('runner', 'workers', 'cover'), 6),
+    (('runner', 'reuse', 'checkouts'), '/other/checkouts'),
+    (('runner', 'reuse', 'classpath_cache'), '/other/classpath'),
+    (('runner', 'docker', 'mounts'), {'/other/repo': '/repo'}),
+    (('runner', 'docker', 'env_file'), '/private/other.env'),
+    (('model', 'env_file'), '/private/model.env'),
+])
+def test_operational_settings_do_not_change_any_stage_hash(minimal, keys, value):
+    config = validate(minimal)
+    before = as_written(config)
+    changed = deepcopy(config)
+    parent = changed
+    for key in keys[:-1]:
+        parent = parent[key]
+    parent[keys[-1]] = value
+    assert all(stage_hash(config, stage) == stage_hash(changed, stage) for stage in STAGES)
+    assert as_written(config) == before
+    assert parent[keys[-1]] == value  # Filtering must not mutate execution settings.
+
+
+@pytest.mark.parametrize('keys,value', [
+    (('docker', 'image'), 'jdk:25'),
+    (('docker', 'compose_files'), ['/runner/compose.yml']),
+    (('timeouts', 'build'), 900),
+    (('timeouts', 'compile'), 600),
+    (('timeouts', 'test_class'), 200),
+    (('jvm', 'launcher'), '2g'),
+    (('jvm', 'javac'), '1g'),
+    (('jvm', 'jacoco'), '2g'),
+])
+def test_result_affecting_runner_settings_still_change_hashes(minimal, keys, value):
+    config = validate(minimal)
+    changed = deepcopy(config)
+    changed['runner'][keys[0]][keys[1]] = value
+    assert all(stage_hash(config, stage) != stage_hash(changed, stage) for stage in STAGES)
+
+
+def test_generator_docker_override_ignores_only_host_wiring(minimal):
+    minimal['generators'] = [{'name': 'k', 'tool_path': '/k', 'docker': {'image': 'jdk:17'}}]
+    config = validate(minimal)
+    changed = deepcopy(config)
+    changed['generators'][0]['docker'].update(mounts={'/host': '/repo'}, env_file='/host.env')
+    assert all(stage_hash(config, stage) == stage_hash(changed, stage) for stage in STAGES)
+    assert stage_hash(config, 'generate', 'k') == stage_hash(changed, 'generate', 'k')
+    changed['generators'][0]['docker']['image'] = 'jdk:25'
+    assert stage_hash(config, 'generate', 'k') != stage_hash(changed, 'generate', 'k')

@@ -465,11 +465,53 @@ def range_fingerprint(config):
     return canonical_hash(as_written({k: config[k] for k in ('project', 'anchor', 'range')}, include_defaults=True))
 
 
-def stage_inputs(c, stage, group=None):
+def runner_inputs(runner):
+    """The same result-affecting runner view for stage and evidence caches."""
+    data = {k: v for k, v in runner.items() if k not in ('workers', 'reuse')}
+    if 'docker' in data:
+        data['docker'] = {k: v for k, v in data['docker'].items() if k not in ('mounts', 'env_file')}
+        if not data['docker']:
+            data.pop('docker')
+    return data
+
+
+def record_runner_inputs(runner):
+    """Normalize operational values to legacy constants for cache compatibility.
+
+    Fixed placeholders retain caches created with the old default runner; their
+    values never depend on the experiment's scheduling or host-path settings.
+    """
+    data = runner_inputs(runner)
+    data.update(workers={k: 4 for k in ('build', 'survive', 'cover')},
+                reuse={'checkouts': None, 'classpath_cache': None})
+    data['docker'] = {**data.get('docker', {}), 'mounts': {}, 'env_file': None}
+    return data
+
+
+def result_inputs(config):
+    """Hash result-affecting settings, excluding scheduling and host wiring."""
+    c = as_written(config)
+    if 'runner' in c:
+        c['runner'] = runner_inputs(c['runner'])
+        if not c['runner']:
+            c.pop('runner')
+    for g in c.get('generators', []):
+        if g.get('docker') is not None:
+            g['docker'] = {k: v for k, v in g['docker'].items() if k not in ('mounts', 'env_file')}
+            if not g['docker']:
+                g.pop('docker')
+    model = c.get('model', {})
+    model.pop('env_file', None)
+    if 'model' in c and not model:
+        c.pop('model')
+    return c
+
+
+def stage_inputs(c, stage, group=None, *, legacy=False):
     if stage not in STAGES:
         raise ConfigError(f'stage: allowed values: {", ".join(STAGES)}')
     index = STAGES.index(stage)
-    c = as_written(c)
+    c = as_written(c) if legacy else result_inputs(c)
     data = {k: c[k] for k in ('project', 'anchor', 'range', 'runner') if k in c}
     if 'stable_runs' in c.get('dev', {}):
         data['dev'] = {'stable_runs': c['dev']['stable_runs']}
@@ -500,3 +542,8 @@ def stage_inputs(c, stage, group=None):
 
 def stage_hash(c, stage, group=None):
     return canonical_hash(stage_inputs(c, stage, group))
+
+
+def legacy_stage_hash(c, stage, group=None):
+    """Recognize pre-migration state without silently blessing changed results."""
+    return canonical_hash(stage_inputs(c, stage, group, legacy=True))

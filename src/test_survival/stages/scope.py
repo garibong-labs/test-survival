@@ -12,6 +12,8 @@ from ..rules.matching import renumber
 
 
 def run(exp, config):
+    from ..dev_results import imported_groups
+    imported = imported_groups(exp, config)
     adapter = JavaMavenAdapter(exp, config)
     inventory = read_json(exp/'results/source-inventory.json')
     baseline = read_csv(exp/'dev/dev-methods-all.csv')
@@ -47,7 +49,7 @@ def run(exp, config):
     selected = set(r['class'] for r in chosen)
     focal = [m for m in inventory['main']['methods'] if m['eligible'] and m['class'] in selected]
     groups=config['dev']['groups'];denominators={};excluded_counts={};observations=[]
-    if any(g['denominator']=='coverage-scoped' for g in groups):
+    if any(g['denominator']=='coverage-scoped' and g['name'] not in imported for g in groups):
         adapter.setup_runner()
         stable=[r for r in baseline if r['stable']=='yes'];scope_files={r['file'] for r in chosen}
         def coverage(row):
@@ -63,7 +65,11 @@ def run(exp, config):
             observations=list(pool.map(coverage,stable))
         write_csv(exp/'results/dev-method-coverage-t.csv',observations,['class','method','scope_lines_covered','scope_files','total_lines_covered','seconds','status'])
     for index,g in enumerate(groups):
-        if g['denominator']=='coverage-scoped':
+        if g['name'] in imported:
+            selected_dev = [{k: row[k] for k in ('class', 'method', 'kind')} for row in imported[g['name']]['frozen']]
+            excluded_path = exp/f"dev/{g['name']}-excluded.csv"
+            excluded = read_csv(excluded_path) if excluded_path.exists() else []
+        elif g['denominator']=='coverage-scoped':
             selected_dev,excluded=coverage_scoped(baseline,observations)
         else:
             selected_dev=denominator(baseline,g['denominator'],chosen,{n.rsplit('.',1)[-1] for n in inventory['main']['classes']})

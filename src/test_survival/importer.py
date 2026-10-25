@@ -25,11 +25,17 @@ def import_experiment(exp, source, what):
         raise PipelineError('Import source and destination must be separate experiment folders')
     config=load(exp)
     selections=what.split(',')
-    if not selections or set(selections)-{'generated','dev-baseline'}:
-        raise PipelineError('--what: allowed values: generated,dev-baseline')
+    if not selections or set(selections)-{'generated','dev-baseline','dev-results'}:
+        raise PipelineError('--what: allowed values: generated,dev-baseline,dev-results')
     with run_lock(exp):
         imports=read_json(exp/'state/import.json',{})
         for selection in selections:
+            if selection == 'dev-results':
+                from .dev_results import import_results
+                imports[selection] = import_results(exp, source, config)
+                write_json(exp/'state/import.json', imports)
+                log(exp, f'import dev-results: copied {len(imports[selection]["files"])} files from {source}')
+                continue
             copied={}
             def copy(src,dst):
                 if not src.is_file():

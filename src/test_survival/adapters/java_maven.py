@@ -9,7 +9,7 @@ import subprocess
 import tarfile
 import xml.etree.ElementTree as ET
 
-from ..config import as_written, canonical_hash
+from ..config import as_written, canonical_hash, record_runner_inputs
 from ..io import read_json, write_json, write_csv
 from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
@@ -56,18 +56,24 @@ class JavaMavenAdapter:
         write_json(marker, {'sha': sha, 'seeded_from': str(source) if seed_ok else None})
         return target
 
-    def build_fingerprint(self, sha):
+    def build_fingerprint(self, sha, *, legacy=False):
         runner = as_written(self.config['runner'], include_defaults=True)
+        if not legacy:
+            runner = record_runner_inputs(runner)
         # Preserve pre-volume build records when the new cache default is implicit.
         if 'm2_volume' not in as_written(self.config['runner']['docker']):
             runner['docker'].pop('m2_volume', None)
         return canonical_hash({'sha': sha, 'runner': runner, 'module': self.config['project']['module']})
 
+    def build_fingerprints(self, sha):
+        """Current key first, then the pre-policy key of records that hashed operational settings."""
+        return self.build_fingerprint(sha), self.build_fingerprint(sha, legacy=True)
+
     def build(self, index, sha):
         record = self.exp / f'results/builds/{index}.json'
-        fingerprint = self.build_fingerprint(sha)
+        fingerprint, legacy = self.build_fingerprints(sha)
         previous = read_json(record, {})
-        if previous.get('input_sha256') == fingerprint and previous.get('build') == 'ok' and (self.folder(index)/'target/classes').exists():
+        if previous.get('input_sha256') in (fingerprint, legacy) and previous.get('build') == 'ok' and (self.folder(index)/'target/classes').exists():
             return previous
         self.checkout(index, sha)
         folder = self.folder(index)
@@ -245,18 +251,24 @@ class JavaMavenAdapter:
             results.append(self.runner.execute(['javac','-J-Xmx'+self.config['runner']['jvm']['javac'],'-cp',cp,'-d',str(part),str(source)],self.folder(index),part/'javac.txt',self.config['runner']['timeouts']['compile']))
         return results
 
+    def run_fingerprints(self, methods, repeats=1):
+        """Current key first, then the pre-policy key of records that hashed operational settings."""
+        inputs={'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
+                'project':self.config['project'], 'survival':self.config['survival'], 'repeats':repeats}
+        return (canonical_hash({**inputs, 'runner':record_runner_inputs(self.config['runner'])}),
+                canonical_hash({**inputs, 'runner':self.config['runner']}))
+
     def run_fingerprint(self, methods, repeats=1):
-        return canonical_hash({'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
-                               'project':self.config['project'], 'survival':self.config['survival'], 'runner':self.config['runner'], 'repeats':repeats})
+        return self.run_fingerprints(methods, repeats)[0]
 
     def run_group(self,index,group,methods,phase='A',repeats=1):
-        fingerprint=self.run_fingerprint(methods,repeats)
+        fingerprint,legacy=self.run_fingerprints(methods,repeats)
         provenance=self.provenance()
         folder='raw' if phase=='A' else 'raw-coverage' if phase=='B' else phase
         output=f'results/{folder}/{index}-{group}.json'
         old=read_json(self.exp/output,{})
         commit=read_json(self.exp/'results/anchor.json') if index==0 else read_json(self.exp/f'results/builds/{index}.json')
-        if old.get('input_sha256')==fingerprint and old.get('runner_sha256')==provenance and old.get('sha')==commit['sha']:
+        if old.get('input_sha256') in (fingerprint,legacy) and old.get('runner_sha256')==provenance and old.get('sha')==commit['sha']:
             return old
         return self.worker(dict(action='run',index=index,sha=commit['sha'],group=group,phase=phase,methods=methods,repeats=repeats,
                                 input_sha256=fingerprint,runner_sha256=provenance,output=output,work=f'work/phase-{phase}/{index}/{group}'))
@@ -265,13 +277,14 @@ class JavaMavenAdapter:
         name=method['class']+'#'+method['method']
         xml=f'results/dev-method-coverage-t/{name}.xml'
         output=f'results/dev-method-coverage-t/{name}.json'
-        fingerprint=canonical_hash({'method':method,'source':hashlib.sha256((self.exp/method['file']).read_bytes()).hexdigest(),
-                                    'project':self.config['project'],'runner':self.config['runner'],
-                                    'environment_errors':self.config['survival']['environment_errors']})
+        inputs={'method':method,'source':hashlib.sha256((self.exp/method['file']).read_bytes()).hexdigest(),
+                'project':self.config['project'],'environment_errors':self.config['survival']['environment_errors']}
+        fingerprint=canonical_hash({**inputs,'runner':record_runner_inputs(self.config['runner'])})
+        legacy=canonical_hash({**inputs,'runner':self.config['runner']})
         previous=read_json(self.exp/output,{})
         provenance=self.provenance()
         anchor=read_json(self.exp/'results/anchor.json')
-        if previous.get('input_sha256')==fingerprint and previous.get('runner_sha256')==provenance and previous.get('sha')==anchor['sha'] and (self.exp/xml).exists():return previous
+        if previous.get('input_sha256') in (fingerprint,legacy) and previous.get('runner_sha256')==provenance and previous.get('sha')==anchor['sha'] and (self.exp/xml).exists():return previous
         return self.worker(dict(action='run',index=0,sha=anchor['sha'],group=self.config['dev']['groups'][0]['name'],phase='B',methods=[method],repeats=1,retry=False,environment_retry=True,
                                 input_sha256=fingerprint,runner_sha256=provenance,coverage_xml=xml,output=output,work='work/dev-method-coverage-t/'+name))
 

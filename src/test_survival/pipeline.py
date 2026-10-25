@@ -9,7 +9,7 @@ import sys
 import time
 from uuid import uuid4
 
-from .config import STAGES, stage_hash
+from .config import STAGES, stage_hash, legacy_stage_hash
 from .io import atomic_text, now, read_json, write_json
 from .progress import describe
 from .lifecycle import process_identity, freeze_workers, terminate_workers, cleanup_containers
@@ -164,6 +164,11 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
     if group and group not in [g['name'] for g in config['generators']]:
         raise PipelineError('--group must name a configured generator')
     selected = (stage,) if stage else STAGES[:STAGES.index(until)+1] if until else STAGES
+    for current in STAGES:
+        saved = read_json(exp/'state'/f'{current}.json', {})
+        if (saved.get('status') == 'completed' and saved.get('config_hash') != stage_hash(config, current)
+                and saved.get('config_hash') == legacy_stage_hash(config, current)):
+            raise PipelineError('Legacy stage hashes detected; run survival rehash <exp-dir> before resuming')
     if stage:
         for earlier in STAGES[:STAGES.index(stage)]:
             previous = read_json(exp / 'state' / f'{earlier}.json', {})
@@ -196,8 +201,18 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
                 continue
             invalidate(exp, current)
             state = dict(status='running', config_hash=digest, started=now(), finished=None, notes='')
-            if current == 'generate' and group:
-                state['group'] = group
+            if current == 'prepare' and previous.get('dev_baseline'):
+                state['dev_baseline'] = previous['dev_baseline']
+            if current == 'generate':
+                hashes = dict(previous.get('group_hashes', {}))
+                all_current = previous.get('status') == 'completed' and previous.get('config_hash') == digest
+                for g in config['generators']:
+                    name = g['name']
+                    if all_current or hashes.get(name) == legacy_stage_hash(config, 'generate', name):
+                        hashes[name] = stage_hash(config, 'generate', name)
+                state['group_hashes'] = hashes
+                if group:
+                    state['group'] = group
             write_json(path, state)
             log(exp, f'{current}: started', config)
             try:
@@ -214,11 +229,13 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
                 raise
             state.update(status='completed', finished=now(), notes=summary or f'{current} completed')
             if current == 'generate' and group and handlers is None:
-                hashes = dict(previous.get('group_hashes', {}))
+                hashes = dict(state.get('group_hashes', {}))
                 hashes[group] = stage_hash(config, 'generate', group)
                 state['group_hashes'] = hashes
                 if any(hashes.get(g['name']) != stage_hash(config, 'generate', g['name']) for g in config['generators']):
                     state['status'] = 'pending'
+            if current == 'generate' and not group and handlers is None:
+                state['group_hashes'] = {g['name']: stage_hash(config, 'generate', g['name']) for g in config['generators']}
             write_json(path, state)
             log(exp, f'{current}: {state["notes"]}', config)
             completed.append(current)
@@ -284,3 +301,28 @@ def status(exp, config):
         if lines:
             rows.append('Last log: ' + lines[-1])
     return '\n'.join(rows)
+
+
+def rehash(exp, config):
+    """Migrate only completed-stage config_hash fields; never bless pending work."""
+    exp = Path(exp).resolve()
+    if not (exp/'state').is_dir():
+        raise PipelineError('No stage state to rehash')
+    # A lock inode is permanent once published. Never create/delete a transient
+    # guard: a process could already hold an open descriptor to that inode.
+    try:
+        fd = os.open(exp/'state/run.lock', os.O_RDWR)
+    except FileNotFoundError as exc:
+        raise PipelineError('rehash requires the existing state/run.lock from an experiment run') from exc
+    with run_lock(exp, fd):
+        updates = []
+        for stage in STAGES:
+            path = exp/'state'/f'{stage}.json'
+            state = read_json(path, {})
+            if state.get('status') == 'completed':
+                digest = stage_hash(config, stage)
+                if state.get('config_hash') != digest:
+                    updates.append((path, {**state, 'config_hash': digest}))
+        for path, state in updates:
+            write_json(path, state)
+    return len(updates)
