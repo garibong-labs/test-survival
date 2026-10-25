@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .config import canonical_hash
 from .io import read_csv, read_json
 
 
@@ -17,11 +18,39 @@ def items(exp, stage, config, state):
     """
     completed = []
     if stage == 'prepare':
+        from .adapters.java_maven import JavaMavenAdapter
+        from .rules.commits import skip_reason
+        adapter = JavaMavenAdapter(exp, config)
+        resolution_path = exp/'state/resolved-range.json'
+        resolution = read_json(resolution_path, {})
+        resolution_hash = canonical_hash({k: config[k] for k in ('project', 'anchor', 'range')})
+        plan_paths = [exp/'results'/name for name in ('anchor.json', 'commits.csv', 'commit-paths.json')]
+        # Prepare publishes these inputs after resolving the current range.
+        # Until that finishes, old indices cannot describe the new work safely.
+        if (resolution.get('config_hash') != resolution_hash or
+                any(not p.exists() or p.stat().st_mtime_ns < resolution_path.stat().st_mtime_ns for p in plan_paths)):
+            return [], None, 'builds'
+        anchor = read_json(exp/'results/anchor.json', {})
         commits = csv_rows(exp/'results/commits.csv')
-        total = len(commits)+1 if (exp/'results/commits.csv').exists() else None
-        for index in ['0', *(r['index'] for r in commits)]:
+        changes = read_json(exp/'results/commit-paths.json', {})
+        total = len(commits)+1
+        started = datetime.fromisoformat(state['started']).timestamp() if state.get('started') else None
+        for row in [dict(index='0', sha=anchor.get('sha')), *commits]:
+            index, sha = row['index'], row.get('sha')
             path = exp/f'results/builds/{index}.json'
-            if read_json(path, {}).get('build') in ('ok', 'fail', 'skipped-untouched'):
+            record = read_json(path, {})
+            if not sha or record.get('sha') != sha:
+                continue
+            reason = skip_reason(changes[index], config['project']['module'], config['range']['skip_untouched']) if index != '0' and index in changes else None
+            if reason:
+                if record.get('build') == 'skipped-untouched' and record.get('reason') == reason:
+                    completed.append([path])
+                continue
+            if record.get('input_sha256') != adapter.build_fingerprint(sha):
+                continue
+            fresh = started is not None and path.stat().st_mtime >= started
+            cached = record.get('build') == 'ok' and (adapter.folder(index)/'target/classes').exists()
+            if record.get('build') in ('ok', 'fail') and (fresh or cached):
                 completed.append([path])
         return completed, total, 'builds'
     if stage in ('generate', 'screen'):
@@ -30,6 +59,10 @@ def items(exp, stage, config, state):
         total = 0
         unknown = False
         scope = read_json(exp/'population/scope.json', {})
+        if stage == 'screen':
+            from .adapters.java_maven import JavaMavenAdapter
+            adapter = JavaMavenAdapter(exp, config)
+            provenance = adapter.provenance()
         for group in config['generators']:
             if stage == 'generate' and state.get('group') not in (None, group['name']):
                 continue
@@ -42,7 +75,9 @@ def items(exp, stage, config, state):
                     total += len(sources)
                     for number, source in enumerate(sources):
                         path = directory/f'validation/{number}.json'
-                        if read_json(path, {}).get('file') == str(source.relative_to(exp)):
+                        record = read_json(path, {})
+                        fingerprint = adapter.screen_fingerprint(source, config['screen']['stable_runs'], provenance=provenance)
+                        if record.get('file') == str(source.relative_to(exp)) and record.get('input_sha256') == fingerprint:
                             completed.append([path])
                 continue
             manifest = read_json(root/'rounds.json', {})

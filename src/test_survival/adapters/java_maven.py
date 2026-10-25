@@ -55,9 +55,12 @@ class JavaMavenAdapter:
         write_json(marker, {'sha': sha, 'seeded_from': str(source) if seed_ok else None})
         return target
 
+    def build_fingerprint(self, sha):
+        return canonical_hash({'sha': sha, 'runner': self.config['runner'], 'module': self.config['project']['module']})
+
     def build(self, index, sha):
         record = self.exp / f'results/builds/{index}.json'
-        fingerprint = canonical_hash({'sha': sha, 'runner': self.config['runner'], 'module': self.config['project']['module']})
+        fingerprint = self.build_fingerprint(sha)
         previous = read_json(record, {})
         if previous.get('input_sha256') == fingerprint and previous.get('build') == 'ok' and (self.folder(index)/'target/classes').exists():
             return previous
@@ -201,10 +204,14 @@ class JavaMavenAdapter:
         if record.get('status') != 'completed' or record.get('jars') != read_json(self.helpers/'classpath-artifacts.json'):
             self.worker({'action':'setup'})
 
+    def screen_fingerprint(self, source, repeats, *, provenance=None):
+        return canonical_hash({'source':hashlib.sha256(source.read_bytes()).hexdigest(), 'repeats':repeats,
+                               'runner':self.provenance() if provenance is None else provenance})
+
     def screen_file(self, group, round_name, source, repeats, number):
         relative = str(source.relative_to(self.exp))
         output = f'generated/{group}/{round_name}/validation/{number}.json'
-        key = canonical_hash({'source':hashlib.sha256(source.read_bytes()).hexdigest(),'repeats':repeats,'runner':self.provenance()})
+        key = self.screen_fingerprint(source, repeats)
         old = read_json(self.exp/output,{})
         if old.get('input_sha256') == key:
             return old
