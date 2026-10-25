@@ -42,12 +42,14 @@ def test_zero_compile_round_loop_advances_without_retry(tmp_path,monkeypatch):
     calls=[]
     class Fake:
         def __init__(self,*args):pass
-        def setup_runner(self):pass
-        def generate(self,n):calls.append(n);return SimpleNamespace(calls=[])
+        def setup_runner(self):calls.append('setup')
+        def generate(self,n):
+            assert calls[0]=='setup'
+            calls.append(n);return SimpleNamespace(calls=[])
     monkeypatch.setattr(java_maven,'JavaMavenAdapter',Fake)
     monkeypatch.setattr(generate,'OuedraogoNative',Fake)
     monkeypatch.setattr(generate,'screen_round',lambda *args:([],{'compiled':0}))
     generate.run(tmp_path,config)
     record=read_json(tmp_path/'generated/o/rounds.json')
-    assert calls==[1,2] and record['stopped']=='zero-compile'
+    assert calls==['setup',1,2] and record['stopped']=='zero-compile'
     assert [r['directory'] for r in record['rounds']]==['round1','round2']

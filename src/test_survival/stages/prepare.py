@@ -75,6 +75,7 @@ def run(exp, config):
         result = adapter.build(row['index'], row['sha'])
         log(exp, f'prepare: build {row["index"]}/{len(commits)} {result["build"]}', config)
         return result
+    adapter.setup_runner()
     with ThreadPoolExecutor(max_workers=config['runner']['workers']['build']) as pool:
         builds = list(pool.map(build, commits))
     atomic_text(exp/'results/commits-check.md', '# Complete range build check\n\n'+f'{len(commits)} first-parent commits; {sum(r["build"]=="ok" for r in builds)} built successfully. Build failures carry forward survival and are excluded from evaluation.\n')
