@@ -3,9 +3,8 @@ from ..io import read_json, write_json, atomic_text
 
 
 def run(exp,config):
-    from ..dev_results import load_provenance, imported_groups, imported_record
-    provenance = load_provenance(exp)
-    imported = imported_groups(exp, config, 'control', provenance=provenance)
+    from ..dev_results import imported_for, imported_record
+    provenance, imported = imported_for(exp, config, 'control')
     adapter=JavaMavenAdapter(exp,config)
     frozen=read_json(exp/'results/frozen-denominators.json')
     if set(frozen) - imported.keys():

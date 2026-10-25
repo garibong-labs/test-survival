@@ -64,9 +64,8 @@ def aggregate(exp,config):
 
 
 def run(exp,config):
-    from ..dev_results import load_provenance, imported_groups, imported_record
-    provenance = load_provenance(exp)
-    imported = imported_groups(exp, config, 'survive', provenance=provenance)
+    from ..dev_results import imported_for, imported_record
+    provenance, imported = imported_for(exp, config, 'survive')
     adapter=JavaMavenAdapter(exp,config)
     frozen=read_json(exp/'results/frozen-denominators.json');groups=group_names(config)
     validate_derived_subsets(config['dev']['groups'],frozen)

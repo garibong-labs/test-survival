@@ -79,9 +79,8 @@ def aggregate(exp,config):
 
 
 def run(exp,config):
-    from ..dev_results import load_provenance, imported_groups, imported_record, require_record
-    provenance = load_provenance(exp)
-    imported = imported_groups(exp, config, 'cover', provenance=provenance)
+    from ..dev_results import imported_for, imported_record, require_record
+    provenance, imported = imported_for(exp, config, 'cover')
     adapter=JavaMavenAdapter(exp,config)
     commits=read_csv(exp/'results/commits.csv');indices={0} if config['coverage']['at_anchor'] else set()
     skipped=skipped_commits(exp,config,commits);aliases={}
@@ -110,16 +109,14 @@ def run(exp,config):
         log(exp,f'cover: {i} {g} recorded',config)
     shas = {int(r['index']): r['sha'] for r in commits}
     shas[0] = read_json(exp/'results/anchor.json')['sha']
-    for i in sorted(indices):
-        if i and read_json(exp/f'results/builds/{i}.json')['build'] != 'ok':
-            continue
+    buildable = [i for i in sorted(indices) if i == 0 or read_json(exp/f'results/builds/{i}.json')['build'] == 'ok']
+    for i in buildable:
         for g in imported:
             raw = imported_record(exp, f'results/raw-coverage/{i}-{g}.json', sha=shas[i], method_ids=alive[str(i)][g], provenance=provenance)
             if raw.get('status') != 'evaluated':
                 raise RuntimeError('Imported coverage report failed')
             require_record(exp, provenance, f'results/coverage/{i}-{g}-lines.csv')
-    pending = [(i, g) for i in sorted(indices) for g in frozen if g not in imported
-               and (i == 0 or read_json(exp/f'results/builds/{i}.json')['build'] == 'ok')]
+    pending = [(i, g) for i in buildable for g in frozen if g not in imported]
     with measurement_session(adapter, 'cover', bool(pending)), ThreadPoolExecutor(max_workers=config['runner']['workers']['cover']) as pool:
         jobs = [pool.submit(job, i, g) for i, g in pending]
         for future in as_completed(jobs):future.result()

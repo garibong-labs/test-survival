@@ -302,7 +302,10 @@ ignore scheduling and host wiring. Runner implementation/provenance changes can
 still invalidate cached measurements.
 
 Run `rehash` **once on experiments created before this hash-policy change**, after
-any active run has finished and before changing result-affecting configuration:
+any active run has finished and before editing `experiment.yaml` at all (a resume
+recognizes legacy hashes only while the configuration is unchanged; even an
+operational edit such as `runner.workers` made first leaves completed stages
+unrecognizable, and the resume invalidates and reruns them):
 
 ```sh
 survival rehash /absolute/path/to/target-fork/experiments/first-run

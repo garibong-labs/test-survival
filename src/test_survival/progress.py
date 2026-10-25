@@ -46,7 +46,7 @@ def items(exp, stage, config, state):
                 if record.get('build') == 'skipped-untouched' and record.get('reason') == reason:
                     completed.append([path])
                 continue
-            if record.get('input_sha256') != adapter.build_fingerprint(sha):
+            if record.get('input_sha256') not in adapter.build_fingerprints(sha):
                 continue
             fresh = started is not None and path.stat().st_mtime >= started
             cached = record.get('build') == 'ok' and (adapter.folder(index)/'target/classes').exists()
@@ -146,8 +146,8 @@ def items(exp, stage, config, state):
                 methods = [m for m in frozen[group] if selected is None or m['id'] in selected]
                 key = (group, tuple(m['id'] for m in methods))
                 if key not in fingerprints:
-                    fingerprints[key] = adapter.run_fingerprint(methods)
-                valid = ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or (raw.get('input_sha256') == fingerprints[key] and raw.get('runner_sha256') == provenance))
+                    fingerprints[key] = adapter.run_fingerprints(methods)
+                valid = ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or (raw.get('input_sha256') in fingerprints[key] and raw.get('runner_sha256') == provenance))
                          and bool(commit.get('sha')) and raw.get('sha') == commit['sha'])
                 if stage == 'cover':
                     valid = valid and raw.get('status') == 'evaluated' and (exp/f'results/coverage/{index}-{group}-lines.csv').exists()
@@ -299,7 +299,7 @@ def panel_items(exp, stage, config, state):
             path = exp/f'results/control/0-{group}.json'
             record = read_json(path, {})
             if ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or
-                 (record.get('input_sha256') == adapter.run_fingerprint(methods)
+                 (record.get('input_sha256') in adapter.run_fingerprints(methods)
                   and record.get('runner_sha256') == provenance))
                     and record.get('sha') == anchor):
                 completed.extend([path] for _ in record.get('methods', []))

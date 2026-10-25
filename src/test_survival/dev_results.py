@@ -7,7 +7,7 @@ import shutil
 
 import yaml
 
-from .config import ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate
+from .config import MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate
 from .io import now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
 from .rules.dev_denominator import denominator_file
@@ -69,13 +69,26 @@ def identity(exp, config):
                                           stable_runs=config['dev']['stable_runs'], coverage=config['coverage']))
 
 
-def check_identity(actual, expected):
+DETACH = '; remove the dev-results entry from state/import.json to measure these groups afresh'
+
+
+def _divergence(actual, expected, prefix=''):
+    """Dotted path of the first differing leaf, so refusals name the setting."""
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        for key in sorted(set(actual) | set(expected), key=str):
+            if actual.get(key, MISSING) != expected.get(key, MISSING):
+                return _divergence(actual.get(key), expected.get(key), f'{prefix}{key}.')
+    return prefix.rstrip('.')
+
+
+def check_identity(actual, expected, *, advice=''):
     labels = dict(project_repo='project repo', anchor_sha='anchor sha', commit_shas='commit sha sequence',
-                  skip_untouched='skip_untouched', dev_tree_sha256='dev/src-test-t tree hash')
-    labels['measurement_settings'] = 'result-affecting measurement settings'
+                  skip_untouched='skip_untouched', dev_tree_sha256='dev/src-test-t tree hash',
+                  measurement_settings='result-affecting measurement settings')
     for key, label in labels.items():
         if actual.get(key) != expected.get(key):
-            raise PipelineError(f'dev-results refused: {label} differs')
+            detail = _divergence(actual.get(key), expected.get(key)) if key == 'measurement_settings' else ''
+            raise PipelineError(f'dev-results refused: {label}{f" ({detail})" if detail else ""} differs{advice}')
 
 
 def import_results(exp, source, config):
@@ -106,8 +119,8 @@ def import_results(exp, source, config):
         if excluded.exists():
             plan[str(excluded.relative_to(source))] = excluded
         group_paths = []
+        pattern = re.compile(r'\d+-'+re.escape(name)+r'(?:\.[^/]+|-lines\.csv)$')
         for folder in ('raw', 'raw-derived', 'coverage', 'raw-coverage', 'control'):
-            pattern = re.compile(r'\d+-'+re.escape(name)+r'(?:\.[^/]+|-lines\.csv)$')
             for path in sorted((source/'results'/folder).glob('*')):
                 if path.is_file() and pattern.fullmatch(path.name):
                     relative = str(path.relative_to(source))
@@ -118,11 +131,11 @@ def import_results(exp, source, config):
         source_folder = 'raw-derived' if old.get('derive_from') else 'raw'
         target_folder = 'raw-derived' if group.get('derive_from') else 'raw'
         if source_folder != target_folder:
-            for relative in list(group_paths):
+            for position, relative in enumerate(group_paths):
                 if relative.startswith(f'results/{source_folder}/'):
                     target = relative.replace(f'results/{source_folder}/', f'results/{target_folder}/', 1)
-                    plan[target] = source/relative
-                    group_paths.append(target)
+                    plan[target] = plan.pop(relative)
+                    group_paths[position] = target
         control = f'results/control/0-{name}.json'
         if control not in plan:
             raise PipelineError(f'dev-results: missing control result for {name} in {source}')
@@ -167,7 +180,7 @@ def imported_groups(exp, config, stage=None, *, provenance=None):
     groups = {name: item for name, item in record['groups'].items() if name in current}
     if not groups:
         return {}
-    check_identity(identity(exp, config), record['compatibility'])
+    check_identity(identity(exp, config), record['compatibility'], advice=DETACH)
     frozen = read_json(exp/'results/frozen-denominators.json', {})
     for name, item in groups.items():
         if current[name]['denominator'] != item['denominator']:
@@ -181,6 +194,12 @@ def imported_groups(exp, config, stage=None, *, provenance=None):
                 if Path(path).parts[1] in folders:
                     require_record(exp, record, path)
     return groups
+
+
+def imported_for(exp, config, stage):
+    """Provenance plus the validated imported groups a measurement stage may skip."""
+    provenance = load_provenance(exp)
+    return provenance, imported_groups(exp, config, stage, provenance=provenance)
 
 
 def require_record(exp, provenance, relative):
@@ -213,6 +232,6 @@ def imported_baseline(exp, config):
     record = load_provenance(exp)
     if not record:
         return False
-    check_identity(identity(exp, config), record['compatibility'])
+    check_identity(identity(exp, config), record['compatibility'], advice=DETACH)
     require_record(exp, record, 'dev/dev-methods-all.csv')
     return True
