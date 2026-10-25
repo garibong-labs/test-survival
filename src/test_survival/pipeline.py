@@ -4,18 +4,24 @@ import fcntl
 import importlib
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
+import time
 
 from .config import STAGES, stage_hash
-from .io import now, read_json, write_json
+from .io import atomic_text, now, read_json, write_json
+from .progress import describe
 
 
 class PipelineError(RuntimeError):
     pass
 
 
-def log(exp, message):
+def log(exp, message, config=None):
+    stage = message.partition(':')[0]
+    if config is not None and stage in STAGES:
+        message += ' | ' + describe(exp, stage, config)
     line = f'{now()} {message}'
     print(line, flush=True)
     path = Path(exp) / 'state/log.txt'
@@ -62,6 +68,57 @@ def invalidate(exp, start):
             write_json(path, record)
 
 
+def stop(exp):
+    exp = Path(exp).resolve()
+    run_path = exp/'state/run.json'
+    record = read_json(run_path, {})
+    if record.get('status') != 'running':
+        raise PipelineError('No running experiment recorded in state/run.json')
+    pid = record.get('pid')
+    if not isinstance(pid, int) or pid <= 1 or pid == os.getpid():
+        raise PipelineError('Refusing invalid run PID in state/run.json')
+    if process_alive(pid):
+        try:
+            # Background runs own a session. Foreground runs share the shell's
+            # group, which must never be signalled as a whole.
+            detached = os.getpgid(pid) == pid
+            send = (lambda sig: os.killpg(pid, sig)) if detached else (lambda sig: os.kill(pid, sig))
+            send(signal.SIGTERM)
+            deadline = time.monotonic()+5
+            while process_alive(pid) and time.monotonic() < deadline:
+                time.sleep(.05)
+            if detached or process_alive(pid):
+                send(signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError as exc:
+            # macOS can report EPERM for a group whose only member is now a
+            # zombie. A live process still requires a successful signal.
+            if process_alive(pid):
+                raise PipelineError(f'Cannot terminate process {pid}: permission denied') from exc
+        deadline = time.monotonic()+5
+        while process_alive(pid) and time.monotonic() < deadline:
+            time.sleep(.05)
+        if process_alive(pid):
+            raise PipelineError(f'Process {pid} did not stop; state and lock retained')
+    # Never unlink a flock file: that could permit two runs on separate inodes.
+    with run_lock(exp):
+        current = read_json(run_path, {})
+        if current.get('pid') != pid or current.get('started') != record.get('started'):
+            raise PipelineError('Run changed while stopping; new run state retained')
+        finished = now()
+        for stage in STAGES:
+            path = exp/'state'/f'{stage}.json'
+            state = read_json(path, {})
+            if state.get('status') == 'running':
+                state.update(status='failed', finished=finished, notes='stopped by user')
+                write_json(path, state)
+        current.update(status='failed', finished=finished, notes='stopped by user')
+        write_json(run_path, current)
+        log(exp, f'stopped process {pid}: stopped by user')
+    return pid
+
+
 def default_handler(stage):
     return importlib.import_module(f'test_survival.stages.{stage}').run
 
@@ -95,20 +152,25 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
             digest = stage_hash(config, current)
             previous = read_json(path, {})
             if not force and previous.get('status') == 'completed' and previous.get('config_hash') == digest:
-                log(exp, f'{current}: already completed; skipped')
+                log(exp, f'{current}: already completed; skipped', config)
                 continue
             invalidate(exp, current)
             state = dict(status='running', config_hash=digest, started=now(), finished=None, notes='')
+            if current == 'generate' and group:
+                state['group'] = group
             write_json(path, state)
-            log(exp, f'{current}: started')
+            log(exp, f'{current}: started', config)
             try:
                 handler = handlers[current] if handlers is not None else default_handler(current)
                 summary = handler(exp, config, group=group, force=force) if current == 'generate' and handlers is None else handler(exp, config, group=group) if group else handler(exp, config)
             except BaseException as exc:
-                # Tracebacks and arbitrary exception strings may include request secrets.
-                state.update(status='failed', finished=now(), notes=f'{type(exc).__name__}; see stage evidence')
+                # Always leave a concrete diagnostic, including failures before
+                # the stage has created its first evidence file. Keep it off stdout.
+                error_path = exp/'state'/f'{current}-error.txt'
+                atomic_text(error_path, f'{type(exc).__name__}: {exc}\n')
+                state.update(status='failed', finished=now(), notes=f'{type(exc).__name__}; see {error_path.relative_to(exp)}')
                 write_json(path, state)
-                log(exp, f'{current}: failed ({type(exc).__name__})')
+                log(exp, f'{current}: failed ({type(exc).__name__}); see {error_path}', config)
                 raise
             state.update(status='completed', finished=now(), notes=summary or f'{current} completed')
             if current == 'generate' and group and handlers is None:
@@ -118,7 +180,7 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
                 if any(hashes.get(g['name']) != stage_hash(config, 'generate', g['name']) for g in config['generators']):
                     state['status'] = 'pending'
             write_json(path, state)
-            log(exp, f'{current}: {state["notes"]}')
+            log(exp, f'{current}: {state["notes"]}', config)
             completed.append(current)
         record.update(status='completed', finished=now())
         return completed
@@ -160,7 +222,7 @@ def status(exp, config):
         label = state.get('status', 'pending')
         if label == 'completed' and state.get('config_hash') != stage_hash(config, stage):
             label = 'stale'
-        rows.append(f'{stage:10} {label}')
+        rows.append(f'{stage:10} {label} | {describe(exp, stage, config)}')
     active = read_json(exp / 'state/run.json', {})
     bg = read_json(exp / 'state/background.json', {})
     if active.get('status') == 'running':

@@ -16,6 +16,7 @@ Edit `experiment.yaml`: set the project checkout, anchor, fixed range endpoint, 
 survival run /path/to/experiment --until scope
 survival run /path/to/experiment --background
 survival status /path/to/experiment
+survival stop /path/to/experiment
 survival show /path/to/experiment screen
 survival run /path/to/experiment --stage survive --force
 ```
@@ -23,6 +24,10 @@ survival run /path/to/experiment --stage survive --force
 Stages run in this order: **prepare → scope → generate → screen → control → survive → cover → report**. Completed stages with matching configuration hashes are skipped. Hashes use the YAML configuration as written, before defaults are filled. Changes invalidate the affected stage and downstream stages. Interrupted work retains evidence for resumption; one process may run an experiment at a time. `--stage` requires current completed predecessors. `--until` stops after the selected stage. `--force` executes the selected work again. Forced generation archives the old group under `work/generation-history/`; `--stage generate --group NAME --force` regenerates just that group.
 
 Developer groups can use project, name-targeted, or per-method coverage-scoped denominators. A derived group filters another Dev group’s survival records and measures its own coverage. `range.skip_untouched` skips irrelevant commits for every group while retaining indices. `survival.environment_errors` configures separate retries for matching failure messages. JUnit 4 and JUnit 5 are supported; generator Docker overrides let author tools use a different JDK.
+
+Status and stage log lines show elapsed time, completed/total items, and an estimated finish based on that stage's throughput in the current attempt. Prepare counts builds (including the anchor), generate counts model calls, screen counts files, survive counts commits, and cover counts indices. Cached records count toward completion but not the current attempt's throughput. Estimates remain unknown until there is enough evidence; adaptive KTester call totals remain unknown until generation stops. `survival stop` terminates the recorded process (and its process group for detached runs), marks the running stage failed with `stopped by user`, and releases the run lock. Stage exceptions are saved in `state/<stage>-error.txt`, named in the failure log line.
+
+Use `scope.rule: all-eligible` to select every class satisfying `min_methods` and `exclude_accessor_heavy`, without the `target_methods` or `max_classes` caps. Ranking still determines output order. If an anchor is off the endpoint's first-parent history, prepare names the first containing first-parent commit and reports whether its module tree matches the anchor.
 
 Screening keeps methods that pass every configured anchor run and deduplicates exact whitespace-stripped bodies. Survival uses a fixed denominator: a lost method never returns. Build failures carry counts forward. Coverage uses the methods alive entering each index, on changed production commits and their predecessors. Reports include Markdown tables, an SVG figure (plus PNG when the JDK renderer succeeds), raw records, consistency checks, and a summary JSON file.
 

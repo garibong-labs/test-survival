@@ -9,6 +9,7 @@ from .parts.extraction import extract
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,write_json,atomic_text,now
 from ..model.openrouter import OpenRouter
+from ..pipeline import log
 
 
 class OuedraogoNative:
@@ -50,6 +51,7 @@ class OuedraogoNative:
             attempts=[]
             for attempt in (1,2):
                 record,text=client.complete(prompt,self.group['params'],folder if attempt==1 else folder/'attempt-2')
+                log(self.exp, f'generate: {self.group["name"]} {label} {name} {technique} call {attempt} recorded', self.config)
                 attempts.append(record)
                 if record['status']=='ok':break
                 if attempt==1:time.sleep(60)

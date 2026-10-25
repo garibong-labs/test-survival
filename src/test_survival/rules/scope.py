@@ -14,6 +14,8 @@ def select_scope(survey, config):
             eligible = [r for r in eligible if r['has_test']=='yes']
         metric = {'change-count': 'c', 'method-count': 'm'}[config.get('rank_by', 'change-count')]
         ranked = sorted(eligible, key=lambda r: (-int(r[metric]), r['class']))
+        if config['rule'] == 'all-eligible':
+            return ranked, len(eligible)
         chosen, total = [], 0
         for row in ranked:
             if total + int(row['m']) > config['target_methods'][1]:

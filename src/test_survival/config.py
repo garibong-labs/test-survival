@@ -154,7 +154,7 @@ SCHEMA = {
     'range': {'branch': Field(str, 'origin/master'), 'end': Field(str, None, nullable=True),
               'mode': enum('first-parent', 'first-parent'), 'limit': integer(None, 1, True),
               'skip_untouched': enum('none', 'none', 'module', 'main-sources')},
-    'scope': {'rule': enum('change-ranked', 'dedicated-test', 'change-ranked', 'explicit'),
+    'scope': {'rule': enum('change-ranked', 'dedicated-test', 'change-ranked', 'explicit', 'all-eligible'),
               'rank_by': enum('change-count', 'change-count', 'method-count'),
               'min_methods': integer(3), 'exclude_accessor_heavy': Field(bool, True),
               'target_methods': Field(list, [50, 80]), 'max_classes': integer(10),
@@ -278,7 +278,7 @@ def validate(data):
     targets = c['scope']['target_methods']
     if len(targets) != 2 or any(type(n) is not int or n < 1 for n in targets) or targets[0] > targets[1]:
         raise ConfigError('scope.target_methods: expected [positive minimum, maximum >= minimum]')
-    if c['scope']['min_classes'] > c['scope']['max_classes']:
+    if c['scope']['rule'] != 'all-eligible' and c['scope']['min_classes'] > c['scope']['max_classes']:
         raise ConfigError('scope.min_classes: must be <= scope.max_classes')
     _strings(c['scope']['classes'], 'scope.classes')
     if c['scope']['rule'] == 'explicit' and not c['scope']['classes']:

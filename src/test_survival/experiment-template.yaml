@@ -17,12 +17,12 @@ range:
   limit: null                   # int. Keep only the first N commits after t.
 
 scope:
-  rule: change-ranked           # dedicated-test | change-ranked | explicit: candidate set
+  rule: change-ranked           # dedicated-test | change-ranked | explicit | all-eligible
   rank_by: change-count         # change-count | method-count; ignored for explicit
   min_methods: 3                # class must have at least this many focal methods
   exclude_accessor_heavy: true  # drop classes where more than half of the methods are trivial accessors
   target_methods: [50, 80]      # stop adding ranked candidates once the focal method total is in this range
-  max_classes: 10
+  max_classes: 10               # all-eligible ignores this cap and target_methods
   classes: []                   # explicit: fully qualified class names
   min_classes: 1                # stop if fewer classes are selected
 

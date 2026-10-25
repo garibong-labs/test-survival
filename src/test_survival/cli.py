@@ -7,7 +7,7 @@ import sys
 
 from .config import ConfigError, STAGES, load
 from .io import read_json
-from .pipeline import PipelineError, background, run, run_lock, status
+from .pipeline import PipelineError, background, run, run_lock, status, stop
 
 
 def parser():
@@ -27,7 +27,7 @@ def parser():
     execute.add_argument('--group')
     execute.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
     execute.add_argument('--ready-fd', type=int, help=argparse.SUPPRESS)
-    for name in ('show', 'status'):
+    for name in ('show', 'status', 'stop'):
         command = sub.add_parser(name)
         command.add_argument('exp_dir', type=Path)
         if name == 'show':
@@ -60,6 +60,8 @@ def main(argv=None):
         elif args.command == 'import':
             from .importer import import_experiment
             import_experiment(args.exp_dir, args.source, args.what)
+        elif args.command == 'stop':
+            stop(args.exp_dir)
         else:
             config = load(args.exp_dir)
             if args.command == 'status':
