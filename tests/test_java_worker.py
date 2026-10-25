@@ -5,6 +5,13 @@ import pytest
 from test_survival.adapters.java_worker import parse_reports,method_state
 
 
+@pytest.fixture
+def runner_jars_only(tmp_path, monkeypatch):
+    from test_survival.adapters import maven_dependencies
+    (tmp_path/'pom.xml').write_text('<project/>')
+    monkeypatch.setattr(maven_dependencies, 'resolve', lambda *args, **kwargs: [])
+
+
 def test_launcher_names_parameterized_and_error_precedence(tmp_path):
     (tmp_path/'TEST-junit.xml').write_text('''<testsuite><testcase classname="p.T" name="display name"><system-out>[test-template:works(java.lang.String)]</system-out></testcase><testcase classname="p.T" name="works(String)[2]"><failure type="org.opentest4j.AssertionFailedError" message="expected"/></testcase><testcase classname="p.T" name="skip()"><skipped/></testcase></testsuite>''')
     obs=parse_reports(tmp_path)
@@ -16,7 +23,7 @@ def test_launcher_names_parameterized_and_error_precedence(tmp_path):
 
 @pytest.mark.parametrize('classifier', ['', 'runtime'])
 @pytest.mark.parametrize('corrupt_cache', [False, True])
-def test_runner_setup_uses_qualified_plugin_and_retains_attempt_logs(tmp_path, monkeypatch, classifier, corrupt_cache):
+def test_runner_setup_uses_qualified_plugin_and_retains_attempt_logs(tmp_path, monkeypatch, classifier, corrupt_cache, runner_jars_only):
     from test_survival.adapters import java_worker as worker
     helpers = tmp_path/'helpers'
     helpers.mkdir()
@@ -69,7 +76,7 @@ def test_runner_setup_uses_qualified_plugin_and_retains_attempt_logs(tmp_path, m
     assert json.loads((tmp_path/'results/runner-setup.json').read_text())['status'] == 'completed'
 
 
-def test_setup_separates_artifact_versions_and_rejects_bad_downloads(tmp_path, monkeypatch):
+def test_setup_separates_artifact_versions_and_rejects_bad_downloads(tmp_path, monkeypatch, runner_jars_only):
     from test_survival.adapters import java_worker as worker
     helpers = tmp_path/'helpers'
     helpers.mkdir()
@@ -122,7 +129,7 @@ def test_setup_separates_artifact_versions_and_rejects_bad_downloads(tmp_path, m
     ('Could not find artifact org.foo:bar:jar:1.4.29', 1, False),
     ('HTTP 429 mentioned in a successful command', 0, True),
 ])
-def test_setup_retries_transfers_and_resolves_all_jars_sequentially(tmp_path, monkeypatch, diagnostic, failures, succeeds):
+def test_setup_retries_transfers_and_resolves_all_jars_sequentially(tmp_path, monkeypatch, diagnostic, failures, succeeds, runner_jars_only):
     from test_survival.adapters import java_worker as worker
     records = json.loads((Path(worker.__file__).parent/'java/classpath-artifacts.json').read_text())
     assert records
@@ -176,7 +183,7 @@ def test_setup_retries_transfers_and_resolves_all_jars_sequentially(tmp_path, mo
     assert all((tmp_path/attempt['log']).exists() for attempt in attempts)
 
 
-def test_retry_records_only_the_cache_rejected_by_that_attempt(tmp_path, monkeypatch):
+def test_retry_records_only_the_cache_rejected_by_that_attempt(tmp_path, monkeypatch, runner_jars_only):
     from test_survival.adapters import java_worker as worker
     payload = b'valid jar'
     jar = dict(filename='sample-1.0.jar', coordinate='org.example:sample:1.0',

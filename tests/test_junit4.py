@@ -27,6 +27,8 @@ def test_auto_framework_uses_original_module_dependencies(tmp_path):
 def test_setup_receives_project_framework_without_changing_generated_test_detection(tmp_path, monkeypatch, configured, expected):
     config = validate({'name': 'setup', 'anchor': 't', 'project': {'repo': str(tmp_path), 'test_framework': configured}})
     adapter = JavaMavenAdapter(tmp_path, config)
+    adapter.folder(0).mkdir(parents=True)
+    (adapter.folder(0)/'pom.xml').write_text('<project/>')
     jobs = []
     def execute(command, cwd, log, timeout):
         jobs.append(json.loads(Path(command[-1]).read_text()))

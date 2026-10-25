@@ -20,14 +20,17 @@ import xml.etree.ElementTree as ET
 
 RUNNER_JAR_RETRIES = 3
 RUNNER_JAR_BACKOFF_SECONDS = 60
-RUNNER_JAR_TRANSIENT_PATTERNS = ('429', 'Could not transfer')
 
 
 try:
     from ..rules.environment import matches as environment_matches
+    from . import maven_dependencies
 except ImportError:  # This worker is also invoked directly inside the container.
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
     from rules.environment import matches as environment_matches
+    from adapters import maven_dependencies
+
+RUNNER_JAR_TRANSIENT_PATTERNS = maven_dependencies.TRANSIENT_PATTERNS
 
 
 def rerun_environment_failures(results, launch_class, settings, wait=time.sleep):
@@ -72,7 +75,9 @@ def classpath(index):
     testjars=[str(EXP/'work/libs'/r['filename']) for r in jars]
     folder=EXP/f'work/checkouts/{index}'/MODULE
     build=json.loads((RESULTS/f'builds/{index}.json').read_text())
-    projectjars=[p for p in (EXP/build['classpath']).read_text().strip().split(':') if p and not any(s in p for s in ['/org/junit/','/junit/junit/','/org/opentest4j/','/org/apiguardian/'])]
+    cache=EXP/build['classpath']
+    maven_dependencies.resolve(folder,cache,RESULTS/'builds/logs'/f'classpath-{index}',TIMEOUTS['build'],execute)
+    projectjars=[p for p in cache.read_text().strip().split(':') if p and not any(s in p for s in ['/org/junit/','/junit/junit/','/org/opentest4j/','/org/apiguardian/'])]
     return folder,':'.join([str(folder/'target/classes'),*testjars,*projectjars])
 
 
@@ -231,12 +236,15 @@ def setup(wait=time.sleep):
         if not source.exists() or hashlib.sha256(source.read_bytes()).hexdigest()!=r['sha256']:
             raise RuntimeError('Runner jar checksum mismatch '+r['filename'])
         shutil.copy2(source,dest)
+    digest=hashlib.sha256((REPO/'pom.xml').read_bytes()).hexdigest()
+    maven_dependencies.resolve(REPO,EXP/'work/classpaths'/f'{digest}.txt',RESULTS/'builds/logs/runner-setup',
+                               TIMEOUTS['build'],execute,prefetch=True,wait=wait)
     runtime=EXP/'work/runtime';runtime.mkdir(parents=True,exist_ok=True)
     for name in ['resources','suite']:
         source=EXP/'dev/src-test-t'/name
         if source.exists():
             shutil.copytree(source,runtime/'src/test'/name,dirs_exist_ok=True)
-    write_json(RESULTS/'runner-setup.json',{'status':'completed','jars':records})
+    write_json(RESULTS/'runner-setup.json',{'status':'completed','jars':records,'project_dependencies':digest})
 
 
 def run_group(job):
@@ -356,7 +364,11 @@ def main():
     JVM=job['jvm'];TIMEOUTS=job['timeouts'];FLAKY_RERUN=job.get('flaky_rerun',1)
     TEST_FRAMEWORK=job.get('test_framework','junit5');DEVELOPER=job.get('developer',job.get('group')=='dev')
     ENVIRONMENT_ERRORS=job.get('environment_errors',{'patterns':[],'max_reruns':3,'backoff_seconds':5})
-    if job['action']=='setup':setup()
+    if job['action']=='classpath':
+        attempts=maven_dependencies.resolve(Path(job['folder']),EXP/job['cache'],RESULTS/'builds/logs'/f'classpath-{job["index"]}',
+                                            TIMEOUTS['build'],execute,force=job['force'])
+        write_json(EXP/job['output'],{'attempts':attempts})
+    elif job['action']=='setup':setup()
     elif job['action']=='screen':screen_file(job)
     elif job['action']=='repair':repair(job)
     else:run_group(job)

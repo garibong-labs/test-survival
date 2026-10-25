@@ -53,3 +53,76 @@ def test_zero_compile_round_loop_advances_without_retry(tmp_path,monkeypatch):
     record=read_json(tmp_path/'generated/o/rounds.json')
     assert calls==['setup',1,2] and record['stopped']=='zero-compile'
     assert [r['directory'] for r in record['rounds']]==['round1','round2']
+
+
+@pytest.mark.parametrize('manifest', [True, False])
+def test_failed_generate_reuses_ktester_and_25_ouedraogo_responses(tmp_path, monkeypatch, manifest):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.config import STAGES, legacy_stage_hash, stage_hash, validate
+    from test_survival.generators.ouedraogo_native import OuedraogoNative
+    from test_survival.generators.ktester_tool import KTesterTool
+    from test_survival.generators.parts import context, postprocess
+    from test_survival.io import atomic_text, read_json, write_json, write_csv
+    from test_survival.model.openrouter import OpenRouter
+    from test_survival.pipeline import run
+    from test_survival.stages import generate
+    config = validate(dict(name='resume', project={'repo': '/unused'}, anchor='t',
+                           generators=[dict(name='ktester', method='ktester', impl='author-tool', tool_path='/unused'),
+                                       dict(name='ouedraogo', method='ouedraogo', impl='native', rounds={'max': 1},
+                                            postprocess={'import_repair': {'enabled': True}})]))
+    group = config['generators'][1]
+    directory = tmp_path/'generated/ouedraogo/round1'
+    scope, records = [], []
+    for number in range(5):
+        name = f'C{number}'
+        source = f'public class {name} {{}}'
+        source_path = f'src/main/java/{name}.java'
+        atomic_text(tmp_path/'work/checkouts/0'/source_path, source)
+        scope.append({'class': name, 'file': source_path})
+        for technique in group['params']['prompts']:
+            prompt = render(technique, name, source, '', group['prompt']['api_constraint'])
+            write_json(directory/'runs'/name/technique/'request.json',
+                       dict(model=config['model']['name'], temperature=group['params']['temperature'],
+                            max_tokens=group['params']['max_tokens'], messages=[dict(role='user', content=prompt)]))
+            file = directory/'sources'/name/technique/f'{name}Test.java'
+            atomic_text(file, f'public class {name}Test {{}}')
+            record = dict(class_name=name, technique=technique, status='ok', file=str(file.relative_to(tmp_path)), calls=[{'status': 'ok'}])
+            records.append(record)
+            write_json(directory/'records'/f'{name}-{technique}.json', record)
+            write_json(directory/'raw-responses'/f'{name}-{technique}.json', {'id': f'{name}-{technique}'})
+    assert len(records) == 25
+    if manifest:
+        write_json(directory/'generation.json', records)
+    write_json(tmp_path/'population/scope.json', {'classes': scope})
+    write_json(tmp_path/'generated/ktester/rounds.json',
+               {'config_hash': legacy_stage_hash(config, 'generate', 'ktester'), 'stopped': 'max-rounds',
+                'rounds': [{'round': 1, 'funnel': {'methods': 507, 'stable_3_of_3': 5}}]})
+    write_csv(tmp_path/'dev/dev-denominator.csv', [], ['class', 'method', 'kind'])
+    for stage in STAGES[:2]:
+        write_json(tmp_path/f'state/{stage}.json', {'status': 'completed', 'config_hash': stage_hash(config, stage)})
+    write_json(tmp_path/'state/generate.json', {'status': 'failed', 'config_hash': stage_hash(config, 'generate')})
+    preserved = [tmp_path/'generated/ktester/rounds.json', *sorted((directory/'raw-responses').glob('*.json'))]
+    before = {p: p.read_bytes() for p in preserved}
+    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda self: None)
+    monkeypatch.setattr(context, 'inventory', lambda *args: None)
+    def unexpected(*args):
+        pytest.fail('Recorded model work must not be called again')
+    monkeypatch.setattr(OpenRouter, 'complete', unexpected)
+    monkeypatch.setattr(KTesterTool, 'generate', unexpected)
+    repairs = []
+    monkeypatch.setattr(postprocess, 'repair', lambda adapter, path, passes: repairs.append(path))
+    screened = []
+    def screen(exp, config, group, path, prior):
+        assert repairs == [directory]
+        screened.append(group['name'])
+        return [], {'compiled': 25}
+    monkeypatch.setattr(generate, 'screen_round', screen)
+    run(tmp_path, config, until='generate', no_panel=True)
+    assert repairs == [directory] and screened == ['ouedraogo']
+    assert {p: p.read_bytes() for p in preserved} == before
+    assert read_json(tmp_path/'state/generate.json')['status'] == 'completed'
+    assert read_json(directory.parent/'rounds.json')['rounds'][0]['model_calls'] == 25
+    # Recorded requests must still reject changed model parameters on resume.
+    changed = {**group, 'params': {**group['params'], 'temperature': 0.123}}
+    with pytest.raises(RuntimeError, match='different request parameters'):
+        OuedraogoNative(tmp_path, config, changed).generate(1)

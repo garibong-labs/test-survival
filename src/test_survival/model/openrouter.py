@@ -16,11 +16,20 @@ class OpenRouter:
     def __init__(self,model):
         self.model=model
 
+    def request(self,prompt,params):
+        return dict(model=self.model['name'],temperature=params['temperature'],max_tokens=params['max_tokens'],messages=[dict(role='user',content=prompt)])
+
+    def verify(self,prompt,params,directory):
+        """Reject a recorded call whose request ledger does not match this request."""
+        recorded=read_json(Path(directory)/'request.json')
+        if recorded is None:raise RuntimeError('Recorded call has no request ledger: '+str(directory))
+        if recorded!=self.request(prompt,params):raise RuntimeError('Existing call has different request parameters')
+
     def complete(self,prompt,params,directory):
         directory=Path(directory)
-        body=dict(model=self.model['name'],temperature=params['temperature'],max_tokens=params['max_tokens'],messages=[dict(role='user',content=prompt)])
+        body=self.request(prompt,params)
         if (directory/'run.json').exists():
-            if read_json(directory/'request.json')!=body:raise RuntimeError('Existing call has different request parameters')
+            self.verify(prompt,params,directory)
             return read_json(directory/'run.json'),(directory/'response.md').read_text()
         if (directory/'request.json').exists():
             raise RuntimeError('Interrupted model call has an unknown outcome; inspect ledger before retrying')

@@ -322,7 +322,10 @@ def rehash(exp, config):
             if state.get('status') == 'completed':
                 digest = stage_hash(config, stage)
                 if state.get('config_hash') != digest:
-                    updates.append((path, {**state, 'config_hash': digest}))
+                    if state.get('config_hash') == legacy_stage_hash(config, stage):
+                        updates.append((path, {**state, 'config_hash': digest}))
+                    else:
+                        print(f'{stage}: configuration changed after that stage completed; config_hash left unchanged')
         for path, state in updates:
             write_json(path, state)
     return len(updates)
