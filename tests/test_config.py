@@ -69,6 +69,15 @@ def test_hash_boundaries_and_key_order(minimal):
     assert stage_hash(c, 'report') == stage_hash(dict(reversed(list(as_written(c).items()))), 'report')
 
 
+@pytest.mark.parametrize('denominator,start', [('project',5),('coverage-scoped',1)])
+def test_environment_settings_invalidate_scope_only_for_coverage_denominators(minimal,denominator,start):
+    minimal['dev']={'groups':[{'name':'dev','denominator':denominator}]}
+    c=validate(minimal)
+    modified=deepcopy(c)
+    modified['survival']['environment_errors']['patterns']=['java.net.BindException']
+    assert [stage_hash(c,s)!=stage_hash(modified,s) for s in STAGES]==[False]*start+[True]*(8-start)
+
+
 def test_duplicate_yaml_and_secret_not_echoed(tmp_path):
     path = tmp_path / 'experiment.yaml'
     path.write_text('name: a\nname: b\n')

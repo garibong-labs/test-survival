@@ -380,6 +380,8 @@ def stage_inputs(c, stage, group=None):
         data['dev'] = {'stable_runs': c['dev']['stable_runs']}
     if index >= 1:
         data.update({k: c[k] for k in ('scope', 'dev') if k in c})
+        if any(g.get('denominator') == 'coverage-scoped' for g in c.get('dev', {}).get('groups', [])) and 'environment_errors' in c.get('survival', {}):
+            data['survival'] = {'environment_errors': c['survival']['environment_errors']}
         if 'generators' in c:
             data['generators'] = [{k: g[k] for k in ('name', 'method') if k in g} for g in c['generators']]
     if index >= 2:

@@ -123,7 +123,7 @@ def jacoco_version(classes):
     return '0.8.12'
 
 
-def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,retry=True,precompiled=None):
+def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,retry=True,precompiled=None,environment_retry=None):
     folder,cp=classpath(index)
     part.mkdir(parents=True,exist_ok=True)
     classes=part/'classes';classes.mkdir(exist_ok=True)
@@ -168,7 +168,7 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
                 result.update(state=retry_state,message=retry_message)
                 break
         record['methods'].append(result)
-    if retry and ENVIRONMENT_ERRORS['patterns']:
+    if (retry if environment_retry is None else environment_retry) and ENVIRONMENT_ERRORS['patterns']:
         def launch_class(attempt):
             run,observations=launch(members,'environment-'+str(attempt))
             return {r['id']:method_state(r,observations,run) for r in members}
@@ -233,7 +233,8 @@ def run_group(job):
         if suite_compile['exit_code']==0:precompiled=(suite_classes,suite_compile)
     for number,(filename,members) in enumerate(sorted(by_file.items())):
         files.append(run_file(index,group,filename,members,work/str(number),execfile if coverage else None,
-                              repetitions=job.get('repeats',1),retry=job.get('retry',phase in ['A','B']),precompiled=precompiled))
+                              repetitions=job.get('repeats',1),retry=job.get('retry',phase in ['A','B']),precompiled=precompiled,
+                              environment_retry=job.get('environment_retry')))
     result=dict(index=index,sha=job['sha'],group=group,phase=phase,status='evaluated',input_sha256=job['input_sha256'],
                 runner_sha256=job['runner_sha256'],files=files,methods=[m for f in files for m in f['methods']],requested_ids=[r['id'] for r in rows])
     if suite_compile is not None:result['whole_frozen_suite_compile']=suite_compile

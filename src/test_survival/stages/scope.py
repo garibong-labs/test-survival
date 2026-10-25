@@ -51,6 +51,8 @@ def run(exp, config):
         adapter.setup_runner()
         stable=[r for r in baseline if r['stable']=='yes'];scope_files={r['file'] for r in chosen}
         def coverage(row):
+            # The adapter retries configured environment failures for this method
+            # alone, retaining its final state and coverage for the denominator.
             raw=adapter.method_coverage(frozen_method({k:row[k] for k in ['class','method','kind']}))
             lines=read_csv(exp/f"results/dev-method-coverage-t/{row['class']}#{row['method']}-lines.csv")
             covered=[r for r in lines if r['covered']=='yes'];scoped=[r for r in covered if r['file'] in scope_files]

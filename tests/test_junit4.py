@@ -81,9 +81,11 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path):
         method,=raw['methods']
         assert method['state']=='pass' and method['environment_reruns']==2 and not method['flaky']
         assert len(raw['files'][0]['runs'])==3
+        (tmp_path/'work/runtime/environment-attempts.txt').unlink()
         covered=adapter.method_coverage(row)
         assert covered['methods'][0]['state']=='pass'
-        assert 'environment_reruns' not in covered['methods'][0]
+        assert covered['methods'][0]['environment_reruns']==2
+        assert not covered['methods'][0]['flaky']
     assert (tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind.xml').exists()
     lines=read_csv(tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind-lines.csv')
     assert any(r['file']=='src/main/java/fixture/Production.java' and r['covered']=='yes' for r in lines)
