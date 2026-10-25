@@ -6,6 +6,12 @@ from uuid import uuid4
 
 RETRIES = 3
 BACKOFF_SECONDS = 60
+TRANSIENT_PATTERNS = ('429', 'Could not transfer')
+
+
+def resolution_timeout(build_seconds):
+    """Worst case for both dependency goals, each offline then online with bounded backoff."""
+    return 2*((RETRIES+2)*build_seconds + RETRIES*BACKOFF_SECONDS)
 
 
 def entries(cache):
@@ -30,11 +36,12 @@ def maven(goal, folder, logs, timeout, execute, wait=time.sleep, options=(), ver
             return attempts
         if offline:
             continue
-        diagnostic = log.read_text(errors='replace')
-        if number == RETRIES + 1 or not any(p in diagnostic for p in ('429', 'Could not transfer')):
+        # A successful goal whose output still names missing entries will not improve on retry.
+        if result['exit_code'] == 0 or number == RETRIES + 1 or not any(p in log.read_text(errors='replace') for p in TRANSIENT_PATTERNS):
             break
         wait(BACKOFF_SECONDS)
-    raise RuntimeError(f'Maven {goal} failed; see {log}')
+    reason = 'produced entries missing from this container' if result['exit_code'] == 0 else 'failed'
+    raise RuntimeError(f'Maven {goal} {reason}; see {log}')
 
 
 def resolve(folder, cache, logs, timeout, execute, *, prefetch=False, force=False, wait=time.sleep):
@@ -49,11 +56,10 @@ def resolve(folder, cache, logs, timeout, execute, *, prefetch=False, force=Fals
         if force or not valid(cache):
             temporary = cache.with_name(cache.stem+'-'+uuid4().hex+'.tmp')
             try:
+                # maven() returns only once verify() accepted this file.
                 attempts.extend(maven('dependency:build-classpath', folder, logs, timeout, execute, wait,
                                       ('-DincludeScope=test', '-Dmdep.outputFile='+str(temporary)),
                                       verify=lambda: valid(temporary)))
-                if not valid(temporary):
-                    raise RuntimeError(f'Maven classpath still contains missing entries; see {logs}')
                 temporary.replace(cache)
             finally:
                 temporary.unlink(missing_ok=True)

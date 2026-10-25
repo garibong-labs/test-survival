@@ -20,7 +20,6 @@ import xml.etree.ElementTree as ET
 
 RUNNER_JAR_RETRIES = 3
 RUNNER_JAR_BACKOFF_SECONDS = 60
-RUNNER_JAR_TRANSIENT_PATTERNS = ('429', 'Could not transfer')
 
 
 try:
@@ -30,6 +29,8 @@ except ImportError:  # This worker is also invoked directly inside the container
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
     from rules.environment import matches as environment_matches
     from adapters import maven_dependencies
+
+RUNNER_JAR_TRANSIENT_PATTERNS = maven_dependencies.TRANSIENT_PATTERNS
 
 
 def rerun_environment_failures(results, launch_class, settings, wait=time.sleep):
@@ -76,8 +77,6 @@ def classpath(index):
     build=json.loads((RESULTS/f'builds/{index}.json').read_text())
     cache=EXP/build['classpath']
     maven_dependencies.resolve(folder,cache,RESULTS/'builds/logs'/f'classpath-{index}',TIMEOUTS['build'],execute)
-    if any(not Path(p).exists() for p in testjars):
-        setup()
     projectjars=[p for p in cache.read_text().strip().split(':') if p and not any(s in p for s in ['/org/junit/','/junit/junit/','/org/opentest4j/','/org/apiguardian/'])]
     return folder,':'.join([str(folder/'target/classes'),*testjars,*projectjars])
 

@@ -81,6 +81,20 @@ def test_setup_resolves_anchor_after_jars_and_upgrades_old_marker(tmp_path, monk
     assert read_json(tmp_path/'results/runner-setup.json')['project_dependencies'] == hashlib.sha256(b'<project/>').hexdigest()
 
 
+def test_build_records_unresolvable_dependencies_as_a_failed_build(tmp_path, monkeypatch):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.config import validate
+    adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo'}}))
+    monkeypatch.setattr(adapter, 'checkout', lambda index, sha: None)
+    def unresolvable(folder, index):
+        raise RuntimeError('Maven classpath resolution failed; see results/builds/logs/classpath-3.txt')
+    monkeypatch.setattr(adapter.cache, 'resolve', unresolvable)
+    monkeypatch.setattr(adapter.runner, 'execute', lambda *args: pytest.fail('compile must not run without a classpath'))
+    result = adapter.build(3, 'abc')
+    assert result['build'] == 'fail' and 'classpath-3.txt' in result['classpath_error']
+    assert read_json(tmp_path/'results/builds/3.json') == result
+
+
 def test_worker_checks_all_cached_entries_before_filtering_junit(tmp_path, monkeypatch):
     folder = tmp_path/'work/checkouts/0';folder.mkdir(parents=True)
     cache = tmp_path/'work/classpaths/pom.txt';cache.parent.mkdir()

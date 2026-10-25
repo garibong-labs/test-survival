@@ -44,25 +44,20 @@ class OuedraogoNative:
                 atomic_text(path,rendered)
                 jobs.append((name,technique,rendered))
         write_json(directory/'prompts/pre-call-check.json',dict(passed=True,checked_at=now(),blocks=blocks,empty_angle_brackets=False,headers_have_modifiers=True))
-        def check_request(folder,prompt):
-            expected=dict(model=self.config['model']['name'],temperature=self.group['params']['temperature'],
-                          max_tokens=self.group['params']['max_tokens'],messages=[dict(role='user',content=prompt)])
-            if read_json(folder/'request.json')!=expected:
-                raise RuntimeError('Existing call has different request parameters')
+        client=OpenRouter(self.config['model'])
         records=read_json(directory/'generation.json')
         if records is not None:
             # Model work is committed before import repair; check its inputs but
             # never invoke the model client for an already recorded round.
             for name,technique,prompt in jobs:
-                check_request(directory/'runs'/name/technique,prompt)
+                client.verify(prompt,self.group['params'],directory/'runs'/name/technique)
             return self.finish(directory,records)
-        client=OpenRouter(self.config['model'])
         def call(job):
             name,technique,prompt=job
             folder=directory/'runs'/name/technique
             saved=read_json(directory/'records'/f'{name}-{technique}.json')
             if saved is not None:
-                check_request(folder,prompt)
+                client.verify(prompt,self.group['params'],folder)
                 return saved
             attempts=[]
             for attempt in (1,2):
@@ -78,8 +73,9 @@ class OuedraogoNative:
                 if not file.exists():atomic_text(file,extracted['combine_v2'])
             result=dict(class_name=name,technique=technique,status=record['status'],attempts=len(attempts),calls=attempts,
                         extraction={k:v for k,v in extracted.items() if k!='combine_v2'},file=str(file.relative_to(self.exp)) if file else None)
-            write_json(directory/'records'/f'{name}-{technique}.json',result)
+            # The record is the commit point for a call, so its raw response is published first.
             write_json(directory/'raw-responses'/f'{name}-{technique}.json',read_json((folder if len(attempts)==1 else folder/'attempt-2')/'raw-response.json'))
+            write_json(directory/'records'/f'{name}-{technique}.json',result)
             from ..panel import notify
             notify(self.exp)
             return result

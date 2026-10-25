@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import shutil
 import threading
+from ..adapters.maven_dependencies import resolution_timeout
 from ..io import read_json, write_json
 
 _LOCK = threading.Lock()
@@ -23,14 +24,13 @@ class ClasspathCache:
             if enabled and reuse and not cache.exists() and (Path(reuse) / cache.name).is_file():
                 shutil.copy2(Path(reuse) / cache.name, cache)
             # Maven paths belong to the container, not the orchestrator's filesystem.
-            from ..adapters.maven_dependencies import RETRIES, BACKOFF_SECONDS
             job = self.exp / f'work/classpath-jobs/{index}.json'
             output = f'work/classpath-jobs/{index}-result.json'
             write_json(job, dict(action='classpath', experiment=self.runner.path(self.exp),
                                 folder=self.runner.path(folder), module=self.config['project']['module'],
                                 cache=str(cache.relative_to(self.exp)), index=index, force=not enabled,
                                 jvm={}, timeouts=self.config['runner']['timeouts'], output=output))
-            timeout = 2*((RETRIES+2)*self.config['runner']['timeouts']['build']+RETRIES*BACKOFF_SECONDS)+600
+            timeout = resolution_timeout(self.config['runner']['timeouts']['build'])+600
             result = self.runner.execute(['python3', str(Path(__file__).parents[1]/'adapters/java_worker.py'), str(job)],
                                          folder, self.exp/f'results/builds/logs/classpath-{index}.txt', timeout)
             if result['exit_code'] or not cache.exists():
