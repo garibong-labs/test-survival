@@ -203,10 +203,11 @@ cd /absolute/path/to/target-fork/experiments/first-run
 tail -f state/log.txt
 ```
 
-Poll status every minute from any directory with `watch`:
+Watch a two-line progress panel from any directory (refreshes every five seconds,
+exits when the run finishes or you press Ctrl+C):
 
 ```sh
-watch -n 60 survival status /absolute/path/to/target-fork/experiments/first-run
+survival status /absolute/path/to/target-fork/experiments/first-run --watch
 ```
 
 You can also run status once, or inspect a saved stage summary:
@@ -217,6 +218,30 @@ survival show /absolute/path/to/target-fork/experiments/first-run screen
 ```
 
 Status and stage log lines show elapsed time, completed/total items, and an estimated finish time. Prepare counts builds including the anchor; generate counts model calls; screen counts files; survive counts commits; cover counts indices.
+
+Foreground runs automatically reserve the bottom two terminal rows for the same
+panel when stderr is a TTY, with logs scrolling above. Use `--no-panel` on `run`
+or `status --watch` to disable it. The panel shows
+stage progress, percent, remaining time, elapsed time, and estimated finish;
+`+` marks completed stages, `>` the current stage, `-` pending stages, `~` stale
+completed stages after a configuration change, and `!` failures. Watch mode prints
+a final plain status after restoring the terminal, including when stopped with Ctrl+C.
+Its units are builds, items, methods, files, methods, commits, indices, and tables
+for prepare through report. Generation counts focal methods per round/prompt,
+with calls as a secondary count. KTester counts completed case generation or
+repair from its output directory, not initial Java frameworks or repair calls.
+While an author tool runs, `state/log.txt` also receives a plain progress line every
+two minutes with methods done/total, responses so far, and the class under repair.
+The panel abbreviates repair class names to fit alongside the metrics or stage
+marks. For older workers without per-method repair records, the active class is
+unknown: their log contains repair starts but cannot establish when a class finished.
+Watching an already-running experiment only reads its evidence; the periodic
+log lines require the run itself to have started with this version.
+
+Panel detection uses stderr: redirecting stderr disables the panel, while piping
+stdout alone leaves it enabled. Stdout log lines contain no ANSI controls. If you
+echo stdout back to the same terminal with `tee`, use `--no-panel` so that `tee`'s
+independent terminal writes cannot interfere with panel rendering.
 
 The estimate uses that stage's throughput in the current attempt. Cached records count toward completion but not toward the current attempt's throughput.
 
@@ -231,6 +256,11 @@ survival stop /absolute/path/to/target-fork/experiments/first-run
 ```
 
 Stop verifies the saved process identity and terminates the coordinator, its workers, and the run's Docker containers. It marks the running stage failed with `stopped by user` and permits resumption only after cleanup is confirmed.
+
+`survival stop` uses SIGSTOP/SIGKILL, which prevents foreground panel cleanup.
+If you stop a foreground run from another terminal, run `reset` in the original
+terminal to restore normal scrolling and clear stale panel rows. The same recovery
+applies after an OOM or other hard kill. Ctrl+C and SIGTERM allow normal cleanup.
 
 If cleanup fails, resumption stays blocked. Restore Docker access if needed and repeat the stop command to finish cleanup.
 

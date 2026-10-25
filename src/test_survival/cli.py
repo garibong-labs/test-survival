@@ -24,6 +24,7 @@ def parser():
     selection.add_argument('--stage', choices=STAGES)
     execute.add_argument('--force', action='store_true')
     execute.add_argument('--background', action='store_true')
+    execute.add_argument('--no-panel', action='store_true', help='Disable the terminal progress panel')
     execute.add_argument('--group')
     execute.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
     execute.add_argument('--ready-fd', type=int, help=argparse.SUPPRESS)
@@ -32,6 +33,9 @@ def parser():
         command.add_argument('exp_dir', type=Path)
         if name == 'show':
             command.add_argument('stage', choices=STAGES)
+        if name == 'status':
+            command.add_argument('--watch', action='store_true', help='Refresh progress every five seconds until the run stops')
+            command.add_argument('--no-panel', action='store_true', help='Use plain status output')
     imp = sub.add_parser('import')
     imp.add_argument('exp_dir', type=Path)
     imp.add_argument('--from', dest='source', type=Path, required=True)
@@ -65,7 +69,11 @@ def main(argv=None):
         else:
             config = load(args.exp_dir)
             if args.command == 'status':
-                print(status(args.exp_dir, config))
+                if args.watch:
+                    from .panel import watch
+                    watch(args.exp_dir, config, no_panel=args.no_panel)
+                else:
+                    print(status(args.exp_dir, config))
             elif args.command == 'show':
                 from .summary import show
                 print(show(args.exp_dir, args.stage))
@@ -81,9 +89,9 @@ def main(argv=None):
                         if ready != b'1':
                             raise PipelineError('Background startup was interrupted')
                     with run_lock(args.exp_dir, args.lock_fd):
-                        run(args.exp_dir, config, locked=True, **options)
+                        run(args.exp_dir, config, locked=True, no_panel=args.no_panel, **options)
                 else:
-                    run(args.exp_dir, config, **options)
+                    run(args.exp_dir, config, no_panel=args.no_panel, **options)
         return 0
     except (ConfigError, PipelineError, FileExistsError, FileNotFoundError) as exc:
         print(f'survival: {exc}', file=sys.stderr)
