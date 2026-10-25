@@ -110,3 +110,27 @@ def test_worker_checks_all_cached_entries_before_filtering_junit(tmp_path, monke
         return {'exit_code': 0}
     monkeypatch.setattr(worker, 'execute', execute)
     assert worker.classpath(0) == (folder, str(folder/'target/classes')+':'+str(jar))
+
+
+def test_compile_tests_uses_the_worker_classpath_order(tmp_path, monkeypatch):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.config import validate
+    adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo'}}))
+    helpers = tmp_path/'helpers';helpers.mkdir()
+    write_json(helpers/'classpath-artifacts.json', [dict(filename='junit-platform-console-standalone-1.9.3.jar', role='test'),
+                                                    dict(filename='mockito-core-5.24.0.jar', role='test'),
+                                                    dict(filename='org.jacoco.cli-0.8.14-nodeps.jar', role='coverage')])
+    adapter.helpers = helpers
+    (tmp_path/'work/libs').mkdir(parents=True);(tmp_path/'work/libs/byte-buddy-1.14.1.jar').touch()  # Stale, unlisted.
+    cache = tmp_path/'work/classpaths/pom.txt';cache.parent.mkdir(parents=True)
+    cache.write_text('/root/.m2/repository/org/junit/jupiter/junit-jupiter-api/5.8.2/junit-jupiter-api-5.8.2.jar:/root/.m2/repository/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar\n')
+    monkeypatch.setattr(adapter.cache, 'resolve', lambda folder, index: ('digest', cache, []))
+    commands = []
+    def execute(command, cwd, log, timeout):
+        commands.append(command);return {'exit_code': 0}
+    monkeypatch.setattr(adapter.runner, 'execute', execute)
+    adapter.compile_tests(0, [tmp_path/'generated/A.java', tmp_path/'generated/B.java'])
+    libs = adapter.runner.path(tmp_path/'work/libs')
+    expected = ':'.join([adapter.runner.path(adapter.folder(0)/'target/classes'), libs+'/mockito-core-5.24.0.jar',
+                         libs+'/junit-platform-console-standalone-1.9.3.jar', '/root/.m2/repository/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar'])
+    assert [c[c.index('-cp')+1] for c in commands] == [expected, expected]

@@ -218,3 +218,39 @@ def test_retry_records_only_the_cache_rejected_by_that_attempt(tmp_path, monkeyp
         hashlib.sha256(b'partial download').hexdigest(), None]
     assert sleeps == [60, 60]
     assert (tmp_path/'work/libs/sample-1.0.jar').read_bytes() == payload
+
+
+def test_setup_removes_jars_a_previous_manifest_installed_and_keeps_foreign_files(tmp_path, monkeypatch, runner_jars_only):
+    from test_survival.adapters import java_worker as worker
+    payload = b'current jar'
+    current = dict(filename='sample-2.0.jar', coordinate='org.example:sample:2.0', sha256=hashlib.sha256(payload).hexdigest(), role='test')
+    superseded = dict(filename='sample-1.0.jar', coordinate='org.example:sample:1.0', sha256=hashlib.sha256(b'old').hexdigest(), role='test')
+    helpers = tmp_path/'helpers'
+    helpers.mkdir()
+    (helpers/'classpath-artifacts.json').write_text(json.dumps([current]))
+    for name, value in {'EXP': tmp_path, 'RESULTS': tmp_path/'results', 'HELPERS': helpers,
+                        'REPO': tmp_path, 'TIMEOUTS': {'build': 123}}.items():
+        monkeypatch.setattr(worker, name, value, raising=False)
+    libs = tmp_path/'work/libs'
+    libs.mkdir(parents=True)
+    (libs/'sample-2.0.jar').write_bytes(payload)
+    (libs/'sample-1.0.jar').write_bytes(b'old')
+    (libs/'dropped-in-by-hand.jar').write_bytes(b'not ours')
+    (tmp_path/'results').mkdir()
+    (tmp_path/'results/runner-setup.json').write_text(json.dumps({'status': 'completed', 'jars': [superseded]}))
+    monkeypatch.setattr(worker, 'execute', lambda *args: pytest.fail('no download needed'))
+    worker.setup()
+    assert not (libs/'sample-1.0.jar').exists()
+    assert (libs/'sample-2.0.jar').read_bytes() == payload
+    assert (libs/'dropped-in-by-hand.jar').exists()  # Only jars this tool installed are pruned.
+    assert json.loads((tmp_path/'results/runner-setup.json').read_text())['jars'] == [current]
+
+
+def test_runner_test_jars_orders_console_launcher_last_and_skips_coverage():
+    from test_survival.adapters.java_worker import runner_test_jars, project_jars
+    records = [dict(filename='junit-platform-console-standalone-1.9.3.jar', role='test'),
+               dict(filename='mockito-core-5.24.0.jar', role='test'),
+               dict(filename='org.jacoco.agent-0.8.14-runtime.jar', role='coverage'),
+               dict(filename='junit-jupiter-api-5.10.2.jar', role='test')]
+    assert runner_test_jars(records) == ['mockito-core-5.24.0.jar', 'junit-jupiter-api-5.10.2.jar', 'junit-platform-console-standalone-1.9.3.jar']
+    assert project_jars('/m2/org/junit/jupiter/x.jar:/m2/org/slf4j/slf4j.jar::/m2/junit/junit/junit-4.13.2.jar:/m2/org/mockito/mockito-core-4.0.0.jar\n') == ['/m2/org/slf4j/slf4j.jar', '/m2/org/mockito/mockito-core-4.0.0.jar']
