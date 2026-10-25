@@ -201,20 +201,25 @@ def setup():
             key=group+'.'+Path(r['filename']).stem
             evidence=RESULTS/f'runner-dependency-{key}.json'
             attempts=json.loads(evidence.read_text()).get('attempts',[]) if evidence.exists() else []
-            number=len(attempts)+1
-            log=RESULTS/f'runner-dependency-{key}-{number}.txt'
-            while log.exists():
-                number+=1
-                log=RESULTS/f'runner-dependency-{key}-{number}.txt'
             if source_sha256 is not None:
                 source.unlink()  # Refetch a corrupt cached jar without discarding the repository.
-            result=execute(['mvn','-q','-U','org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get','-Dartifact='+coordinate,'-Dtransitive=false'],REPO,log,TIMEOUTS['build'])
-            result.update(coordinate=coordinate, expected_sha256=r['sha256'], rejected_sha256=source_sha256,
-                          downloaded_sha256=hashlib.sha256(source.read_bytes()).hexdigest() if source.exists() else None)
-            attempts.append(result)
-            write_json(evidence,dict(coordinate=coordinate,attempts=attempts))
-            if result['exit_code']:
-                raise RuntimeError('Cannot resolve runner jar '+r['filename']+'; see '+str(log.relative_to(EXP)))
+            for retry in range(4):  # Initial attempt, then at most three retries.
+                number=len(attempts)+1
+                log=RESULTS/f'runner-dependency-{key}-{number}.txt'
+                while log.exists():
+                    number+=1
+                    log=RESULTS/f'runner-dependency-{key}-{number}.txt'
+                result=execute(['mvn','-q','-U','org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get','-Dartifact='+coordinate,'-Dtransitive=false'],REPO,log,TIMEOUTS['build'])
+                result.update(coordinate=coordinate, expected_sha256=r['sha256'], rejected_sha256=source_sha256,
+                              downloaded_sha256=hashlib.sha256(source.read_bytes()).hexdigest() if source.exists() else None)
+                attempts.append(result)
+                write_json(evidence,dict(coordinate=coordinate,attempts=attempts))
+                if not result['exit_code']:
+                    break
+                diagnostic=log.read_text(errors='replace')
+                if retry == 3 or not any(message in diagnostic for message in ('429', 'Could not transfer')):
+                    raise RuntimeError('Cannot resolve runner jar '+r['filename']+'; see '+str(log.relative_to(EXP)))
+                time.sleep(60)
         if not source.exists() or hashlib.sha256(source.read_bytes()).hexdigest()!=r['sha256']:
             raise RuntimeError('Runner jar checksum mismatch '+r['filename'])
         shutil.copy2(source,dest)

@@ -199,6 +199,8 @@ class JavaMavenAdapter:
         path = path.parent.with_name(path.parent.name+'-job.json')
         write_json(path, job)
         timeout = (self.config['runner']['timeouts']['compile'] + self.config['runner']['timeouts']['test_class'] * 8) * max(1,len(job.get('methods', []))) + 600
+        if job['action'] == 'setup':
+            timeout = len(read_json(self.helpers/'classpath-artifacts.json')) * (4*self.config['runner']['timeouts']['build'] + 3*60) + 600
         result = self.runner.execute(['python3', str(Path(__file__).with_name('java_worker.py')), str(path)], self.folder(0), path.with_suffix('.log'), timeout)
         if result['exit_code']:
             raise RuntimeError('Java worker failed; see '+str(path.with_suffix('.log')))

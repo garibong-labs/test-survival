@@ -30,6 +30,8 @@ def test_setup_receives_project_framework_without_changing_generated_test_detect
     jobs = []
     def execute(command, cwd, log, timeout):
         jobs.append(json.loads(Path(command[-1]).read_text()))
+        if jobs[-1]['action'] == 'setup':
+            assert timeout >= 25*(4*config['runner']['timeouts']['build'] + 3*60)
         return {'exit_code': 0}
     monkeypatch.setattr(adapter.runner, 'execute', execute)
     adapter.setup_runner()
