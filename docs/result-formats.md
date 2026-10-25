@@ -2,7 +2,9 @@
 
 Runner setup resolves missing jars with `org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get` and `-U`, so retries check for missing releases even after Maven has cached a failure.
 
-Each invocation keeps a separate `results/runner-dependency-<group>.<jar-stem>-<attempt>.txt` log. The jar stem includes the version and classifier, so their attempt histories remain separate. The matching `.json` file records the coordinate, command, exit status, timeout, duration, log path, and expected and downloaded SHA-256 values for each attempt. Existing attempt logs are retained when setup is retried.
+For each jar, a failed Maven command is retried up to three times when its log contains `429` or `Could not transfer`. Each retry waits 60 seconds. Other command failures and checksum mismatches stop setup. Jars are resolved sequentially before parallel workers start.
+
+Each attempt keeps a separate `results/runner-dependency-<group>.<jar-stem>-<attempt>.txt` log. The jar stem includes the version and classifier, so their attempt histories remain separate. The matching `.json` file records the coordinate, command, exit status, timeout, duration, log path, and expected and downloaded SHA-256 values for each attempt. Existing attempt logs are retained across automatic retries and later setup invocations.
 
 A cached jar with the wrong checksum is removed and fetched again. The attempt records its rejected checksum. Downloaded jars must still match the pinned checksum before they are copied into the experiment.
 

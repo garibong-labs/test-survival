@@ -18,6 +18,11 @@ import time
 import xml.etree.ElementTree as ET
 
 
+RUNNER_JAR_RETRIES = 3
+RUNNER_JAR_BACKOFF_SECONDS = 60
+RUNNER_JAR_TRANSIENT_PATTERNS = ('429', 'Could not transfer')
+
+
 try:
     from ..rules.environment import matches as environment_matches
 except ImportError:  # This worker is also invoked directly inside the container.
@@ -186,7 +191,7 @@ def line_rows(xml):
     return sorted(rows,key=lambda r:(r['file'],r['line']))
 
 
-def setup():
+def setup(wait=time.sleep):
     libs=EXP/'work/libs';libs.mkdir(parents=True,exist_ok=True)
     records=json.loads((HELPERS/'classpath-artifacts.json').read_text())
     for r in records:
@@ -201,25 +206,28 @@ def setup():
             key=group+'.'+Path(r['filename']).stem
             evidence=RESULTS/f'runner-dependency-{key}.json'
             attempts=json.loads(evidence.read_text()).get('attempts',[]) if evidence.exists() else []
-            if source_sha256 is not None:
-                source.unlink()  # Refetch a corrupt cached jar without discarding the repository.
-            for retry in range(4):  # Initial attempt, then at most three retries.
+            for retry in range(RUNNER_JAR_RETRIES+1):
+                cached_sha256=hashlib.sha256(source.read_bytes()).hexdigest() if source.exists() else None
+                rejected_sha256=None
+                if cached_sha256 is not None and cached_sha256 != r['sha256']:
+                    rejected_sha256=cached_sha256
+                    source.unlink()  # Refetch only the corrupt jar, including partial retry downloads.
                 number=len(attempts)+1
                 log=RESULTS/f'runner-dependency-{key}-{number}.txt'
                 while log.exists():
                     number+=1
                     log=RESULTS/f'runner-dependency-{key}-{number}.txt'
                 result=execute(['mvn','-q','-U','org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get','-Dartifact='+coordinate,'-Dtransitive=false'],REPO,log,TIMEOUTS['build'])
-                result.update(coordinate=coordinate, expected_sha256=r['sha256'], rejected_sha256=source_sha256,
+                result.update(coordinate=coordinate, expected_sha256=r['sha256'], rejected_sha256=rejected_sha256,
                               downloaded_sha256=hashlib.sha256(source.read_bytes()).hexdigest() if source.exists() else None)
                 attempts.append(result)
                 write_json(evidence,dict(coordinate=coordinate,attempts=attempts))
                 if not result['exit_code']:
                     break
                 diagnostic=log.read_text(errors='replace')
-                if retry == 3 or not any(message in diagnostic for message in ('429', 'Could not transfer')):
+                if retry == RUNNER_JAR_RETRIES or not environment_matches(diagnostic, RUNNER_JAR_TRANSIENT_PATTERNS):
                     raise RuntimeError('Cannot resolve runner jar '+r['filename']+'; see '+str(log.relative_to(EXP)))
-                time.sleep(60)
+                wait(RUNNER_JAR_BACKOFF_SECONDS)
         if not source.exists() or hashlib.sha256(source.read_bytes()).hexdigest()!=r['sha256']:
             raise RuntimeError('Runner jar checksum mismatch '+r['filename'])
         shutil.copy2(source,dest)

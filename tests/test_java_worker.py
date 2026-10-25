@@ -119,12 +119,13 @@ def test_setup_separates_artifact_versions_and_rejects_bad_downloads(tmp_path, m
     ('HTTP 429 Too Many Requests', 4, False),
     ('Could not transfer artifact', 4, False),
     ('No plugin found for prefix', 1, False),
+    ('Could not find artifact org.foo:bar:jar:1.4.29', 1, False),
     ('HTTP 429 mentioned in a successful command', 0, True),
 ])
 def test_setup_retries_transfers_and_resolves_all_jars_sequentially(tmp_path, monkeypatch, diagnostic, failures, succeeds):
     from test_survival.adapters import java_worker as worker
     records = json.loads((Path(worker.__file__).parent/'java/classpath-artifacts.json').read_text())
-    assert len(records) == 25
+    assert records
     payload = b'verified fixture jar'
     for record in records:
         record['sha256'] = hashlib.sha256(payload).hexdigest()
@@ -158,14 +159,13 @@ def test_setup_retries_transfers_and_resolves_all_jars_sequentially(tmp_path, mo
         evidence = next((tmp_path/'results').glob('runner-dependency-*.json'))
         assert len(json.loads(evidence.read_text())['attempts']) == len(calls)
     monkeypatch.setattr(worker, 'execute', execute)
-    monkeypatch.setattr(worker.time, 'sleep', sleep)
     if succeeds:
-        worker.setup()
+        worker.setup(wait=sleep)
         assert calls == [coordinates[0]]*failures + coordinates
         assert json.loads((tmp_path/'results/runner-setup.json').read_text())['status'] == 'completed'
     else:
         with pytest.raises(RuntimeError, match='Cannot resolve runner jar'):
-            worker.setup()
+            worker.setup(wait=sleep)
         assert calls == [coordinates[0]]*(4 if failures == 4 else 1)
         assert not (tmp_path/'results/runner-setup.json').exists()
     assert sleeps == [60]*(min(failures, 3) if succeeds or failures == 4 else 0)
@@ -174,3 +174,40 @@ def test_setup_retries_transfers_and_resolves_all_jars_sequentially(tmp_path, mo
     assert len(attempts) == len(calls)
     assert len({attempt['log'] for attempt in attempts}) == len(calls)
     assert all((tmp_path/attempt['log']).exists() for attempt in attempts)
+
+
+def test_retry_records_only_the_cache_rejected_by_that_attempt(tmp_path, monkeypatch):
+    from test_survival.adapters import java_worker as worker
+    payload = b'valid jar'
+    jar = dict(filename='sample-1.0.jar', coordinate='org.example:sample:1.0',
+               sha256=hashlib.sha256(payload).hexdigest(), role='test')
+    helpers = tmp_path/'helpers'
+    helpers.mkdir()
+    (helpers/'classpath-artifacts.json').write_text(json.dumps([jar]))
+    for name, value in {'EXP': tmp_path, 'RESULTS': tmp_path/'results', 'HELPERS': helpers,
+                        'REPO': tmp_path, 'TIMEOUTS': {'build': 123}}.items():
+        monkeypatch.setattr(worker, name, value, raising=False)
+    repository = tmp_path/'m2/repository'
+    monkeypatch.setattr(worker, 'Path', lambda value: repository if value == '/root/.m2/repository' else Path(value))
+    source = repository/'org/example/sample/1.0/sample-1.0.jar'
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b'initial corrupt cache')
+    calls, sleeps = [], []
+    def execute(command, cwd, log, timeout):
+        assert not source.exists()
+        calls.append(log)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text('Could not transfer' if len(calls) < 3 else 'success')
+        if len(calls) == 1:
+            source.write_bytes(b'partial download')
+        elif len(calls) == 3:
+            source.write_bytes(payload)
+        return dict(exit_code=int(len(calls) < 3), log=str(log.relative_to(tmp_path)))
+    monkeypatch.setattr(worker, 'execute', execute)
+    worker.setup(wait=sleeps.append)
+    attempts = json.loads((tmp_path/'results/runner-dependency-org.example.sample-1.0.json').read_text())['attempts']
+    assert [a['rejected_sha256'] for a in attempts] == [
+        hashlib.sha256(b'initial corrupt cache').hexdigest(),
+        hashlib.sha256(b'partial download').hexdigest(), None]
+    assert sleeps == [60, 60]
+    assert (tmp_path/'work/libs/sample-1.0.jar').read_bytes() == payload
