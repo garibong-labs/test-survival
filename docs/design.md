@@ -72,7 +72,7 @@ dev:
 model:
   provider: openrouter
   name: openai/gpt-oss-120b
-  env_file: /Users/donggi/_projects/experiment-projects/KTester/docker/.env
+  env_file: ~/_projects/experiment-projects/KTester/docker/.env # optional; no default file, process environment takes precedence
   env_key: OPENROUTER_API_KEY
 
 generators:                     # generator groups follow the configured developer groups
@@ -117,6 +117,7 @@ runner:
     compose_files: []           # list of compose files, run via `docker compose -f ... run --rm <service>`
     service: ktester
     image: null                 # alternative to compose: a plain image run with `docker run --rm`, e.g. survival-java:25 built from docker/java/Dockerfile with --build-arg JDK_VERSION=25
+    m2_volume: survival-m2       # image mode: named volume at /root/.m2; reused across containers
     mounts: {}                  # host path -> container path, used to translate paths in commands
     env_file: null              # passed to the container when image is used
   reuse:
@@ -162,7 +163,7 @@ Each generation attempt uses a new round number; zero-compile results do not ret
 
 ### `ktester` / `author-tool`
 
-Tool: `/Users/donggi/_projects/experiment-projects/KTester` on branch `experiment/2026-10-week4-jsv-commit-survival` (contains the extractor patch for `NetworkXNoPath`). Record its HEAD sha as `ktester_base` in `anchor.json`. Do not copy the tool into this repository.
+Tool: `~/_projects/experiment-projects/KTester` on branch `experiment/2026-10-week4-jsv-commit-survival` (contains the extractor patch for `NetworkXNoPath`). Record its HEAD sha as `ktester_base` in `anchor.json`. Do not copy the tool into this repository.
 
 The wrapper ports `prepare_ktester.py` (dataset preparation from `population/ktester-population.csv`, `DatasetPrepare`, then deterministic id renumbering from `renumber_dataset_ids.py` into `rules/matching.py`), `generate_ktester.py` (params `fix_tries`, `temperature`, `workers`), and `record_ktester_completion.py`. Output layout under `generated/ktester/round1/`: `json-schema-validator/test_classes/*.java` (the tool's output tree, project name as the tool writes it), `raw-responses/`, `generation.log`, `run.json`, `time/`, `sources/` (flat copy of produced test files), `funnel.json`, `funnel.md`. The tool is invoked inside the container defined by the generator's `docker` override when present, otherwise `runner.docker`. The KTester tool needs JDK 17; when the runner image is a newer JDK (ta4j-core needs 25), the override points at the KTester compose.
 

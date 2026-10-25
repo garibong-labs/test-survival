@@ -8,17 +8,26 @@ from test_survival.config import ConfigError, STAGES, SCHEMA, Field, as_written,
 
 
 ORIGINAL_HASHES = {
-    'prepare': '0ef980fde3cd48e474b0a262d153b1c26bda0a9b3ec6f699ce1364b407fc581b',
-    'scope': '9c69904ee4ac24e42dd455e6475f8068e01ada3378dc9e6111756445e9b04623',
-    'generate': '36b9b01922e96970acee7112f46f5eb42417158b4a3e0e0f28ca4942ffea6f26',
-    'screen': '89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45',
-    'control': '89b92bcb91f680a06bb4608e1435346f1fbfbc86722bba8f4f721bc722847a45',
-    'survive': '42407e16987d4b965028d1e17ced58cf8761262cde61d0e16b5d86ce36583ed0',
-    'cover': '5abda39490deb68908123a5e406c9c192bc76bbc420a8b82065d0374115a33e7',
-    'report': '2d76c1cf13e442a3c04b9a49886b308dc44db78477c73a88a0166a41a8965cf1',
+    'prepare': '8a421c9dfd509a39652f2b3e97ff611d6e9cdc9d7aaf3be8dd235f04cfc3fc23',
+    'scope': '5a6e85aa10441a021037dd57b190d8d7fcbd415c5cdf16f69540744fb94ca292',
+    'generate': '6ff923ca532074d3f0081a728ef4be47701eb63e765ebfcd1936638e071a27ec',
+    'screen': '022e1258fe4b243e112636917b7bc50f7f904371d92db540b4db12f15ca1dbb2',
+    'control': '022e1258fe4b243e112636917b7bc50f7f904371d92db540b4db12f15ca1dbb2',
+    'survive': '054652826351f0b40d1f5eee8b9c22ec3461a51332793a05e811bc53301d3a46',
+    'cover': '2d3d66f12bdc51bdcb4a10053e0e2bc8dffc8ea62b35f771f36ebec5d899485e',
+    'report': 'a511f93d8b290b9815bb02e307b7e5ac56a9881196d059734154a571a34a24e5',
 }
 
-EXAMPLE_HASHES = {'prepare': '1faf02ac81f8e86d07c02ec53f17f8905288d8e2937389fb3f36fccc4c02b39f', 'scope': '633878ca8eb4d94ce3c4925d4f4695676fedcec26c6f997aacb4da4a6ab08646', 'generate': '726e60c85658b2746bfe721463102984482d7845c1d1b496ae6e09a7b3a9f49e', 'screen': '3d86ba915cae35bdab9dbb0bdf51168d4826b2a9e11ea38cb4d356e9f1ed86f8', 'control': '3d86ba915cae35bdab9dbb0bdf51168d4826b2a9e11ea38cb4d356e9f1ed86f8', 'survive': 'bfdf064ea7e7e63d85cce1d90640af788d19d6ea90b8b36b0937c82d2769605f', 'cover': '05984cbe07601094b47008e53eb6cfe354d13be63430223b076542f282c84b34', 'report': '664dc66a579b7fe7590f1039397d9c29e5816a77e90abf6abeb1fdcd0a2f45de'}
+EXAMPLE_HASHES = {
+    'prepare': '492cf38a8fe6e8f9d70c0d0870fbc21f53b44a8c766c386fa37a2c8bb4e2549a',
+    'scope': '45df1b5d4d5356bdb59a7de00ea19ae4c10ff035947e0208be24cffb8147ef12',
+    'generate': '6a01e8175530c2c62c541192240fbd77235f8861ec201e95a95e358ba58c7043',
+    'screen': 'c825f2c1fe36ac39fdb6c1c09a18054cb505a124fd3768182726a735c8f9daf2',
+    'control': 'c825f2c1fe36ac39fdb6c1c09a18054cb505a124fd3768182726a735c8f9daf2',
+    'survive': '75ccd426be2ccab7779645ad04bea741357d29a0c3b39be33e3234ef8d6f2938',
+    'cover': 'ece627d971ff22448a66b00cef889b95c81c0fd200c53355cb435c91e7e15d9d',
+    'report': 'e16cafe95e6f359e0a23f2f651aec964b52b41f7d2b4271c4a85a9e79abbcefc',
+}
 
 
 @pytest.fixture
@@ -176,3 +185,95 @@ def test_new_defaults_and_generator_override_do_not_mutate_runner(minimal):
     assert effective['runner']['docker']['image'] is None
     assert config['runner']['docker']['image']=='runner:25'
     assert as_written(config)==minimal
+
+
+def test_optional_env_file_and_maven_volume_defaults_preserve_written_hashes(minimal):
+    config = validate(minimal)
+    assert config['model']['env_file'] is None
+    assert config['runner']['docker']['m2_volume'] == 'survival-m2'
+    assert as_written(config) == minimal
+    assert all(stage_hash(config, stage) == stage_hash(minimal, stage) for stage in STAGES)
+
+
+def test_home_paths_expand_without_changing_written_hashes(tmp_path, monkeypatch):
+    import os.path
+    raw = {'name': 'portable', 'anchor': 't', 'project': {'repo': '~/project'},
+           'model': {'env_file': '~/private/model.env'},
+           'runner': {'docker': {'compose_files': ['~/compose.yml'], 'env_file': '~/docker.env',
+                                 'mounts': {'~/project': '/repo'}},
+                      'reuse': {'checkouts': '~/checkouts', 'classpath_cache': '~/classpaths'}},
+           'generators': [{'name': 'k', 'tool_path': '~/KTester',
+                           'docker': {'compose_files': ['~/KTester/compose.yml'],
+                                      'mounts': {'~/KTester': '/work'}, 'env_file': '~/tool.env'}}]}
+    original_expand = os.path.expanduser
+    for user_dir in (tmp_path/'first-user', tmp_path/'second-user'):
+        user_dir.mkdir()
+        (user_dir/'experiment.yaml').write_text(yaml.safe_dump(raw))
+        monkeypatch.setattr(os.path, 'expanduser', lambda path: str(user_dir) if path == '~' else str(user_dir/path[2:]) if path.startswith('~/') else original_expand(path))
+        config = load('~/experiment.yaml')
+        assert config['project']['repo'] == str(user_dir/'project')
+        assert config['model']['env_file'] == str(user_dir/'private/model.env')
+        assert config['runner']['docker']['compose_files'] == [str(user_dir/'compose.yml')]
+        assert config['runner']['docker']['mounts'] == {str(user_dir/'project'): '/repo'}
+        assert config['runner']['docker']['env_file'] == str(user_dir/'docker.env')
+        assert config['runner']['reuse'] == {'checkouts': str(user_dir/'checkouts'), 'classpath_cache': str(user_dir/'classpaths')}
+        assert config['generators'][0]['tool_path'] == str(user_dir/'KTester')
+        assert config['generators'][0]['docker']['mounts'] == {str(user_dir/'KTester'): '/work'}
+        assert config['generators'][0]['docker']['compose_files'] == [str(user_dir/'KTester/compose.yml')]
+        assert config['generators'][0]['docker']['env_file'] == str(user_dir/'tool.env')
+        assert as_written(config) == as_written(deepcopy(config)) == raw
+        assert yaml.safe_load(yaml.safe_dump(config)) == raw
+        assert all(stage_hash(config, s) == stage_hash(raw, s) for s in STAGES)
+        clone = deepcopy(config)
+        clone['runner']['docker']['mounts'][str(user_dir/'project')] = '/changed'
+        assert as_written(clone)['runner']['docker']['mounts'] == {'~/project': '/changed'}
+        clone['runner']['docker']['compose_files'].append('/another.yml')
+        assert as_written(clone)['runner']['docker']['compose_files'] == ['~/compose.yml', '/another.yml']
+        clone['runner']['docker']['compose_files'].reverse()
+        assert as_written(clone)['runner']['docker']['compose_files'] == ['/another.yml', '~/compose.yml']
+        clone['runner']['docker']['mounts']['~/project'] = '/other'
+        assert clone['runner']['docker']['mounts'] == {str(user_dir/'project'): '/other'}
+        assert as_written(clone)['runner']['docker']['mounts'] == {'~/project': '/other'}
+        clone['runner']['docker']['mounts']['~/new'] = '/new'
+        assert clone['runner']['docker']['mounts'][str(user_dir/'new')] == '/new'
+        assert as_written(clone)['runner']['docker']['mounts']['~/new'] == '/new'
+        mounts = deepcopy(clone['runner']['docker']['mounts'])
+        assert mounts.setdefault('~/new', '/ignored') == '/new'
+        assert mounts.get('~/new') == '/new'
+        assert '~/new' in mounts
+        assert mounts.pop('~/new') == '/new'
+        del mounts['~/project']
+        assert as_written(mounts) == {}
+
+
+@pytest.mark.parametrize('volume', ['/tmp/m2', 'volume:/root/.m2', '../m2', 'bad name', 'm', ''])
+def test_maven_volume_requires_a_name(minimal, volume):
+    minimal['runner'] = {'docker': {'m2_volume': volume}}
+    with pytest.raises(ConfigError, match='m2_volume'):
+        validate(minimal)
+
+
+@pytest.mark.parametrize('patch,field', [
+    ({'project': {'repo': '~unresolvable/repo'}}, 'project.repo'),
+    ({'model': {'env_file': '~unresolvable/key.env'}}, 'model.env_file'),
+    ({'runner': {'reuse': {'checkouts': '~unresolvable/checkouts'}}}, 'runner.reuse.checkouts'),
+    ({'runner': {'docker': {'compose_files': ['~unresolvable/compose.yml']}}}, 'runner.docker.compose_files'),
+    ({'runner': {'docker': {'mounts': {'~unresolvable/project': '/repo'}}}}, 'runner.docker.mounts'),
+    ({'generators': [{'name': 'k', 'tool_path': '~unresolvable/KTester'}]}, 'generators[0].tool_path'),
+])
+def test_unresolvable_home_reports_configuration_field(minimal, monkeypatch, patch, field):
+    def unavailable(path):
+        raise RuntimeError('Could not determine home directory.')
+    monkeypatch.setattr(Path, 'expanduser', unavailable)
+    minimal.update(patch)
+    with pytest.raises(ConfigError) as error:
+        validate(minimal)
+    assert str(error.value).startswith(field+': cannot expand home directory')
+
+
+def test_unresolvable_experiment_path_is_a_config_error(monkeypatch):
+    def unavailable(path):
+        raise RuntimeError('Could not determine home directory.')
+    monkeypatch.setattr(Path, 'expanduser', unavailable)
+    with pytest.raises(ConfigError, match='experiment path: cannot expand home directory'):
+        load('~unresolvable/experiment.yaml')

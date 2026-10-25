@@ -9,7 +9,7 @@ import subprocess
 import tarfile
 import xml.etree.ElementTree as ET
 
-from ..config import canonical_hash
+from ..config import as_written, canonical_hash
 from ..io import read_json, write_json, write_csv
 from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
@@ -56,7 +56,11 @@ class JavaMavenAdapter:
         return target
 
     def build_fingerprint(self, sha):
-        return canonical_hash({'sha': sha, 'runner': self.config['runner'], 'module': self.config['project']['module']})
+        runner = as_written(self.config['runner'], include_defaults=True)
+        # Preserve pre-volume build records when the new cache default is implicit.
+        if 'm2_volume' not in as_written(self.config['runner']['docker']):
+            runner['docker'].pop('m2_volume', None)
+        return canonical_hash({'sha': sha, 'runner': runner, 'module': self.config['project']['module']})
 
     def build(self, index, sha):
         record = self.exp / f'results/builds/{index}.json'
@@ -187,8 +191,9 @@ class JavaMavenAdapter:
 
     def worker(self, job):
         developer=job.get('group') in {g['name'] for g in self.config['dev']['groups']}
+        framework = self.config['project']['test_framework'] if job.get('action') == 'setup' else self.test_framework() if developer else 'auto'
         job.update(experiment=self.runner.path(self.exp), module=self.config['project']['module'],
-                   test_framework=self.test_framework() if developer else 'auto', developer=developer, environment_errors=self.config['survival']['environment_errors'], jvm=self.config['runner']['jvm'], timeouts=self.config['runner']['timeouts'], flaky_rerun=self.config['survival']['flaky_rerun'])
+                   test_framework=framework, developer=developer, environment_errors=self.config['survival']['environment_errors'], jvm=self.config['runner']['jvm'], timeouts=self.config['runner']['timeouts'], flaky_rerun=self.config['survival']['flaky_rerun'])
         path = self.exp/job.get('work','work/runner-setup')/'job.json'
         # The worker clears its work directory; keep its input outside that directory.
         path = path.parent.with_name(path.parent.name+'-job.json')

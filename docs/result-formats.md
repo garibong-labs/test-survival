@@ -1,5 +1,11 @@
 # Result formats
 
+Runner setup resolves missing jars with `org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get` and `-U`, so retries check for missing releases even after Maven has cached a failure.
+
+Each invocation keeps a separate `results/runner-dependency-<group>.<jar-stem>-<attempt>.txt` log. The jar stem includes the version and classifier, so their attempt histories remain separate. The matching `.json` file records the coordinate, command, exit status, timeout, duration, log path, and expected and downloaded SHA-256 values for each attempt. Existing attempt logs are retained when setup is retried.
+
+A cached jar with the wrong checksum is removed and fetched again. The attempt records its rejected checksum. Downloaded jars must still match the pinned checksum before they are copied into the experiment.
+
 CSV uses UTF-8, a header row, and LF line endings. JSON uses UTF-8 and two-space indentation. Paths in method records are experiment-relative. Default stable runs are three; configuring a different count changes the `runN` columns accordingly.
 
 ## Experiment files
@@ -40,7 +46,7 @@ Headers below follow the archived experiment and are checked by `tests/test_form
 
 `results/alive-entering.json`: object `index -> group -> list of ids` alive entering that index.
 
-`results/changed-lines.csv`: `index,sha,date,subject,` then for each of the three partitions `all`, `scope`, `other`: `<p>_executable`, then per group `<p>_<group>_covered,<p>_<group>_percent`, then after all three partitions, per group `<group>_lost` and per group the exposure counts as produced by the hand-run `aggregate_coverage.py`. Port the exact column list from `/Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-run2/tools/aggregate_coverage.py`; the header must match that run's `results/changed-lines.csv` byte for byte when the groups are the same.
+`results/changed-lines.csv`: `index,sha,date,subject,` then for each of the three partitions `all`, `scope`, `other`: `<p>_executable`, then per group `<p>_<group>_covered,<p>_<group>_percent`, then after all three partitions, per group `<group>_lost` and per group the exposure counts as produced by the hand-run `aggregate_coverage.py`. Port the exact column list from `~/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-run2/tools/aggregate_coverage.py`; the header must match that run's `results/changed-lines.csv` byte for byte when the groups are the same.
 
 Tables. Match the hand-run files exactly in structure, including title lines, column order, percent formatting with one decimal, and `n/a` for a zero denominator:
 

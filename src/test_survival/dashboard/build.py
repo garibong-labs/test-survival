@@ -4,6 +4,7 @@ from pathlib import Path
 import yaml
 
 from ..io import read_csv,read_json,atomic_text
+from ..config import expand_path
 
 
 def coverage(path,groups):
@@ -58,14 +59,14 @@ READERS={'unified':unified,'per-group':per_group,'testpilot-ss':testpilot_ss}
 
 
 def build(experiments,out):
-    experiments,out=Path(experiments),Path(out)
+    experiments,out=expand_path(experiments, 'experiments path'),expand_path(out, 'dashboard output')
     config=yaml.safe_load(experiments.read_text())
     if not isinstance(config,dict) or set(config)!={'experiments'} or not isinstance(config['experiments'],list):raise ValueError('experiments.yaml must contain an experiments list')
     data=[]
-    for item in config['experiments']:
+    for index, item in enumerate(config['experiments']):
         if set(item)-{'path','title','layout'}:raise ValueError('Unknown experiment entry key')
         if item['layout'] not in READERS:raise ValueError('layout must be unified, per-group, or testpilot-ss')
-        path=Path(item['path']);path=path if path.is_absolute() else experiments.parent/path
+        path=expand_path(item['path'], f'experiments[{index}].path');path=path if path.is_absolute() else experiments.parent/path
         result=READERS[item['layout']](path)
         result['title']=item.get('title',result['project']);data.append(result)
     payload=json.dumps(data,ensure_ascii=False).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')

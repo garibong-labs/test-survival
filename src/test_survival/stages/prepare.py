@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv, atomic_text, now
 from ..pipeline import log
-from ..config import canonical_hash
+from ..config import range_fingerprint
 from ..rules.commits import skip_reason
 
 
@@ -11,7 +11,7 @@ def run(exp, config):
     adapter = JavaMavenAdapter(exp, config)
     prior = read_json(exp/'results/anchor.json', {})
     anchor_sha = adapter.git('rev-parse', config['anchor']+'^{commit}')
-    resolution_hash = canonical_hash({k:config[k] for k in ['project','anchor','range']})
+    resolution_hash = range_fingerprint(config)
     resolution = read_json(exp/'state/resolved-range.json', {})
     saved_end = resolution.get('end') if resolution.get('config_hash') == resolution_hash else None
     end = config['range']['end'] or saved_end or adapter.git('rev-parse', config['range']['branch'])

@@ -17,6 +17,13 @@ class ConfigError(ValueError):
     pass
 
 
+def expand_path(path, field):
+    try:
+        return Path(path).expanduser()
+    except RuntimeError as exc:
+        raise ConfigError(f'{field}: cannot expand home directory in {str(path)!r}') from exc
+
+
 class Configuration(dict):
     """Resolved values for execution, retaining explicitly supplied hash inputs."""
 
@@ -24,6 +31,9 @@ class Configuration(dict):
         self._explicit = set(written)
         self._written = deepcopy(written)
         self._initial = deepcopy(resolved)
+        self._written_keys = {}
+        self._path_values = {}
+        self._path_key_prefix = None
         dict.__init__(self, {key: self._wrap(value, written.get(key, MISSING)) for key, value in resolved.items()})
 
     @staticmethod
@@ -37,14 +47,35 @@ class Configuration(dict):
             return [Configuration._wrap(v, supplied[i] if i < len(supplied) else MISSING) for i, v in enumerate(value)]
         return value
 
+    def _key(self, key):
+        return str(expand_path(key, self._path_key_prefix)) if self._path_key_prefix else key
+
+    def __getitem__(self, key):
+        return dict.__getitem__(self, self._key(key))
+
+    def __contains__(self, key):
+        return dict.__contains__(self, self._key(key))
+
+    def get(self, key, default=None):
+        return dict.get(self, self._key(key), default)
+
     def __setitem__(self, key, value):
+        if self._path_key_prefix:
+            written = key
+            key = self._key(key)
+            if key != written:
+                self._written_keys[key] = written
+        self._path_values.pop(key, None)
         self._explicit.add(key)
         self._written[key] = deepcopy(value)
         dict.__setitem__(self, key, self._wrap(value, value))
 
     def __delitem__(self, key):
+        key = self._key(key)
         dict.__delitem__(self, key)
         self._explicit.discard(key)
+        self._written_keys.pop(key, None)
+        self._path_values.pop(key, None)
 
     def update(self, *args, **kwargs):
         for key, value in dict(*args, **kwargs).items():
@@ -56,18 +87,25 @@ class Configuration(dict):
         return self[key]
 
     def pop(self, key, *default):
+        key = self._key(key)
         value = dict.pop(self, key, *default)
         self._explicit.discard(key)
+        self._written_keys.pop(key, None)
+        self._path_values.pop(key, None)
         return value
 
     def popitem(self):
         key, value = dict.popitem(self)
         self._explicit.discard(key)
+        self._written_keys.pop(key, None)
+        self._path_values.pop(key, None)
         return key, value
 
     def clear(self):
         dict.clear(self)
         self._explicit.clear()
+        self._written_keys.clear()
+        self._path_values.clear()
 
     def __ior__(self, other):
         self.update(other)
@@ -79,25 +117,31 @@ class Configuration(dict):
         clone._explicit = self._explicit.copy()
         clone._written = deepcopy(self._written, memo)
         clone._initial = deepcopy(self._initial, memo)
+        clone._written_keys = self._written_keys.copy()
+        clone._path_values = deepcopy(self._path_values, memo)
+        clone._path_key_prefix = self._path_key_prefix
         for key, value in self.items():
             dict.__setitem__(clone, key, deepcopy(value, memo))
         return clone
 
 
-def as_written(value):
+def as_written(value, *, include_defaults=False):
     if isinstance(value, Configuration):
         result = {}
         for key, item in value.items():
-            supplied = as_written(item)
-            if not isinstance(item, (dict, list)) and key in value._written and item == value._initial.get(key, MISSING):
+            supplied = as_written(item, include_defaults=include_defaults)
+            if isinstance(item, list) and key in value._path_values:
+                supplied = [value._path_values[key].get(v, v) for v in item]
+            scalar_or_list = not isinstance(item, dict) and (not isinstance(item, list) or all(not isinstance(v, (dict, list)) for v in item))
+            if scalar_or_list and key in value._written and item == value._initial.get(key, MISSING):
                 supplied = value._written[key]
-            if key in value._explicit or (isinstance(item, Configuration) and supplied) or item != value._initial.get(key, MISSING):
-                result[key] = supplied
+            if include_defaults or key in value._explicit or (isinstance(item, Configuration) and supplied) or item != value._initial.get(key, MISSING):
+                result[value._written_keys.get(key, key)] = supplied
         return result
     if isinstance(value, dict):
-        return {key: as_written(item) for key, item in value.items()}
+        return {key: as_written(item, include_defaults=include_defaults) for key, item in value.items()}
     if isinstance(value, list):
-        return [as_written(item) for item in value]
+        return [as_written(item, include_defaults=include_defaults) for item in value]
     return value
 
 
@@ -125,6 +169,7 @@ DOCKER = {
     'compose_files': Field(list, []), 'service': Field(str, 'ktester'),
     'image': Field(str, None, nullable=True), 'mounts': Field(dict, {}),
     'env_file': Field(str, None, nullable=True),
+    'm2_volume': Field(str, 'survival-m2'),
 }
 DEV_GROUP = {
     'name': Field(str), 'display': Field(str, None, nullable=True),
@@ -162,7 +207,7 @@ SCHEMA = {
     'dev': {'denominator': enum('project', 'project', 'scope-targeted', 'coverage-scoped'), 'stable_runs': integer(3),
             'groups': Field(list, [])},
     'model': {'provider': enum('openrouter', 'openrouter'), 'name': Field(str, 'openai/gpt-oss-120b'),
-              'env_file': Field(str, '/Users/donggi/_projects/experiment-projects/KTester/docker/.env'),
+              'env_file': Field(str, None, nullable=True),
               'env_key': Field(str, 'OPENROUTER_API_KEY')},
     'generators': Field(list, []),
     'screen': {'stable_runs': integer(3), 'dedup': enum('exact-body', 'exact-body'),
@@ -236,9 +281,55 @@ def _docker(data, prefix):
     if docker['compose_files'] and docker['image']:
         raise ConfigError(prefix+': compose_files and image are alternatives')
     for host,target in docker['mounts'].items():
-        if not isinstance(host,str) or not isinstance(target,str) or not Path(host).is_absolute() or not target.startswith('/'):
+        if not isinstance(host,str) or not isinstance(target,str) or not expand_path(host, prefix+'.mounts').is_absolute() or not target.startswith('/'):
             raise ConfigError(prefix+'.mounts: expected absolute host path -> absolute container path')
+    if len({str(expand_path(host, prefix+'.mounts')) for host in docker['mounts']}) != len(docker['mounts']):
+        raise ConfigError(prefix+'.mounts: duplicate host paths after expanding ~')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]+', docker['m2_volume']):
+        raise ConfigError(prefix+'.m2_volume: expected a named Docker volume')
     return docker
+
+
+def _expand_paths(config):
+    """Expand host paths for execution while hashing the YAML as written."""
+    def expand(path, prefix):
+        return str(expand_path(path, prefix)) if path and path.startswith('~') else path
+
+    def field(node, name, prefix):
+        value = node[name]
+        resolved = [expand(p, prefix+'.'+name) for p in value] if isinstance(value, list) else expand(value, prefix+'.'+name)
+        if isinstance(value, list):
+            node._path_values[name] = dict(zip(resolved, value))
+        dict.__setitem__(node, name, resolved)
+        node._initial[name] = deepcopy(resolved)
+
+    def docker(node, prefix):
+        field(node, 'compose_files', prefix)
+        field(node, 'env_file', prefix)
+        mounts = node['mounts']
+        mounts._path_key_prefix = prefix+'.mounts'
+        for host in list(mounts):
+            resolved = expand(host, prefix+'.mounts')
+            if resolved == host:
+                continue
+            dict.__setitem__(mounts, resolved, dict.pop(mounts, host))
+            mounts._initial[resolved] = mounts._initial.pop(host)
+            mounts._written[resolved] = mounts._written.pop(host)
+            mounts._explicit.discard(host)
+            mounts._explicit.add(resolved)
+            mounts._written_keys[resolved] = host
+
+    field(config['project'], 'repo', 'project')
+    field(config['model'], 'env_file', 'model')
+    for name in ('checkouts', 'classpath_cache'):
+        field(config['runner']['reuse'], name, 'runner.reuse')
+    docker(config['runner']['docker'], 'runner.docker')
+    for index, group in enumerate(config['generators']):
+        prefix = f'generators[{index}]'
+        field(group, 'tool_path', prefix)
+        if group['docker'] is not None:
+            docker(group['docker'], prefix+'.docker')
+    return config
 
 
 def _group_name(name, names, prefix):
@@ -331,7 +422,7 @@ def validate(data):
             raise ConfigError(f'runner.jvm.{key}: expected a positive JVM memory size, such as 512m or 1g')
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', c['model']['env_key']):
         raise ConfigError('model.env_key: expected an environment variable name')
-    return Configuration(c, data)
+    return _expand_paths(Configuration(c, data))
 
 
 class UniqueLoader(yaml.SafeLoader):
@@ -355,7 +446,7 @@ UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _ma
 
 
 def load(path):
-    path = Path(path)
+    path = expand_path(path, 'experiment path')
     if path.is_dir():
         path = path / 'experiment.yaml'
     try:
@@ -368,6 +459,10 @@ def load(path):
 
 def canonical_hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+
+
+def range_fingerprint(config):
+    return canonical_hash(as_written({k: config[k] for k in ('project', 'anchor', 'range')}, include_defaults=True))
 
 
 def stage_inputs(c, stage, group=None):

@@ -42,3 +42,28 @@ def test_interrupted_and_credential_echo_are_not_logged(tmp_path,monkeypatch):
     p=tmp_path/'interrupted';p.mkdir();(p/'request.json').write_text('{}')
     with pytest.raises(RuntimeError,match='unknown outcome'):
         client.complete('prompt',{'temperature':0,'max_tokens':10},p)
+
+
+@pytest.mark.parametrize('env_file', ['absent', None])
+def test_credentials_without_an_env_file_use_only_process_environment(monkeypatch, env_file):
+    from test_survival.model.credentials import _read, key_available
+    config = {'env_key': 'SURVIVAL_TEST_KEY'}
+    if env_file != 'absent':
+        config['env_file'] = env_file
+    monkeypatch.delenv('SURVIVAL_TEST_KEY', raising=False)
+    assert _read(config) is None
+    assert not key_available(config)
+    monkeypatch.setenv('SURVIVAL_TEST_KEY', 'test-only-key')
+    assert _read(config) == 'test-only-key'
+    assert key_available(config)
+
+
+def test_explicit_env_file_and_process_override(tmp_path, monkeypatch):
+    from test_survival.model.credentials import _read
+    path = tmp_path/'model.env'
+    path.write_text('SURVIVAL_TEST_KEY="file-key"\n')
+    config = {'env_key': 'SURVIVAL_TEST_KEY', 'env_file': str(path)}
+    monkeypatch.delenv('SURVIVAL_TEST_KEY', raising=False)
+    assert _read(config) == 'file-key'
+    monkeypatch.setenv('SURVIVAL_TEST_KEY', 'process-key')
+    assert _read(config) == 'process-key'
