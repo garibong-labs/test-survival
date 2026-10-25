@@ -46,6 +46,8 @@ Build the image once and reuse it across experiments. Change the build argument 
 
 Image mode mounts the named Docker volume `survival-m2` at `/root/.m2` by default. Maven downloads survive container removal. Set `runner.docker.m2_volume` to use a different named volume; Compose keeps its own volume configuration.
 
+An explicit bind mount at `/root/.m2` or a parent directory takes precedence over the named volume.
+
 All Java builds, inventories, test launches, and JaCoCo runs execute inside Docker. The CLI and native model client run on the host.
 
 Store your API key in an env file outside the repositories, such as `/absolute/path/to/private/model.env`. Never commit this file.

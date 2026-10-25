@@ -1,6 +1,10 @@
 # Result formats
 
-Runner setup resolves missing jars with `org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get`. Each invocation keeps a separate `results/runner-dependency-<artifact>-<attempt>.txt` log. `results/runner-dependency-<artifact>.json` records the artifact coordinate and the command, exit status, timeout, duration, and log path for each attempt. Existing attempt logs are retained when setup is retried.
+Runner setup resolves missing jars with `org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get` and `-U`, so retries check for missing releases even after Maven has cached a failure.
+
+Each invocation keeps a separate `results/runner-dependency-<group>.<jar-stem>-<attempt>.txt` log. The jar stem includes the version and classifier, so their attempt histories remain separate. The matching `.json` file records the coordinate, command, exit status, timeout, duration, log path, and expected and downloaded SHA-256 values for each attempt. Existing attempt logs are retained when setup is retried.
+
+A cached jar with the wrong checksum is removed and fetched again. The attempt records its rejected checksum. Downloaded jars must still match the pinned checksum before they are copied into the experiment.
 
 CSV uses UTF-8, a header row, and LF line endings. JSON uses UTF-8 and two-space indentation. Paths in method records are experiment-relative. Default stable runs are three; configuring a different count changes the `runN` columns accordingly.
 

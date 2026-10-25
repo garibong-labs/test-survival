@@ -23,11 +23,9 @@ def test_auto_framework_uses_original_module_dependencies(tmp_path):
     assert adapter.test_framework()=='junit4'
 
 
-@pytest.mark.parametrize('configured,expected', [('junit4', 'junit4'), ('junit5', 'junit5'), ('auto', 'junit4')])
+@pytest.mark.parametrize('configured,expected', [('junit4', 'junit4'), ('junit5', 'junit5'), ('auto', 'auto')])
 def test_setup_receives_project_framework_without_changing_generated_test_detection(tmp_path, monkeypatch, configured, expected):
     config = validate({'name': 'setup', 'anchor': 't', 'project': {'repo': str(tmp_path), 'test_framework': configured}})
-    write_json(tmp_path/'results/builds/0.json', {'classpath': 'cp.txt'})
-    (tmp_path/'cp.txt').write_text('/root/.m2/repository/junit/junit/4.13.2/junit-4.13.2.jar')
     adapter = JavaMavenAdapter(tmp_path, config)
     jobs = []
     def execute(command, cwd, log, timeout):
@@ -37,6 +35,7 @@ def test_setup_receives_project_framework_without_changing_generated_test_detect
     adapter.setup_runner()
     assert jobs[-1]['action'] == 'setup'
     assert jobs[-1]['test_framework'] == expected
+    assert not (tmp_path/'results/test-framework.json').exists()
     adapter.worker({'action': 'screen', 'group': 'llm'})
     assert jobs[-1]['test_framework'] == 'auto'
 

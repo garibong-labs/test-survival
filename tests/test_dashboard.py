@@ -40,3 +40,23 @@ def test_dashboard_expands_home_paths_before_resolving_relative_paths(tmp_path, 
     build('~/experiments.yaml', '~/out')
     assert seen == [tmp_path/'project/experiments/test']
     assert (tmp_path/'out/index.html').exists()
+
+
+def test_dashboard_reports_unresolvable_home_paths(tmp_path, monkeypatch):
+    import pytest
+    from pathlib import Path
+    from test_survival.config import ConfigError
+    original = Path.expanduser
+    def expand(path):
+        if str(path).startswith('~'):
+            raise RuntimeError('Could not determine home directory.')
+        return original(path)
+    monkeypatch.setattr(Path, 'expanduser', expand)
+    with pytest.raises(ConfigError, match='experiments path: cannot expand'):
+        build('~unresolvable/experiments.yaml', tmp_path/'out')
+    with pytest.raises(ConfigError, match='dashboard output: cannot expand'):
+        build(tmp_path/'experiments.yaml', '~unresolvable/out')
+    config = tmp_path/'experiments.yaml'
+    config.write_text(yaml.safe_dump({'experiments': [{'path': '~unresolvable/project', 'layout': 'unified'}]}))
+    with pytest.raises(ConfigError, match=r'experiments\[0\].path: cannot expand'):
+        build(config, tmp_path/'out')

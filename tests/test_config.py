@@ -228,11 +228,52 @@ def test_home_paths_expand_without_changing_written_hashes(tmp_path, monkeypatch
         clone['runner']['docker']['mounts'][str(user_dir/'project')] = '/changed'
         assert as_written(clone)['runner']['docker']['mounts'] == {'~/project': '/changed'}
         clone['runner']['docker']['compose_files'].append('/another.yml')
-        assert as_written(clone)['runner']['docker']['compose_files'][-1] == '/another.yml'
+        assert as_written(clone)['runner']['docker']['compose_files'] == ['~/compose.yml', '/another.yml']
+        clone['runner']['docker']['compose_files'].reverse()
+        assert as_written(clone)['runner']['docker']['compose_files'] == ['/another.yml', '~/compose.yml']
+        clone['runner']['docker']['mounts']['~/project'] = '/other'
+        assert clone['runner']['docker']['mounts'] == {str(user_dir/'project'): '/other'}
+        assert as_written(clone)['runner']['docker']['mounts'] == {'~/project': '/other'}
+        clone['runner']['docker']['mounts']['~/new'] = '/new'
+        assert clone['runner']['docker']['mounts'][str(user_dir/'new')] == '/new'
+        assert as_written(clone)['runner']['docker']['mounts']['~/new'] == '/new'
+        mounts = deepcopy(clone['runner']['docker']['mounts'])
+        assert mounts.setdefault('~/new', '/ignored') == '/new'
+        assert mounts.get('~/new') == '/new'
+        assert '~/new' in mounts
+        assert mounts.pop('~/new') == '/new'
+        del mounts['~/project']
+        assert as_written(mounts) == {}
 
 
-@pytest.mark.parametrize('volume', ['/tmp/m2', 'volume:/root/.m2', '../m2', 'bad name'])
+@pytest.mark.parametrize('volume', ['/tmp/m2', 'volume:/root/.m2', '../m2', 'bad name', 'm', ''])
 def test_maven_volume_requires_a_name(minimal, volume):
     minimal['runner'] = {'docker': {'m2_volume': volume}}
     with pytest.raises(ConfigError, match='m2_volume'):
         validate(minimal)
+
+
+@pytest.mark.parametrize('patch,field', [
+    ({'project': {'repo': '~unresolvable/repo'}}, 'project.repo'),
+    ({'model': {'env_file': '~unresolvable/key.env'}}, 'model.env_file'),
+    ({'runner': {'reuse': {'checkouts': '~unresolvable/checkouts'}}}, 'runner.reuse.checkouts'),
+    ({'runner': {'docker': {'compose_files': ['~unresolvable/compose.yml']}}}, 'runner.docker.compose_files'),
+    ({'runner': {'docker': {'mounts': {'~unresolvable/project': '/repo'}}}}, 'runner.docker.mounts'),
+    ({'generators': [{'name': 'k', 'tool_path': '~unresolvable/KTester'}]}, 'generators[0].tool_path'),
+])
+def test_unresolvable_home_reports_configuration_field(minimal, monkeypatch, patch, field):
+    def unavailable(path):
+        raise RuntimeError('Could not determine home directory.')
+    monkeypatch.setattr(Path, 'expanduser', unavailable)
+    minimal.update(patch)
+    with pytest.raises(ConfigError) as error:
+        validate(minimal)
+    assert str(error.value).startswith(field+': cannot expand home directory')
+
+
+def test_unresolvable_experiment_path_is_a_config_error(monkeypatch):
+    def unavailable(path):
+        raise RuntimeError('Could not determine home directory.')
+    monkeypatch.setattr(Path, 'expanduser', unavailable)
+    with pytest.raises(ConfigError, match='experiment path: cannot expand home directory'):
+        load('~unresolvable/experiment.yaml')

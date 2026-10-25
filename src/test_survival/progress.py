@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .config import canonical_hash
+from .config import range_fingerprint
 from .io import read_csv, read_json
 
 
@@ -23,7 +23,7 @@ def items(exp, stage, config, state):
         adapter = JavaMavenAdapter(exp, config)
         resolution_path = exp/'state/resolved-range.json'
         resolution = read_json(resolution_path, {})
-        resolution_hash = canonical_hash({k: config[k] for k in ('project', 'anchor', 'range')})
+        resolution_hash = range_fingerprint(config)
         plan_paths = [exp/'results'/name for name in ('anchor.json', 'commits.csv', 'commit-paths.json')]
         # Prepare publishes these inputs after resolving the current range.
         # Until that finishes, old indices cannot describe the new work safely.
