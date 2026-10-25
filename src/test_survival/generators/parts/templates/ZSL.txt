@@ -1,0 +1,2 @@
+As a professional software tester who writes Java test methods, generate a complete Junit 4 test file ({class_name}Test.java) to comprehensively test all methods in the following class named {class_name}. Your output file must start with ###Test START## and finish with ###Test END##. Here is the source code:
+{source_code}

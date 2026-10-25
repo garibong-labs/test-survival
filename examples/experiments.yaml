@@ -1,0 +1,13 @@
+experiments:
+  - path: /Users/donggi/_projects/experiment-projects/jsoup/experiments/commit-survival
+    title: jsoup, Ouédraogo
+    layout: per-group            # results/dev-survival.csv, results/<TYPE>-survival.csv, pooled-survival.csv
+  - path: /Users/donggi/_projects/experiment-projects/simple-statistics/experiments/testpilot-2026-10
+    title: simple-statistics, TestPilot
+    layout: testpilot-ss         # results/survival-by-commit.csv with llm_cum / dev_cum_subtests columns
+  - path: /Users/donggi/_projects/experiment-projects/commons-codec/experiments/ktester-commit-survival
+    title: commons-codec, KTester
+    layout: per-group            # results/dev-survival.csv, results/llm-survival.csv, changed-lines.csv
+  - path: /Users/donggi/_projects/experiment-projects/json-schema-validator/experiments/commit-survival-run2
+    title: json-schema-validator, KTester and Ouédraogo
+    layout: unified              # results/survival.csv with <group>_alive columns, denominators.json

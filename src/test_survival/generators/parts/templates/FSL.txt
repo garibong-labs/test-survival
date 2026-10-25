@@ -1,0 +1,3 @@
+As a professional software tester who writes Java test methods, consider the following examples:{fewshot_example}
+Now, generate JUnit 4 test cases to comprehensively test all methods in the following class named {class_name}. Your output file must start with ###Test START## and finish with ###Test END##. Here is the source code:
+{source_code}.

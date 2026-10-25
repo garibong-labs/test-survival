@@ -1,0 +1,5 @@
+recursive-include scripts *.py
+recursive-include docs *.md
+recursive-include examples *.yaml
+include docker/java/Dockerfile
+include docker/.env.example

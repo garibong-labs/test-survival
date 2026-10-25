@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "test-survival"
+version = "0.1.0"
+description = "Reproducible commit-survival and changed-line coverage experiments"
+requires-python = ">=3.12"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+survival = "test_survival.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+test_survival = ["experiment-template.yaml", "adapters/java/*.java", "adapters/java/*.json", "generators/parts/templates/*.txt", "dashboard/template/*.html", "report/*.java"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["evidence"]
