@@ -229,9 +229,12 @@ class JavaMavenAdapter:
             results.append(self.runner.execute(['javac','-J-Xmx'+self.config['runner']['jvm']['javac'],'-cp',cp,'-d',str(part),str(source)],self.folder(index),part/'javac.txt',self.config['runner']['timeouts']['compile']))
         return results
 
+    def run_fingerprint(self, methods, repeats=1):
+        return canonical_hash({'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
+                               'project':self.config['project'], 'survival':self.config['survival'], 'runner':self.config['runner'], 'repeats':repeats})
+
     def run_group(self,index,group,methods,phase='A',repeats=1):
-        fingerprint=canonical_hash({'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
-                                    'project':self.config['project'], 'survival':self.config['survival'], 'runner':self.config['runner'], 'repeats':repeats})
+        fingerprint=self.run_fingerprint(methods,repeats)
         provenance=self.provenance()
         folder='raw' if phase=='A' else 'raw-coverage' if phase=='B' else phase
         output=f'results/{folder}/{index}-{group}.json'

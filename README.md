@@ -224,7 +224,11 @@ Stop the recorded run:
 survival stop /absolute/path/to/target-fork/experiments/first-run
 ```
 
-Stop terminates the recorded process and its process group for detached runs. It marks the running stage failed with `stopped by user` and releases the run lock.
+Stop verifies the saved process identity and terminates the coordinator, its workers, and the run's Docker containers. It marks the running stage failed with `stopped by user` and permits resumption only after cleanup is confirmed.
+
+If cleanup fails, resumption stays blocked. Restore Docker access if needed and repeat the stop command to finish cleanup.
+
+A live run started by an older version may lack a saved process identity. Stop refuses to signal that PID because it cannot verify ownership.
 
 Only one process may run an experiment at a time. Resume with the same run command:
 

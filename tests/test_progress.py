@@ -91,11 +91,15 @@ def test_commit_progress_waits_for_all_groups_and_handles_failed_builds(tmp_path
     write_csv(tmp_path/'results/coverage-commits.csv', [{'index': i} for i in range(1, 4)], ['index'])
     write_json(tmp_path/'results/frozen-denominators.json', {'dev': [], 'o': []})
     for i in (1, 2, 3):
-        record(tmp_path/f'results/builds/{i}.json', {'build': 'fail' if i == 2 else 'ok'}, age=-100)
+        record(tmp_path/f'results/builds/{i}.json', {'build': 'fail' if i == 2 else 'ok', 'sha': str(i)}, age=-100)
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    adapter = JavaMavenAdapter(tmp_path, config)
+    write_json(tmp_path/'results/alive-entering.json', {str(i): {'dev': [], 'o': []} for i in (1, 2, 3)})
     for i, group in ((1, 'dev'), (1, 'o'), (3, 'dev')):
-        if stage == 'survive':
-            record(tmp_path/f'results/raw/{i}-{group}.json', {'status': 'evaluated'})
-        else:
+        folder = 'raw' if stage == 'survive' else 'raw-coverage'
+        record(tmp_path/f'results/{folder}/{i}-{group}.json', dict(status='evaluated', sha=str(i),
+               input_sha256=adapter.run_fingerprint([]), runner_sha256=adapter.provenance()))
+        if stage == 'cover':
             path = tmp_path/f'results/coverage/{i}-{group}-lines.csv'
             write_csv(path, [], ['file', 'line', 'covered'])
             os.utime(path, (AT.timestamp(), AT.timestamp()))
@@ -119,3 +123,67 @@ def test_fresh_experiment_has_unknown_totals_without_writes(tmp_path, config):
     for stage in ('prepare', 'survive', 'cover'):
         assert '0/?' in describe(tmp_path, stage, config, at=AT)
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize('stage', ['survive', 'cover'])
+@pytest.mark.parametrize('change', ['survival', 'source', 'methods', 'provenance', 'commit'])
+def test_invalidated_records_do_not_count_as_done(tmp_path, config, stage, change):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    state(tmp_path, stage)
+    adapter = JavaMavenAdapter(tmp_path, config)
+    (tmp_path/'T.java').write_text('class T {}')
+    methods = [{'id': 'one', 'file': 'T.java'}, {'id': 'two', 'file': 'T.java'}]
+    write_json(tmp_path/'results/frozen-denominators.json', {'dev': methods})
+    write_json(tmp_path/'results/alive-entering.json', {str(i): {'dev': ['one', 'two']} for i in (1, 2)})
+    for filename in ('commits.csv', 'coverage-commits.csv'):
+        write_csv(tmp_path/'results'/filename, [{'index': i} for i in (1, 2)], ['index'])
+    folder = 'raw' if stage == 'survive' else 'raw-coverage'
+    for i in (1, 2):
+        write_json(tmp_path/f'results/builds/{i}.json', {'build': 'ok', 'sha': str(i)})
+        record(tmp_path/f'results/{folder}/{i}-dev.json', dict(status='evaluated', sha=str(i),
+               input_sha256=adapter.run_fingerprint(methods), runner_sha256=adapter.provenance()), age=-100)
+        write_csv(tmp_path/f'results/coverage/{i}-dev-lines.csv', [], ['file', 'line', 'covered'])
+    assert '2/2' in describe(tmp_path, stage, config, at=AT)
+    if change == 'survival':
+        config['survival']['flaky_rerun'] += 1
+    elif change == 'source':
+        (tmp_path/'T.java').write_text('class T { void changed() {} }')
+    elif change == 'methods':
+        methods = methods[:1]
+        write_json(tmp_path/'results/frozen-denominators.json', {'dev': methods})
+    elif change == 'provenance':
+        for i in (1, 2):
+            from test_survival.io import read_json
+            path = tmp_path/f'results/{folder}/{i}-dev.json'
+            raw = read_json(path)
+            raw['runner_sha256'] = {'old': 'code'}
+            write_json(path, raw)
+    else:
+        for i in (1, 2):
+            write_json(tmp_path/f'results/builds/{i}.json', {'build': 'ok', 'sha': 'new'+str(i)})
+    assert '0/2' in describe(tmp_path, stage, config, at=AT)
+    # Only the first result is refreshed. The stale second result must not
+    # make the estimate jump to "now" after this first completion.
+    record(tmp_path/f'results/{folder}/1-dev.json', dict(status='evaluated', sha='new1' if change == 'commit' else '1',
+           input_sha256=adapter.run_fingerprint(methods), runner_sha256=adapter.provenance()))
+    text = describe(tmp_path, stage, config, at=AT)
+    assert '1/2' in text
+    assert 'estimated finish 2026-01-01T00:03:20+00:00' in text
+
+
+def test_coverage_progress_validates_alive_entering_methods(tmp_path, config):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    state(tmp_path, 'cover')
+    (tmp_path/'T.java').write_text('class T {}')
+    methods = [{'id': 'one', 'file': 'T.java'}]
+    adapter = JavaMavenAdapter(tmp_path, config)
+    write_json(tmp_path/'results/frozen-denominators.json', {'dev': methods})
+    write_json(tmp_path/'results/alive-entering.json', {'0': {'dev': []}})
+    write_json(tmp_path/'results/anchor.json', {'sha': 'anchor'})
+    write_csv(tmp_path/'results/coverage-commits.csv', [{'index': 0}], ['index'])
+    write_csv(tmp_path/'results/coverage/0-dev-lines.csv', [], ['file', 'line', 'covered'])
+    path = tmp_path/'results/raw-coverage/0-dev.json'
+    record(path, dict(status='evaluated', sha='anchor', input_sha256=adapter.run_fingerprint(methods), runner_sha256=adapter.provenance()))
+    assert '0/1 indices' in describe(tmp_path, 'cover', config, at=AT)
+    record(path, dict(status='evaluated', sha='anchor', input_sha256=adapter.run_fingerprint([]), runner_sha256=adapter.provenance()))
+    assert '1/1 indices' in describe(tmp_path, 'cover', config, at=AT)

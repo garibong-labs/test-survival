@@ -126,9 +126,10 @@ import os, sys, time
 from pathlib import Path
 from test_survival.io import now, write_json
 from test_survival.pipeline import run_lock
+from test_survival.lifecycle import process_identity
 exp = Path(sys.argv[1])
 with run_lock(exp):
-    write_json(exp/'state/run.json', dict(pid=os.getpid(), status='running', started=now()))
+    write_json(exp/'state/run.json', dict(pid=os.getpid(), identity=process_identity(os.getpid()), run_id='test-run', status='running', started=now()))
     write_json(exp/'state/scope.json', dict(status='running', started=now()))
     print('ready', flush=True)
     time.sleep(30)

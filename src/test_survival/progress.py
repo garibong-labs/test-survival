@@ -72,9 +72,17 @@ def items(exp, stage, config, state):
             total += len(paths) if manifest.get('stopped') else max(planned, len(paths))
         return completed, None if unknown else total, 'calls' if stage == 'generate' else 'files'
     if stage in ('survive', 'cover'):
+        from .adapters.java_maven import JavaMavenAdapter
+        from .rules.commits import skip_reason
+        adapter = JavaMavenAdapter(exp, config)
+        provenance = adapter.provenance()
         filename = 'commits.csv' if stage == 'survive' else 'coverage-commits.csv'
         rows = csv_rows(exp/'results'/filename)
-        groups = list(read_json(exp/'results/frozen-denominators.json', {}))
+        frozen = read_json(exp/'results/frozen-denominators.json', {})
+        groups = list(frozen)
+        alive = read_json(exp/'results/alive-entering.json', {})
+        changes = read_json(exp/'results/commit-paths.json', {})
+        fingerprints = {}
         if stage == 'survive':
             derived = {g['name'] for g in config['dev']['groups'] if g.get('derive_from')}
             groups = [g for g in groups if g not in derived]
@@ -84,9 +92,31 @@ def items(exp, stage, config, state):
             if build.get('build') == 'fail':
                 completed.append([])
                 continue
-            paths = [exp/f'results/raw/{index}-{g}.json' if stage == 'survive'
-                     else exp/f'results/coverage/{index}-{g}-lines.csv' for g in groups]
-            if paths and all(p.exists() for p in paths):
+            paths = []
+            commit = read_json(exp/'results/anchor.json', {}) if index == '0' else build
+            skipped = stage == 'survive' and index in changes and skip_reason(changes[index], config['project']['module'], config['range']['skip_untouched'])
+            for group in groups:
+                folder = 'raw' if stage == 'survive' else 'raw-coverage'
+                path = exp/f'results/{folder}/{index}-{group}.json'
+                raw = read_json(path, {})
+                if skipped:
+                    if raw.get('status') == 'skipped-untouched' and raw.get('sha') == commit.get('sha'):
+                        paths.append(path)
+                    continue
+                if stage == 'cover' and group not in alive.get(index, {}):
+                    continue
+                selected = set(alive[index][group]) if stage == 'cover' else None
+                methods = [m for m in frozen[group] if selected is None or m['id'] in selected]
+                key = (group, tuple(m['id'] for m in methods))
+                if key not in fingerprints:
+                    fingerprints[key] = adapter.run_fingerprint(methods)
+                valid = (raw.get('input_sha256') == fingerprints[key] and raw.get('runner_sha256') == provenance
+                         and bool(commit.get('sha')) and raw.get('sha') == commit['sha'])
+                if stage == 'cover':
+                    valid = valid and raw.get('status') == 'evaluated' and (exp/f'results/coverage/{index}-{group}-lines.csv').exists()
+                if valid:
+                    paths.append(path)
+            if groups and len(paths) == len(groups):
                 completed.append(paths)
         total = len(rows) if (exp/'results'/filename).exists() else None
         return completed, total, 'commits' if stage == 'survive' else 'indices'
