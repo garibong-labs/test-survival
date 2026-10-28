@@ -34,7 +34,6 @@ jobs:
     timeout-minutes: 15
     env:
       SURVIVAL_JAVA_TEST_IMAGE: survival-java-ci:fixture
-      SURVIVAL_JAVA_TEST_LIBS: ${{ runner.temp }}/survival-java-libs
       SURVIVAL_REQUIRE_JAVA_TESTS: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,6 +46,8 @@ jobs:
           cache-dependency-path: pyproject.toml
       - name: Install project and test dependencies
         run: python -m pip install -e '.[dev]'
+      - name: Set fixture library directory
+        run: echo "SURVIVAL_JAVA_TEST_LIBS=$RUNNER_TEMP/survival-java-libs" >> "$GITHUB_ENV"
       - name: Build pinned fixture image and verify Java/Python
         run: |
           docker info > /dev/null
