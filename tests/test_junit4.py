@@ -118,9 +118,25 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         assert len(raw['files'][0]['runs'])==3
         (tmp_path/'work/runtime/environment-attempts.txt').unlink()
         covered=adapter.method_coverage(row)
+        assert raw['whole_frozen_suite_compile']['cache']['status']=='miss'
+        assert covered['whole_frozen_suite_compile']['cache']['status']=='hit'
         assert covered['methods'][0]['state']=='pass'
         assert covered['methods'][0]['environment_reruns']==2
         assert not covered['methods'][0]['flaky']
+        coverage_base=tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind'
+        warm_lines=read_csv(coverage_base.with_name(coverage_base.name+'-lines.csv'))
+        # Container-owned outputs must be reset by the same owner on Linux.
+        reset=adapter.runner.execute(['python3','-c',
+            'import pathlib, shutil; shutil.rmtree("work/compile-cache"); '
+            'base="results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind"; '
+            '[pathlib.Path(base+suffix).unlink() for suffix in (".json", ".xml")]; '
+            'pathlib.Path("work/runtime/environment-attempts.txt").unlink()'],
+            tmp_path,tmp_path/'fixture-cache-reset.log',30)
+        assert reset['exit_code']==0
+        cold=adapter.method_coverage(row)
+        assert cold['whole_frozen_suite_compile']['cache']['status']=='miss'
+        assert cold['methods']==covered['methods']
+        assert read_csv(coverage_base.with_name(coverage_base.name+'-lines.csv'))==warm_lines
     assert (tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind.xml').exists()
     lines=read_csv(tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind-lines.csv')
     assert any(r['file']=='src/main/java/fixture/Production.java' and r['covered']=='yes' for r in lines)

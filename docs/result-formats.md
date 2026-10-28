@@ -100,6 +100,50 @@ When a KTester dataset exists, `work/ktester/<group>/experiment-result.json` rec
 
 Command records use `command`, `cwd`, `exit_code`, `timeout`, `seconds`, and `log`. Build records also include `classpath` and `input_sha256`. Method retry records additionally include `retry_state` and `retry_message`. Coverage raw records use phase `B` and add `coverage_report`. Empty test groups still receive coverage reports describing every executable production line with zero coverage.
 
+### Compilation reuse and execution history
+
+Group workers (survival, coverage, control, and per-method coverage) reuse **successful**
+compilations in `work/compile-cache/v1/`. Screening and import repair retain their existing
+paths. The key includes the commit, working directory, ordered explicit sources,
+sourcepath tree, ordered classpath contents (including production classes), JDK compiler
+contents/version, relevant environment digest, heap option, and timeout. File timestamps
+that affect javac source/class selection are included. Content hashes are memoized only
+inside a worker and invalidated on device/inode/size/mtime/ctime changes.
+
+Unsupported inputs (symlinks, implicit/wildcard classpaths, manifest `Class-Path`,
+annotation processors/compiler plugins, external JVM/compiler/library options, or an unverifiable JDK) bypass
+reuse and execute the original javac command. All compiler failures, timeouts, and
+process/environment errors are executed again. No negative cache or cross-commit failure
+propagation is implemented. A failed whole-suite compile still falls back to each file.
+An empty developer group skips compilation but still produces its coverage line universe.
+
+Each key has a cross-process lock. Complete artifacts are published by directory rename,
+verified by content hashes before reuse, and copied into the job's private classes tree;
+tests never receive the cache directory as their runtime classpath. Corrupt/incomplete
+entries are misses. The compiler module participates in the existing runner provenance
+hash, so older result records are readable but are not accepted as current measurements
+when a worker is requested with changed provenance. Existing stage skip rules remain.
+
+Compile command records add `cache`: `status` (`hit`, `miss`, or `bypass`), `event`,
+optional `key`/`origin_event`/`reason`, and `elapsed_seconds` (lookup, locking, hashing,
+compilation/restoration, and publication). On a hit, command `seconds` is **zero**, not
+the original compilation's duration. Test runs and method/denominator fields are unchanged.
+Whole-suite compile records are still referenced by multiple `files[].compile` fields:
+deduplicate by `cache.event` (or command/log for older records) when totaling costs.
+
+`results/compile-events/<unique-id>/` is independent of replaceable worker scratch and
+stage state. `started.json` stores context, command, and start time; `finished.json`
+stores finish time, `executed`, and the command result pointing to a durable `javac.txt`.
+`interrupted.json` records an exception when possible; a start without a finish can mean
+the process was killed. The first cacheable request in a worker also stores its JDK
+identity probe as `toolchain.json`/`toolchain.log`. These events count compile requests,
+not full-result cache hits: returning a cached group result does not start a worker or
+create new compile events. They do not reconstruct older overwritten stage histories.
+
+This cache does not claim an end-to-end speedup. It adds hashing, verification, copying,
+and ledger I/O; failed compilations remain uncached. Validate wall time on a future
+authorized run separately from reduced javac invocation counts.
+
 Native model-call directories contain `request.json` (model, temperature, max_tokens, messages), `raw-response.json`, `response.md`, `usage.json`, and `run.json`. The latter records `timestamp`, `latency`, `status`, `http_status`, `finish_reason`, `provider`, `model_requested`, `model_reported`, `request_id`, `usage`, `error_type`, `prompt_sha256`, and `response_sha256`. No authorization headers or credentials are saved.
 
 

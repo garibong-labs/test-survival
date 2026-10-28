@@ -25,10 +25,12 @@ RUNNER_JAR_BACKOFF_SECONDS = 60
 try:
     from ..rules.environment import matches as environment_matches
     from . import maven_dependencies
+    from .compilation import CompilationService
 except ImportError:  # This worker is also invoked directly inside the container.
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
     from rules.environment import matches as environment_matches
     from adapters import maven_dependencies
+    from adapters.compilation import CompilationService
 
 RUNNER_JAR_TRANSIENT_PATTERNS = maven_dependencies.TRANSIENT_PATTERNS
 
@@ -144,7 +146,7 @@ def jacoco_version(classes):
     return '0.8.12'
 
 
-def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,retry=True,precompiled=None,environment_retry=None):
+def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,retry=True,precompiled=None,environment_retry=None,compiler=None):
     folder,cp=classpath(index)
     part.mkdir(parents=True,exist_ok=True)
     classes=part/'classes';classes.mkdir(exist_ok=True)
@@ -152,6 +154,8 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
     sourcepath=EXP/'dev/src-test-t/java' if DEVELOPER else source.parent
     if precompiled is not None:
         classes,compile_run=precompiled
+    elif compiler is not None:
+        compile_run=compiler.compile([source],sourcepath,cp,classes,folder,part/'javac.txt',JVM['javac'],TIMEOUTS['compile'])
     else:
         compile_run=execute(['javac','-J-Xmx'+JVM['javac'],'-cp',cp,'-sourcepath',str(sourcepath),'-d',str(classes),str(source)],folder,part/'javac.txt',TIMEOUTS['compile'])
     record=dict(file=filename,compile=compile_run,runs=[],methods=[])
@@ -275,18 +279,19 @@ def run_group(job):
     by_file=collections.defaultdict(list)
     for row in rows:by_file[row['file']].append(row)
     files=[];suite_compile=None;precompiled=None
-    if DEVELOPER:
+    compiler=CompilationService(EXP,execute,{k:job[k] for k in ('index','sha','group','phase')})
+    if DEVELOPER and rows:
         folder,cp=classpath(index)
         suite_classes=work/'suite-classes';suite_classes.mkdir()
         sources=sorted((EXP/'dev/src-test-t/java').rglob('*.java'))
-        suite_compile=execute(['javac','-J-Xmx'+JVM['javac'],'-cp',cp,'-sourcepath',str(EXP/'dev/src-test-t/java'),'-d',str(suite_classes),*[str(p) for p in sources]],folder,work/'suite-javac.txt',TIMEOUTS['compile'])
+        suite_compile=compiler.compile(sources,EXP/'dev/src-test-t/java',cp,suite_classes,folder,work/'suite-javac.txt',JVM['javac'],TIMEOUTS['compile'])
         suite_compile['source_count']=len(sources)
         suite_compile['diagnostics']=(work/'suite-javac.txt').read_text(errors='replace')
         if suite_compile['exit_code']==0:precompiled=(suite_classes,suite_compile)
     for number,(filename,members) in enumerate(sorted(by_file.items())):
         files.append(run_file(index,group,filename,members,work/str(number),execfile if coverage else None,
                               repetitions=job.get('repeats',1),retry=job.get('retry',phase in ['A','B']),precompiled=precompiled,
-                              environment_retry=job.get('environment_retry')))
+                              environment_retry=job.get('environment_retry'),compiler=compiler))
     result=dict(index=index,sha=job['sha'],group=group,phase=phase,status='evaluated',input_sha256=job['input_sha256'],
                 runner_sha256=job['runner_sha256'],files=files,methods=[m for f in files for m in f['methods']],requested_ids=[r['id'] for r in rows])
     if suite_compile is not None:result['whole_frozen_suite_compile']=suite_compile
