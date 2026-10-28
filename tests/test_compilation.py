@@ -15,7 +15,9 @@ from test_survival.adapters.compilation import CompilationService
 
 @pytest.fixture
 def compilation(tmp_path, monkeypatch):
-    for name in ('JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'JDK_JAVAC_OPTIONS'):
+    # Synthetic compiler inputs must not inherit the host Python/JVM loader setup.
+    for name in ('JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'JDK_JAVAC_OPTIONS',
+                 'LD_LIBRARY_PATH', 'LD_PRELOAD', 'DYLD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES'):
         monkeypatch.delenv(name, raising=False)
     sourcepath = tmp_path/'sources'
     sourcepath.mkdir()

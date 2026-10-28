@@ -123,6 +123,17 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         assert covered['methods'][0]['state']=='pass'
         assert covered['methods'][0]['environment_reruns']==2
         assert not covered['methods'][0]['flaky']
+        coverage_base=tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind'
+        warm_lines=read_csv(coverage_base.with_name(coverage_base.name+'-lines.csv'))
+        # Force a fresh method result and compilation within this temporary fixture only.
+        shutil.rmtree(tmp_path/'work/compile-cache')
+        coverage_base.with_name(coverage_base.name+'.json').unlink()
+        coverage_base.with_name(coverage_base.name+'.xml').unlink()
+        (tmp_path/'work/runtime/environment-attempts.txt').unlink()
+        cold=adapter.method_coverage(row)
+        assert cold['whole_frozen_suite_compile']['cache']['status']=='miss'
+        assert cold['methods']==covered['methods']
+        assert read_csv(coverage_base.with_name(coverage_base.name+'-lines.csv'))==warm_lines
     assert (tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind.xml').exists()
     lines=read_csv(tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind-lines.csv')
     assert any(r['file']=='src/main/java/fixture/Production.java' and r['covered']=='yes' for r in lines)

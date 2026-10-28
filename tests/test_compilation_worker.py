@@ -10,7 +10,8 @@ from test_survival.adapters.compilation import CompilationService
 
 @pytest.fixture
 def group_worker(tmp_path, monkeypatch):
-    for name in ('JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'JDK_JAVAC_OPTIONS'):
+    for name in ('JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS', 'JDK_JAVAC_OPTIONS',
+                 'LD_LIBRARY_PATH', 'LD_PRELOAD', 'DYLD_LIBRARY_PATH', 'DYLD_INSERT_LIBRARIES'):
         monkeypatch.delenv(name, raising=False)
     sources = tmp_path/'dev/src-test-t/java'
     sources.mkdir(parents=True)
