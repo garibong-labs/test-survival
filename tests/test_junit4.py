@@ -105,6 +105,8 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path):
         assert len(raw['files'][0]['runs'])==3
         (tmp_path/'work/runtime/environment-attempts.txt').unlink()
         covered=adapter.method_coverage(row)
+        assert raw['whole_frozen_suite_compile']['cache']['status']=='miss'
+        assert covered['whole_frozen_suite_compile']['cache']['status']=='hit'
         assert covered['methods'][0]['state']=='pass'
         assert covered['methods'][0]['environment_reruns']==2
         assert not covered['methods'][0]['flaky']
