@@ -1,3 +1,4 @@
+from fnmatch import fnmatchcase
 import hashlib
 import importlib.util
 import io
@@ -69,6 +70,20 @@ def test_required_java_environment_fails_instead_of_skipping(monkeypatch):
     monkeypatch.setenv('SURVIVAL_REQUIRE_JAVA_TESTS', '1')
     with pytest.raises(pytest.fail.Exception, match='SURVIVAL_JAVA_TEST_IMAGE'):
         java_environment.__wrapped__()
+
+
+@pytest.mark.parametrize('event', ['pull_request', 'push'])
+@pytest.mark.parametrize('changed_file, selected', [
+    ('.github/workflows/python-tests.yml', True),
+    ('.github/workflows/future-check.yaml', True),
+    ('docs/result-formats.md', False),
+])
+def test_java_ci_selects_workflow_only_changes(event, changed_file, selected):
+    workflow = yaml.load((ROOT/'.github/workflows/java-integration.yml').read_text(), Loader=yaml.BaseLoader)
+    # These positive literal/prefix globs use the same matching subset as Actions.
+    paths = workflow['on'][event]['paths']
+    assert all(not pattern.startswith('!') for pattern in paths)
+    assert any(fnmatchcase(changed_file, pattern) for pattern in paths) == selected
 
 
 def test_ci_permissions_triggers_and_pins():

@@ -8,7 +8,7 @@ on:
       - 'ci/**'
       - 'docker/**'
       - 'pyproject.toml'
-      - '.github/workflows/java-integration.yml'
+      - '.github/workflows/**'
   push:
     branches: [main]
     paths:
@@ -17,7 +17,7 @@ on:
       - 'ci/**'
       - 'docker/**'
       - 'pyproject.toml'
-      - '.github/workflows/java-integration.yml'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
