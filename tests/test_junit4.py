@@ -6,7 +6,7 @@ import subprocess
 import pytest
 
 from test_survival.adapters.java_maven import JavaMavenAdapter
-from test_survival.adapters.java_worker import parse_reports
+from test_survival.adapters.java_worker import parse_reports,runner_test_jars
 from test_survival.config import validate
 from test_survival.io import write_json
 
@@ -45,14 +45,26 @@ def test_setup_receives_project_framework_without_changing_generated_test_detect
     assert jobs[-1]['test_framework'] == 'auto'
 
 
-def test_junit4_inventory_selectors_and_vintage_launcher(tmp_path):
+@pytest.fixture
+def java_environment():
     image=os.environ.get('SURVIVAL_JAVA_TEST_IMAGE');libs=os.environ.get('SURVIVAL_JAVA_TEST_LIBS')
-    if not image or not libs:pytest.skip('Set SURVIVAL_JAVA_TEST_IMAGE and SURVIVAL_JAVA_TEST_LIBS for the container fixture')
+    if not image or not libs:
+        message='Set SURVIVAL_JAVA_TEST_IMAGE and SURVIVAL_JAVA_TEST_LIBS for the container fixture'
+        if os.environ.get('SURVIVAL_REQUIRE_JAVA_TESTS')=='1':pytest.fail(message)
+        pytest.skip(message)
+    if not Path(libs).is_dir() or not list(Path(libs).glob('*.jar')):
+        pytest.fail('Fixture library directory is missing or empty')
+    return image,libs
+
+
+@pytest.mark.java_integration
+def test_junit4_inventory_selectors_and_vintage_launcher(tmp_path,java_environment):
+    image,libs=java_environment
     root=Path(__file__).parents[1]
     script=r'''
-import pathlib,subprocess,json
+import pathlib,subprocess,json,sys
 sources=sorted(str(p) for p in pathlib.Path('/fixture').glob('*.java'))
-cp=':'.join(str(p) for p in pathlib.Path('/libs').glob('*.jar'))
+cp=':'.join('/libs/'+name for name in json.loads(sys.argv[1]))
 pathlib.Path('/out/classes').mkdir()
 subprocess.run(['javac','-cp',cp,'-d','/out/classes',*sources],check=True)
 runtime='/out/classes:'+cp
@@ -65,7 +77,8 @@ args=[arg for selector in selectors for arg in ['--select-method',selector]]
 run=subprocess.run(['java','-cp',runtime,'org.junit.platform.console.ConsoleLauncher','--disable-banner','--include-engine','junit-vintage',*args,'--reports-dir','/out/reports'],capture_output=True,text=True)
 print(json.dumps({'inventory':inventory,'selectors':selectors,'exit_code':run.returncode,'output':run.stdout+run.stderr}))
 '''
-    command=['docker','run','--rm','-v',str(root/'tests/fixtures/junit4')+':/fixture:ro','-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro','-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script]
+    jars=runner_test_jars(json.loads((root/'src/test_survival/adapters/java/classpath-artifacts.json').read_text()))
+    command=['docker','run','--rm','--network','none','-v',str(root/'tests/fixtures/junit4')+':/fixture:ro','-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro','-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script,json.dumps(jars)]
     result=json.loads(subprocess.check_output(command,text=True,timeout=120))
     assert result['exit_code']==0,result['output']
     tests=[line.split('\t')[1:4] for line in result['inventory'].splitlines() if line.startswith('M\t') and line.split('\t')[3]]
@@ -76,11 +89,11 @@ print(json.dumps({'inventory':inventory,'selectors':selectors,'exit_code':run.re
     assert all(r['state']=='pass' for rows in observations.values() for r in rows)
 
 
-def test_real_worker_environment_retries_and_single_method_coverage(tmp_path):
+@pytest.mark.java_integration
+def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,java_environment):
     import shutil
     from test_survival.io import read_json,read_csv
-    image=os.environ.get('SURVIVAL_JAVA_TEST_IMAGE');libs=os.environ.get('SURVIVAL_JAVA_TEST_LIBS')
-    if not image or not libs:pytest.skip('Set container fixture image and libraries')
+    image,libs=java_environment
     config=validate({'name':'fixture','project':{'repo':str(tmp_path),'test_framework':'junit4'},'anchor':'t',
                      'survival':{'environment_errors':{'patterns':['java.net.BindException'],'backoff_seconds':0}},
                      'runner':{'docker':{'image':image,'mounts':{str(tmp_path):'/experiment',str(Path(libs).resolve()):'/experiment/work/libs'}}}})
