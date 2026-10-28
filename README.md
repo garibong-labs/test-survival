@@ -152,6 +152,11 @@ runner:
       /absolute/path/to/target-fork: /repo
 ```
 
+Compilation uses a separate `javac` process by default. With a JDK 25 runner,
+`runner.javac_mode: reused-jvm` opts into sequential compiler JVM reuse within each
+test group. JUnit still runs separately. See [compiler JVM reuse](docs/compiler-jvm.md)
+for compatibility, fallback behavior, resource limits and result observations.
+
 Run preparation and scope selection before making model calls:
 
 ```sh

@@ -13,6 +13,9 @@ MANIFEST = Path(__file__).resolve().parents[1]/'src/test_survival/adapters/java/
 FIXTURES = {
     'test_junit4_inventory_selectors_and_vintage_launcher',
     'test_real_worker_environment_retries_and_single_method_coverage',
+    'test_real_compiler_session_equivalence',
+    'test_real_group_reuse_preserves_retry_and_coverage',
+    'test_real_parallel_compiler_sessions_are_bounded_and_isolated',
 }
 
 
@@ -52,10 +55,10 @@ def prepare_libraries(destination, records=None):
 def verify_report(path):
     cases = list(ET.parse(path).getroot().iter('testcase'))
     if len(cases) != len(FIXTURES) or {case.get('name') for case in cases} != FIXTURES:
-        raise ValueError('Expected both real Java fixtures in the report')
+        raise ValueError('Expected all real Java fixtures in the report')
     if any(case.find(kind) is not None for case in cases for kind in ('skipped', 'failure', 'error')):
         raise ValueError('Real Java fixtures must pass without skips, failures, or errors')
-    print('Both real Java fixtures passed; zero skips, failures, or errors')
+    print('All real Java fixtures passed; zero skips, failures, or errors')
 
 
 def main():

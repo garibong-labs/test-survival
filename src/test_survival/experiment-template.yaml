@@ -76,6 +76,7 @@ coverage:
   groups: alive-entering        # only value
 
 runner:
+  javac_mode: subprocess        # subprocess | reused-jvm (opt-in JDK 25; see docs/compiler-jvm.md)
   docker:
     compose_files: []           # list of compose files, run via `docker compose -f ... run --rm <service>`
     service: ktester

@@ -38,11 +38,12 @@ def save(path, value):
 
 
 class CompilationService:
-    def __init__(self, experiment, execute, context):
+    def __init__(self, experiment, execute, context, backend='subprocess'):
         self.exp, self.execute, self.context = Path(experiment), execute, context
         self.root = self.exp/'work/compile-cache/v1'
         self.hashes = {}
         self.toolchain = None
+        self.backend = backend
 
     def file_hash(self, path):
         if path.is_symlink():
@@ -126,7 +127,7 @@ class CompilationService:
             'JAVA_HOME', 'JAVA_TOOL_OPTIONS', '_JAVA_OPTIONS', 'JDK_JAVA_OPTIONS',
             'JDK_JAVAC_OPTIONS', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'SOURCE_DATE_EPOCH')}
         return {
-            'schema': 1, 'commit': self.context['sha'], 'cwd': str(cwd),
+            'schema': 1, 'commit': self.context['sha'], 'cwd': str(cwd), 'backend': self.backend,
             'implementation_sha256': self.file_hash(Path(__file__).resolve()),
             'compiler': self.compiler_identity(cwd, event, timeout),
             'environment_sha256': digest(environment), 'heap': heap, 'timeout': timeout,

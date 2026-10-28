@@ -15,13 +15,16 @@ version and SHA-256. Downloads go only to Maven Central and mismatches fail the 
 
 The fixtures compile tiny checked-in Java tests, exercise JUnit 4 inventory/selectors,
 run the actual worker's environment retry policy, and produce JaCoCo XML/line coverage.
-They do not run ta4j, Maven project builds, or any model calls. The CI-only branch does
-not depend on compilation-cache APIs added in other pull requests.
+They also compare compiler backends, processor activation, timeout/crash recovery,
+suite-to-file fallback and cache/coverage equivalence. Three independent compiler
+sessions execute 66 requests each, cross the 64-request recycling boundary, compare
+diagnostics/class bytes, and check RSS/file-descriptor bounds under a 180-second cap.
+They do not run ta4j, Maven project builds, or any model calls.
 
 Missing image/library variables fail when `SURVIVAL_REQUIRE_JAVA_TESTS=1`; an absent
-or empty library directory always fails. The final JUnit XML check requires both named
+or empty library directory always fails. The final JUnit XML check requires all five named
 fixtures to pass with no skips/errors/failures, so missing prerequisites cannot produce
-a green integration job. Fast tests deselect these two marked tests explicitly.
+a green integration job. Fast tests deselect the marked Java tests explicitly.
 
 Both workflows use read-only repository permissions, disable persisted checkout
 credentials, cancel superseded runs, and set timeouts (10/15 minutes). They never use
@@ -38,7 +41,7 @@ python ci/java_fixture.py libraries /tmp/survival-java-libs
 SURVIVAL_JAVA_TEST_IMAGE=survival-java-ci:fixture \
 SURVIVAL_JAVA_TEST_LIBS=/tmp/survival-java-libs \
 SURVIVAL_REQUIRE_JAVA_TESTS=1 \
-python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py --junitxml=java-results.xml
+python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py --junitxml=java-results.xml
 python ci/java_fixture.py report java-results.xml
 ```
 

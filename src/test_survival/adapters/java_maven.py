@@ -202,12 +202,14 @@ class JavaMavenAdapter:
 
     def provenance(self):
         paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).with_name('compilation.py'), Path(__file__).with_name('maven_dependencies.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py', Path(__file__).parents[1]/'rules/environment.py']
+        paths.append(Path(__file__).with_name('compiler_session.py'))
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
     def worker(self, job):
         developer=job.get('group') in {g['name'] for g in self.config['dev']['groups']}
         framework = self.config['project']['test_framework'] if job.get('action') == 'setup' else self.test_framework() if developer else 'auto'
         job.update(experiment=self.runner.path(self.exp), module=self.config['project']['module'],
+                   javac_mode=self.config['runner']['javac_mode'],
                    test_framework=framework, developer=developer, environment_errors=self.config['survival']['environment_errors'], jvm=self.config['runner']['jvm'], timeouts=self.config['runner']['timeouts'], flaky_rerun=self.config['survival']['flaky_rerun'])
         path = self.exp/job.get('work','work/runner-setup')/'job.json'
         # The worker clears its work directory; keep its input outside that directory.

@@ -220,6 +220,7 @@ SCHEMA = {
                  'groups': enum('alive-entering', 'alive-entering')},
     'runner': {
         'docker': DOCKER,
+        'javac_mode': enum('subprocess', 'subprocess', 'reused-jvm'),
         'reuse': {'checkouts': Field(str, None, nullable=True), 'classpath_cache': Field(str, None, nullable=True)},
         'workers': {key: integer(4) for key in ('build', 'survive', 'cover')},
         'timeouts': {'build': integer(600), 'compile': integer(300), 'test_class': integer(120)},
@@ -468,6 +469,8 @@ def range_fingerprint(config):
 def runner_inputs(runner):
     """The same result-affecting runner view for stage and evidence caches."""
     data = {k: v for k, v in runner.items() if k not in ('workers', 'reuse')}
+    if data.get('javac_mode') == 'subprocess':
+        data.pop('javac_mode')  # Keep old result fingerprints for the unchanged default.
     if 'docker' in data:
         data['docker'] = {k: v for k, v in data['docker'].items() if k not in ('mounts', 'env_file')}
         if not data['docker']:

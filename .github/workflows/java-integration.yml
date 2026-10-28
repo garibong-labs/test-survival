@@ -57,7 +57,7 @@ jobs:
       - name: Download and verify pinned fixture libraries
         run: python ci/java_fixture.py libraries "$SURVIVAL_JAVA_TEST_LIBS"
       - name: Run real Java fixtures
-        run: python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py --junitxml=java-results.xml
-      - name: Require both fixtures to pass without skips
+        run: python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py --junitxml=java-results.xml
+      - name: Require all fixtures to pass without skips
         if: ${{ !cancelled() }}
         run: python ci/java_fixture.py report java-results.xml
