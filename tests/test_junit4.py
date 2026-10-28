@@ -125,11 +125,14 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         assert not covered['methods'][0]['flaky']
         coverage_base=tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind'
         warm_lines=read_csv(coverage_base.with_name(coverage_base.name+'-lines.csv'))
-        # Force a fresh method result and compilation within this temporary fixture only.
-        shutil.rmtree(tmp_path/'work/compile-cache')
-        coverage_base.with_name(coverage_base.name+'.json').unlink()
-        coverage_base.with_name(coverage_base.name+'.xml').unlink()
-        (tmp_path/'work/runtime/environment-attempts.txt').unlink()
+        # Container-owned outputs must be reset by the same owner on Linux.
+        reset=adapter.runner.execute(['python3','-c',
+            'import pathlib, shutil; shutil.rmtree("work/compile-cache"); '
+            'base="results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind"; '
+            '[pathlib.Path(base+suffix).unlink() for suffix in (".json", ".xml")]; '
+            'pathlib.Path("work/runtime/environment-attempts.txt").unlink()'],
+            tmp_path,tmp_path/'fixture-cache-reset.log',30)
+        assert reset['exit_code']==0
         cold=adapter.method_coverage(row)
         assert cold['whole_frozen_suite_compile']['cache']['status']=='miss'
         assert cold['methods']==covered['methods']
