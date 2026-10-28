@@ -24,3 +24,4 @@ test_survival = ["experiment-template.yaml", "adapters/java/*.java", "adapters/j
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["evidence"]
+markers = ["java_integration: real Docker/JDK fixture tests (no experiments or model calls)"]

@@ -1,0 +1,63 @@
+name: Java integration
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'ci/**'
+      - 'docker/**'
+      - 'pyproject.toml'
+      - '.github/workflows/**'
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'ci/**'
+      - 'docker/**'
+      - 'pyproject.toml'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  java:
+    name: Java 25 fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      SURVIVAL_JAVA_TEST_IMAGE: survival-java-ci:fixture
+      SURVIVAL_REQUIRE_JAVA_TESTS: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install project and test dependencies
+        run: python -m pip install -e '.[dev]'
+      - name: Set fixture library directory
+        run: echo "SURVIVAL_JAVA_TEST_LIBS=$RUNNER_TEMP/survival-java-libs" >> "$GITHUB_ENV"
+      - name: Build pinned fixture image and verify Java/Python
+        run: |
+          docker info > /dev/null
+          docker build --platform linux/amd64 -f ci/java.Dockerfile -t "$SURVIVAL_JAVA_TEST_IMAGE" ci
+          docker run --rm --network none "$SURVIVAL_JAVA_TEST_IMAGE" java -version
+          docker run --rm --network none "$SURVIVAL_JAVA_TEST_IMAGE" python3 --version
+      - name: Download and verify pinned fixture libraries
+        run: python ci/java_fixture.py libraries "$SURVIVAL_JAVA_TEST_LIBS"
+      - name: Run real Java fixtures
+        run: python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py --junitxml=java-results.xml
+      - name: Require both fixtures to pass without skips
+        if: ${{ !cancelled() }}
+        run: python ci/java_fixture.py report java-results.xml
