@@ -11,7 +11,8 @@ from uuid import uuid4
 
 from .config import STAGES, stage_hash, legacy_stage_hash
 from .io import atomic_text, now, read_json, write_json
-from .progress import describe
+from .progress import describe, description
+from .display import load_display_settings
 from .lifecycle import process_identity, freeze_workers, terminate_workers, cleanup_containers
 
 
@@ -19,14 +20,19 @@ class PipelineError(RuntimeError):
     pass
 
 
-def log(exp, message, config=None):
-    from .panel import OUTPUT_LOCK, notify
+def log(exp, message, config=None, *, display=None):
+    from .panel import OUTPUT_LOCK, notify, active_display
+    display = display or active_display(exp) or load_display_settings()
+    stamp = now()
+    saved_message = shown_message = message
     stage = message.partition(':')[0]
     if config is not None and stage in STAGES:
-        message += ' | ' + describe(exp, stage, config)
-    line = f'{now()} {message}'
+        progress = description(exp, stage, config)
+        saved_message += ' | ' + progress.render()
+        shown_message += ' | ' + progress.render(display)
+    line = f'{stamp} {saved_message}'
     with OUTPUT_LOCK:
-        print(line, flush=True)
+        print(f'{display.timestamp(stamp)} {shown_message}', flush=True)
         path = Path(exp) / 'state/log.txt'
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open('a') as stream:
@@ -79,7 +85,8 @@ def invalidate(exp, start):
             write_json(path, record)
 
 
-def stop(exp):
+def stop(exp, *, display=None):
+    display = display or load_display_settings()
     exp = Path(exp).resolve()
     if not (exp/'state/run.json').exists():
         raise PipelineError('No running experiment recorded in state/run.json')
@@ -96,10 +103,10 @@ def stop(exp):
                 idle = True
             except BlockingIOError:
                 idle = False
-            return _stop(exp, idle=idle)
+            return _stop(exp, idle=idle, display=display)
 
 
-def _stop(exp, *, idle):
+def _stop(exp, *, idle, display):
     run_path = exp/'state/run.json'
     record = read_json(run_path, {})
     pending_path = exp/'state/stopping.json'
@@ -142,7 +149,7 @@ def _stop(exp, *, idle):
             current.update(status='failed', finished=finished, notes='stopped by user')
             write_json(run_path, current)
             pending_path.unlink()
-            log(exp, f'stopped process {pid}: stopped by user')
+            log(exp, f'stopped process {pid}: stopped by user', display=display)
     except Exception as exc:
         raise PipelineError(f'Stop cleanup incomplete; resume blocked. Retry survival stop: {exc}') from exc
     return pid
@@ -152,11 +159,12 @@ def default_handler(stage):
     return importlib.import_module(f'test_survival.stages.{stage}').run
 
 
-def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False):
+def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False, display=None):
+    display = display or load_display_settings()
     exp = Path(exp).resolve()
     if not locked:
         with run_lock(exp):
-            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel)
+            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel, display=display)
     if stage and until:
         raise PipelineError('--stage and --until are mutually exclusive')
     if group and stage != 'generate':
@@ -175,7 +183,7 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
             if previous.get('status') != 'completed' or previous.get('config_hash') != stage_hash(config, earlier):
                 raise PipelineError(f'{stage} requires completed, current stage {earlier}')
     from .panel import LiveProgress
-    with LiveProgress(exp, config, disabled=no_panel):
+    with LiveProgress(exp, config, disabled=no_panel, display=display):
         return _run(exp, config, selected=selected, force=force, group=group, handlers=handlers)
 
 
@@ -271,7 +279,8 @@ def background(exp, *, until=None, stage=None, force=False, group=None):
         return child.pid, path
 
 
-def status(exp, config):
+def status(exp, config, *, display=None):
+    display = display or load_display_settings()
     exp = Path(exp)
     rows = []
     for stage in STAGES:
@@ -279,7 +288,7 @@ def status(exp, config):
         label = state.get('status', 'pending')
         if label == 'completed' and state.get('config_hash') != stage_hash(config, stage):
             label = 'stale'
-        rows.append(f'{stage:10} {label} | {describe(exp, stage, config)}')
+        rows.append(f'{stage:10} {label} | {describe(exp, stage, config, display=display)}')
     active = read_json(exp / 'state/run.json', {})
     bg = read_json(exp / 'state/background.json', {})
     if active.get('status') == 'running':
@@ -299,7 +308,7 @@ def status(exp, config):
     if path.exists():
         lines = path.read_text().splitlines()
         if lines:
-            rows.append('Last log: ' + lines[-1])
+            rows.append('Last log: ' + display.log_line(lines[-1]))
     return '\n'.join(rows)
 
 

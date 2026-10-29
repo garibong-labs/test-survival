@@ -1,8 +1,10 @@
 """Read-only stage progress from existing state and evidence records."""
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
 from pathlib import Path
 
 from .config import range_fingerprint
+from .display import UTC_DISPLAY
 from .io import read_csv, read_json
 
 
@@ -160,7 +162,16 @@ def items(exp, stage, config, state):
     return ([[]] if state.get('status') == 'completed' else []), 1, 'items'
 
 
-def describe(exp, stage, config, *, at=None):
+@dataclass(frozen=True)
+class Description:
+    prefix: str
+    eta: str
+
+    def render(self, display=UTC_DISPLAY):
+        return self.prefix + display.timestamp(self.eta, timespec='seconds')
+
+
+def description(exp, stage, config, *, at=None):
     exp = Path(exp)
     state = read_json(exp/'state'/f'{stage}.json', {})
     at = at or datetime.now(timezone.utc)
@@ -183,7 +194,11 @@ def describe(exp, stage, config, *, at=None):
         eta = (at+timedelta(seconds=elapsed*max(0, total-done)/fresh)).isoformat(timespec='seconds')
     hours, remainder = divmod(int(elapsed), 3600)
     minutes, seconds = divmod(remainder, 60)
-    return f'elapsed {hours:02}:{minutes:02}:{seconds:02}; {done}/{total if total is not None else "?"} {unit}; estimated finish {eta}'
+    return Description(f'elapsed {hours:02}:{minutes:02}:{seconds:02}; {done}/{total if total is not None else "?"} {unit}; estimated finish ', eta)
+
+
+def describe(exp, stage, config, *, at=None, display=UTC_DISPLAY):
+    return description(exp, stage, config, at=at).render(display)
 
 
 UNITS = dict(prepare='builds', scope='items', generate='methods', screen='files',

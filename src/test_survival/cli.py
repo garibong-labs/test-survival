@@ -8,6 +8,7 @@ import sys
 from .config import ConfigError, STAGES, load
 from .io import read_json
 from .pipeline import PipelineError, background, run, run_lock, status, stop
+from .display import DisplayConfigError, UTC_DISPLAY, load_display_settings
 
 
 def parser():
@@ -50,6 +51,9 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        # The background child writes stdout into state/background.log, a UTC record.
+        display = (UTC_DISPLAY if args.command == 'run' and args.lock_fd is not None
+                   else load_display_settings())
         if args.command == 'init':
             if (args.language, args.build) != ('java', 'maven'):
                 raise ConfigError('project.language/project.build: not implemented in this version of the tool; implemented: java/maven')
@@ -63,9 +67,9 @@ def main(argv=None):
             build(args.experiments, args.out)
         elif args.command == 'import':
             from .importer import import_experiment
-            import_experiment(args.exp_dir, args.source, args.what)
+            import_experiment(args.exp_dir, args.source, args.what, display=display)
         elif args.command == 'stop':
-            stop(args.exp_dir)
+            stop(args.exp_dir, display=display)
         else:
             config = load(args.exp_dir)
             if args.command == 'rehash':
@@ -74,9 +78,9 @@ def main(argv=None):
             elif args.command == 'status':
                 if args.watch:
                     from .panel import watch
-                    watch(args.exp_dir, config, no_panel=args.no_panel)
+                    watch(args.exp_dir, config, no_panel=args.no_panel, display=display)
                 else:
-                    print(status(args.exp_dir, config))
+                    print(status(args.exp_dir, config, display=display))
             elif args.command == 'show':
                 from .summary import show
                 print(show(args.exp_dir, args.stage))
@@ -92,11 +96,11 @@ def main(argv=None):
                         if ready != b'1':
                             raise PipelineError('Background startup was interrupted')
                     with run_lock(args.exp_dir, args.lock_fd):
-                        run(args.exp_dir, config, locked=True, no_panel=args.no_panel, **options)
+                        run(args.exp_dir, config, locked=True, no_panel=args.no_panel, display=display, **options)
                 else:
-                    run(args.exp_dir, config, no_panel=args.no_panel, **options)
+                    run(args.exp_dir, config, no_panel=args.no_panel, display=display, **options)
         return 0
-    except (ConfigError, PipelineError, FileExistsError, FileNotFoundError) as exc:
+    except (ConfigError, DisplayConfigError, PipelineError, FileExistsError, FileNotFoundError) as exc:
         print(f'survival: {exc}', file=sys.stderr)
         return 2
     except KeyboardInterrupt:

@@ -124,6 +124,31 @@ def test_reuses_matching_dev_groups_and_reports_their_source(experiments):
     assert original == {str(p.relative_to(source)): file_hash(p) for p in source.rglob('*') if p.is_file()}
 
 
+def test_cli_dev_results_import_keeps_startup_display_after_writing(experiments, tmp_path, monkeypatch, capsys):
+    from test_survival.cli import main
+    import test_survival.dev_results as dev_results
+    source, target, _ = experiments
+    settings = tmp_path/'settings/test-survival/config.toml'
+    settings.parent.mkdir(parents=True)
+    settings.write_text('[display]\ntimezone = "Asia/Seoul"')
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(settings.parent.parent))
+    original = {str(p.relative_to(source)): file_hash(p) for p in source.rglob('*') if p.is_file()}
+    import_results = dev_results.import_results
+    def import_then_edit_settings(*args):
+        result = import_results(*args)
+        settings.write_text('invalid TOML !')
+        return result
+    monkeypatch.setattr(dev_results, 'import_results', import_then_edit_settings)
+    capsys.readouterr()
+    assert main(['import', str(target), '--from', str(source), '--what', 'dev-results']) == 0
+    output = capsys.readouterr().out
+    assert 'import dev-results:' in output and output.split(' ', 1)[0].endswith('+09:00')
+    assert (target/'state/log.txt').read_text().splitlines()[-1].split(' ', 1)[0].endswith('+00:00')
+    provenance = read_json(target/'state/import.json')['dev-results']
+    assert all(file_hash(target/path) == digest for path, digest in provenance['files'].items())
+    assert original == {str(p.relative_to(source)): file_hash(p) for p in source.rglob('*') if p.is_file()}
+
+
 @pytest.mark.parametrize('change, message', [('repo', 'project repo'), ('anchor', 'anchor sha'),
     ('commits', 'commit sha sequence'), ('skip', 'skip_untouched'), ('tree', 'tree hash'), ('rename', 'tree hash')])
 def test_refuses_incompatible_experiments_before_copying(experiments, change, message):
