@@ -30,8 +30,9 @@ variable. Changing the process-wide `TZ` is unnecessary and does not control thi
 display preference.
 
 Settings are read once at command startup and shared with the run's logging and
-progress threads. Editing the file affects the next command, including a new
-`status --watch`, and does not change an already-running command. Do not restart
+progress threads, including all import log messages. Editing the file affects
+the next command, including a new `status --watch`, and does not change an
+already-running command. Do not restart
 an experiment just to change its display: a new watcher can show its existing
 UTC evidence in the desired zone. Already-running older tool versions retain
 their old output behavior.
@@ -56,6 +57,9 @@ UTC remains canonical for internal arithmetic, `state/*.json`, `state/log.txt`,
 compiler events and experiment results. Elapsed/remaining durations are unchanged.
 The same progress calculation produces both the localized console line and the
 UTC saved line, so logging does not scan experiment evidence twice.
+The `Last log:` row in status/watch converts the saved line's timestamp and
+structured progress ETA for display only. Other message text is preserved;
+unstructured or incomplete legacy lines remain readable without changing the file.
 
 `survival run --background` redirects its child stdout to `state/background.log`.
 That internal child deliberately uses UTC and does not load display settings;

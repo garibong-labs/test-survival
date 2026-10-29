@@ -3,8 +3,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, tzinfo
 import os
 from pathlib import Path
+import re
 import tomllib
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+_PROGRESS_ETA = re.compile(
+    r' \| elapsed \d+:\d{2}:\d{2}; \d+/(?:\d+|\?) \w+; estimated finish (?P<eta>\S+)$'
+)
 
 
 class DisplayConfigError(ValueError):
@@ -22,6 +28,25 @@ class DisplaySettings:
         if instant.tzinfo is None:
             raise ValueError('Display timestamps must include a UTC offset')
         return instant.astimezone(self.timezone).isoformat(timespec=timespec)
+
+    def log_line(self, line):
+        """Render a saved log line without modifying evidence or arbitrary message dates."""
+        stamp, separator, message = line.partition(' ')
+        if not separator:
+            return line
+        try:
+            shown_stamp = self.timestamp(stamp)
+        except (ValueError, OverflowError):
+            return line  # Legacy/unstructured or incomplete log line.
+        progress = _PROGRESS_ETA.search(message)
+        if progress:
+            try:
+                eta = self.timestamp(progress['eta'])
+            except (ValueError, OverflowError):
+                pass  # Keep a malformed ETA visible without breaking status.
+            else:
+                message = message[:progress.start('eta')] + eta
+        return shown_stamp + separator + message
 
 
 UTC_DISPLAY = DisplaySettings(timezone.utc)

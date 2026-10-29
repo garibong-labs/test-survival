@@ -308,7 +308,7 @@ def status(exp, config, *, display=None):
     if path.exists():
         lines = path.read_text().splitlines()
         if lines:
-            rows.append('Last log: ' + lines[-1])
+            rows.append('Last log: ' + display.log_line(lines[-1]))
     return '\n'.join(rows)
 
 

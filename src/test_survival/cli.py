@@ -67,7 +67,7 @@ def main(argv=None):
             build(args.experiments, args.out)
         elif args.command == 'import':
             from .importer import import_experiment
-            import_experiment(args.exp_dir, args.source, args.what)
+            import_experiment(args.exp_dir, args.source, args.what, display=display)
         elif args.command == 'stop':
             stop(args.exp_dir, display=display)
         else:

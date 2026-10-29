@@ -5,6 +5,7 @@ import re
 import shutil
 
 from .config import load, stage_hash, canonical_hash, UniqueLoader
+from .display import load_display_settings
 import yaml
 from .io import now, read_json, write_json
 from .pipeline import PipelineError, invalidate, log, run_lock
@@ -19,7 +20,8 @@ def rounds(group_dir):
     return sorted((p for p in group_dir.glob('round*') if p.is_dir() and re.fullmatch(r'round\d+(?:-retry\d*)?',p.name)),key=round_key)
 
 
-def import_experiment(exp, source, what):
+def import_experiment(exp, source, what, *, display=None):
+    display = display or load_display_settings()
     exp,source=Path(exp).resolve(),Path(source).resolve()
     if exp==source or exp.is_relative_to(source) or source.is_relative_to(exp):
         raise PipelineError('Import source and destination must be separate experiment folders')
@@ -34,7 +36,7 @@ def import_experiment(exp, source, what):
                 from .dev_results import import_results
                 imports[selection] = import_results(exp, source, config)
                 write_json(exp/'state/import.json', imports)
-                log(exp, f'import dev-results: copied {len(imports[selection]["files"])} files from {source}')
+                log(exp, f'import dev-results: copied {len(imports[selection]["files"])} files from {source}', display=display)
                 continue
             copied={}
             def copy(src,dst):
@@ -83,4 +85,4 @@ def import_experiment(exp, source, what):
                 write_json(exp/'state/prepare.json',prepare)
             imports[selection]=dict(source=str(source),files=copied,source_sha256=canonical_hash(copied),imported=now())
             write_json(exp/'state/import.json',imports)
-            log(exp,f'import {selection}: copied {len(copied)} files from {source}')
+            log(exp,f'import {selection}: copied {len(copied)} files from {source}', display=display)

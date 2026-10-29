@@ -213,6 +213,89 @@ def test_cli_status_and_watch_read_new_settings_without_writing_state(tmp_path, 
     assert {p.name: p.read_bytes() for p in (exp/'state').iterdir()} == original
 
 
+@pytest.mark.parametrize('zone, stamp, eta', [
+    ('Asia/Seoul', '2027-01-01T03:59:59.123456+09:00', '2027-01-01T03:59:59+09:00'),
+    ('America/New_York', '2026-12-31T13:59:59.123456-05:00', '2026-12-31T13:59:59-05:00'),
+    ('UTC', '2026-12-31T18:59:59.123456+00:00', '2026-12-31T18:59:59+00:00'),
+])
+def test_status_and_watch_localize_last_log_without_rewriting_it(tmp_path, capsys, zone, stamp, eta):
+    exp = tmp_path/'experiment'
+    config = completed(exp)
+    (exp/'experiment.yaml').write_text(yaml.safe_dump(config))
+    saved = ('2026-12-31T18:59:59.123456+00:00 prepare: done | elapsed 01:00:00; '
+             '1/1 builds; estimated finish 2026-12-31T18:59:59+00:00\n')
+    path = exp/'state/log.txt'
+    path.write_text(saved)
+    configure(f'[display]\ntimezone = "{zone}"')
+    for options in ([], ['--watch', '--no-panel']):
+        assert main(['status', str(exp), *options]) == 0
+        last = next(line for line in capsys.readouterr().out.splitlines() if line.startswith('Last log:'))
+        assert last == (f'Last log: {stamp} prepare: done | elapsed 01:00:00; '
+                        f'1/1 builds; estimated finish {eta}')
+        assert path.read_bytes() == saved.encode()
+
+
+@pytest.mark.parametrize('message', [
+    'generate: 1/2 methods; 2 calls',
+    'import: source dated 2026-12-31T18:59:59+00:00',
+    'custom text; estimated finish 2026-12-31T18:59:59+00:00',
+    'prepare: done | elapsed 01:00:00; 1/1 builds; estimated finish unknown',
+    'prepare: done | elapsed 01:00:00; 1/1 builds; estimated finish invalid',
+    'prepare: done | elapsed 01:00:00; 1/1 builds; estimated finish 2026-12-31T18:59:59',
+])
+def test_last_log_preserves_message_text_and_unknown_or_invalid_eta(message):
+    display = load_display_settings()
+    assert display.log_line('2026-12-31T18:59:59+00:00 ' + message) == '2027-01-01T03:59:59+09:00 ' + message
+
+
+@pytest.mark.parametrize('line', ['', 'legacy unstructured log', '2026-12-31T18:59:59 plain naive log',
+                                  '2026-12-31T18:59:59+00:00'])
+def test_last_log_preserves_legacy_and_incomplete_lines(line):
+    assert load_display_settings().log_line(line) == line
+
+
+@pytest.mark.parametrize('selection', ['generated', 'dev-baseline'])
+@pytest.mark.parametrize('replacement', ['[display]\ntimezone = "UTC"', 'invalid TOML !'])
+@pytest.mark.parametrize('entry', ['cli', 'api'])
+def test_import_uses_startup_display_after_copying(tmp_path, monkeypatch, capsys, selection, replacement, entry):
+    import test_survival.importer as importer
+    exp, source = tmp_path/'experiment', tmp_path/'archive'
+    exp.mkdir()
+    config = {'name': 'import-display', 'anchor': 't', 'project': {'repo': str(exp)},
+              'generators': [{'name': 'o', 'method': 'ouedraogo', 'impl': 'native'}]}
+    (exp/'experiment.yaml').write_text(yaml.safe_dump(config))
+    if selection == 'generated':
+        write_json(source/'generated/o/round1/funnel.json', {'compiled': 0})
+    else:
+        (source/'dev').mkdir(parents=True)
+        for name in ('dev-methods-all.csv', 'dev-denominator.csv'):
+            (source/'dev'/name).write_text('class,method\nT,test\n')
+    original = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob('*') if p.is_file()}
+    path = configure('[display]\ntimezone = "Asia/Seoul"')
+    copy = importer.shutil.copy2
+    def copy_then_edit_settings(*args, **kwargs):
+        result = copy(*args, **kwargs)
+        path.write_text(replacement)
+        return result
+    monkeypatch.setattr(importer.shutil, 'copy2', copy_then_edit_settings)
+    if entry == 'cli':
+        assert main(['import', str(exp), '--from', str(source), '--what', selection]) == 0
+    else:
+        importer.import_experiment(exp, source, selection)
+    assert capsys.readouterr().out.split(' ', 1)[0].endswith('+09:00')
+    assert (exp/'state/log.txt').read_text().split(' ', 1)[0].endswith('+00:00')
+    assert read_json(exp/'state/import.json')[selection]['imported'].endswith('+00:00')
+    assert original == {str(p.relative_to(source)): p.read_bytes() for p in source.rglob('*') if p.is_file()}
+
+
+def test_direct_import_rejects_invalid_display_before_writing(tmp_path):
+    from test_survival.importer import import_experiment
+    configure('invalid TOML !')
+    with pytest.raises(DisplayConfigError):
+        import_experiment(tmp_path/'never-created', tmp_path/'archive', 'generated')
+    assert not (tmp_path/'never-created').exists()
+
+
 def test_heartbeat_is_always_a_utc_record(tmp_path, monkeypatch):
     import test_survival.panel as panel
     exp = tmp_path/'experiment'
