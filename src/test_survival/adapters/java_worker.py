@@ -153,7 +153,7 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
     part.mkdir(parents=True,exist_ok=True)
     classes=part/'classes';classes.mkdir(exist_ok=True)
     source=EXP/filename
-    sourcepath=EXP/'dev/src-test-t/java' if DEVELOPER else source.parent
+    sourcepath=EXP/members[0]['source_root'] if members and members[0].get('source_root') else EXP/'dev/src-test-t/java' if DEVELOPER else source.parent
     if precompiled is not None:
         classes,compile_run=precompiled
     elif compiler is not None:
@@ -164,7 +164,14 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
     if compile_run['exit_code']:
         record['methods']=[{**r,'state':'compile-fail','initial_state':'compile-fail','baseline_states':[],'selector':[],'flaky':False,'message':(part/'javac.txt').read_text(errors='replace')[:4000]} for r in members]
         return record
-    runtime=':'.join([str(classes),cp,str(EXP/'dev/src-test-t/resources'),str(EXP/'dev/src-test-t/suite')])
+    resources=EXP/members[0].get('resource_root','dev/src-test-t') if members else EXP/'dev/src-test-t'
+    runtime=':'.join([str(classes),cp,str(resources/'resources'),str(resources/'suite')])
+    runtime_cwd=SHARED/'work/runtime'
+    if members and members[0].get('resource_root'):
+        runtime_cwd=part/'runtime';runtime_cwd.mkdir(exist_ok=True)
+        for name in ('resources','suite'):
+            if (resources/name).exists():
+                shutil.copytree(resources/name,runtime_cwd/'src/test'/name,dirs_exist_ok=True)
     selection=selectors(members,runtime,part)
     base=['java','-Xmx'+JVM['launcher'],'-XX:+UseSerialGC']
     if coverage_file:base+=[f'-javaagent:{SHARED}/work/libs/org.jacoco.agent-{jacoco_version(folder/"target/classes")}-runtime.jar=destfile={coverage_file},append=true']
@@ -176,7 +183,7 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
             for selector in selection[r['id']]:args+=['--select-method',selector]
         if not args:
             return dict(command=[],cwd=str(SHARED/'work/runtime'),timeout=False,exit_code=2,seconds=0,log='',selection='no compiled selector'),{}
-        run=execute([*base,*args,'--reports-dir',str(reports)],SHARED/'work/runtime',reports/'console.txt',TIMEOUTS['test_class'])
+        run=execute([*base,*args,'--reports-dir',str(reports)],runtime_cwd,reports/'console.txt',TIMEOUTS['test_class'])
         record['runs'].append(run)
         return run,parse_reports(reports)
     runs=[launch(members,'run'+str(i)) for i in range(1,repetitions+1)]
@@ -397,6 +404,12 @@ def main():
                                             TIMEOUTS['build'],execute,force=job['force'])
         write_json(EXP/job['output'],{'attempts':attempts})
     elif job['action']=='setup':setup()
+    elif job['action']=='policy-cover':
+        try:
+            from . import policy_coverage
+        except ImportError:
+            from adapters import policy_coverage
+        policy_coverage.run(sys.modules[__name__], job)
     elif job['action']=='screen':screen_file(job)
     elif job['action']=='repair':repair(job)
     else:run_group(job)

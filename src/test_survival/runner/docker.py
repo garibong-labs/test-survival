@@ -21,6 +21,11 @@ class DockerRunner:
         self.package = Path(__file__).resolve().parents[1]
         self.mounts[str(self.package)] = '/survival-package'
         self.mounts.setdefault(str(self.exp), '/experiment') if not any(self.exp.is_relative_to(h) for h in self.mounts) else None
+        self.read_only = {str(self.package)}
+        for source in config['runner'].get('policy_read_only', []):
+            host = str(Path(source).resolve())
+            self.mounts[host] = self.path(host)
+            self.read_only.add(host)
 
     def path(self, value):
         value = str(value)
@@ -45,14 +50,14 @@ class DockerRunner:
                 prefix += ['-f', file]
             prefix += ['run', '--rm', '--no-deps', '-T', '--workdir', self.path(cwd)]
             for host, container in self.mounts.items():
-                prefix += ['--volume', f'{host}:{container}' + (':ro' if host == str(self.package) else '')]
+                prefix += ['--volume', f'{host}:{container}' + (':ro' if host in self.read_only else '')]
             prefix += [d['service']]
         elif d['image']:
             prefix = ['docker', 'run', '--rm', '--workdir', self.path(cwd)]
             if not any('/root/.m2' == target or '/root/.m2'.startswith(target+'/') for target in self.mounts.values()):
                 prefix += ['--volume', d['m2_volume']+':/root/.m2']
             for host, container in self.mounts.items():
-                prefix += ['--volume', f'{host}:{container}' + (':ro' if host == str(self.package) else '')]
+                prefix += ['--volume', f'{host}:{container}' + (':ro' if host in self.read_only else '')]
             if d['env_file']:
                 prefix += ['--env-file', d['env_file']]
             prefix += [d['image']]

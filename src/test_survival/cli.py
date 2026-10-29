@@ -41,6 +41,16 @@ def parser():
     imp.add_argument('exp_dir', type=Path)
     imp.add_argument('--from', dest='source', type=Path, required=True)
     imp.add_argument('--what', required=True)
+    policy = sub.add_parser('policy', help='Plan and run checkpoint policies over a completed baseline')
+    policy_sub = policy.add_subparsers(dest='policy_command', required=True)
+    for name in ('plan', 'run', 'status'):
+        command = policy_sub.add_parser(name)
+        command.add_argument('exp_dir', type=Path)
+        if name == 'run':
+            command.add_argument('--background', action='store_true')
+            command.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
+            command.add_argument('--until', choices=('pools', 'survive', 'cover', 'report'), default='report')
+            command.add_argument('--force', action='store_true')
     dashboard = sub.add_parser('dashboard')
     build = dashboard.add_subparsers(dest='dashboard_command', required=True).add_parser('build')
     build.add_argument('--experiments', type=Path, required=True)
@@ -62,6 +72,9 @@ def main(argv=None):
             with path.open('x') as stream:
                 stream.write(files('test_survival').joinpath('experiment-template.yaml').read_text())
             print(path)
+        elif args.command == 'policy':
+            from .policy.pipeline import command
+            command(args)
         elif args.command == 'dashboard':
             from .dashboard.build import build
             build(args.experiments, args.out)

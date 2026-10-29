@@ -191,6 +191,7 @@ GENERATOR = {
     'postprocess': {'import_repair': {'enabled': Field(bool, False), 'passes': integer(2)}},
 }
 SCHEMA = {
+    'policies': Field(dict, None, nullable=True),
     'name': Field(str),
     'project': {'repo': Field(str), 'language': enum('java', 'java', 'javascript'),
                 'build': enum('maven', 'maven', 'npm', 'pnpm'), 'module': Field(str, '.'),
@@ -362,6 +363,9 @@ def generator_config(config, generator):
 def validate(data):
     data = as_written(data)
     c = _validate(data, SCHEMA)
+    if c['policies'] is not None:
+        from .policy.config import validate as validate_policies
+        c['policies'] = validate_policies(c['policies'])
     if (c['project']['language'], c['project']['build']) != ('java', 'maven'):
         raise ConfigError('project.language/project.build: not implemented in this version of the tool; implemented: java/maven')
     module = Path(c['project']['module'])
@@ -494,6 +498,7 @@ def record_runner_inputs(runner):
 def result_inputs(config):
     """Hash result-affecting settings, excluding scheduling and host wiring."""
     c = as_written(config)
+    c.pop('policies', None)
     if 'runner' in c:
         c['runner'] = runner_inputs(c['runner'])
         if not c['runner']:
