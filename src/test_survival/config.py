@@ -389,6 +389,9 @@ def validate(data):
     for i,raw in enumerate(groups):
         prefix=f'dev.groups[{i}].';g=_validate(raw,DEV_GROUP,prefix)
         _group_name(g['name'],names,prefix)
+        # Scope writes dev/{name}-excluded.csv, also on case-insensitive filesystems.
+        if g['name'].lower() == 'dev-unmapped':
+            raise ConfigError(prefix+'name: dev-unmapped is reserved for the shared baseline exclusion audit; choose another name')
         g['display']=g['display'] or ('Dev' if g['name']=='dev' else g['name'])
         resolved.append(g)
     links={g['name']:g['derive_from'] for g in resolved}

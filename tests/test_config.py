@@ -87,6 +87,14 @@ def test_unmapped_policy_invalidates_prepare_and_later_stages(minimal):
     assert all(stage_hash(config, stage) != stage_hash(changed, stage) for stage in STAGES)
 
 
+@pytest.mark.parametrize('name', ['dev-unmapped', 'Dev-Unmapped'])
+@pytest.mark.parametrize('policy', ['error', 'exclude'])
+def test_developer_group_cannot_overwrite_shared_unmapped_audit(minimal, name, policy):
+    minimal['dev'] = {'groups': [{'name': name}], 'unmapped': policy}
+    with pytest.raises(ConfigError, match=r'dev.groups\[0\].name:.*reserved.*audit'):
+        validate(minimal)
+
+
 @pytest.mark.parametrize('denominator,start', [('project',5),('coverage-scoped',1)])
 def test_environment_settings_invalidate_scope_only_for_coverage_denominators(minimal,denominator,start):
     minimal['dev']={'groups':[{'name':'dev','denominator':denominator}]}
