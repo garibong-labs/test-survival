@@ -1,0 +1,39 @@
+name: Eli review request notification
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [review_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  notify:
+    if: >-
+      github.repository == 'garibong-labs/test-survival' &&
+      github.actor == 'Hamjoon' && github.run_attempt == 1 &&
+      ((github.event_name == 'pull_request_target' &&
+        github.event.action == 'review_requested' &&
+        github.event.pull_request.base.ref == 'main' &&
+        github.event.requested_reviewer.login == 'agent-eli' &&
+        github.event.pull_request.state == 'open' &&
+        github.event.pull_request.draft == false) ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Read isolated helper from trusted base commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: /.github/scripts/review_request_discord.py
+      - name: Verify live request and notify Discord
+        run: python3 -I .github/scripts/review_request_discord.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ELI_REVIEW_DISCORD_WEBHOOK_URL: ${{ secrets.ELI_REVIEW_DISCORD_WEBHOOK_URL }}
