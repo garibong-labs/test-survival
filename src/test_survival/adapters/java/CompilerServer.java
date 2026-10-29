@@ -16,6 +16,8 @@ class CompilerServer {
     }
 
     public static void main(String[] unused) throws Exception {
+        // javac diagnostics use stderr's locale charset, not Charset.defaultCharset().
+        var diagnosticCharset = System.err.charset();
         var in = new DataInputStream(new BufferedInputStream(new FileInputStream(FileDescriptor.in)));
         var protocol = new DataOutputStream(new BufferedOutputStream(new FileOutputStream(FileDescriptor.out)));
         // Compiler output cannot write to the protocol, even through System.out/err.
@@ -38,7 +40,7 @@ class CompilerServer {
             List<String> values = new ArrayList<>();
             for (int i = 0; i < count; i++) values.add(readString(in));
             int code = 2, fault = 0;
-            try (PrintStream log = new PrintStream(Files.newOutputStream(Path.of(values.get(0))))) {
+            try (PrintStream log = new PrintStream(Files.newOutputStream(Path.of(values.get(0))), false, diagnosticCharset)) {
                 System.setOut(log);
                 System.setErr(log);
                 try {

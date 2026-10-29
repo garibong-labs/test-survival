@@ -214,6 +214,44 @@ public class SentinelPlugin implements Plugin {
     crashed.wait()
     recovered = session.execute(command, changed, root/'after-crash.txt', 20)
     assert recovered['exit_code'] == 0 and session.child.pid != crashed.pid
+    # Standard stderr can use a locale charset even though Java's default is UTF-8.
+    # Compare raw diagnostic bytes across locale changes and reused requests.
+    locale_environment = {name: os.environ.get(name) for name in ('LANG', 'LC_ALL')}
+    locale_pids = []
+    try:
+        for locale_index, locale in enumerate(('C', 'C.UTF-8', 'C')):
+            os.environ.update(LANG=locale, LC_ALL=locale)
+            request_pids = []
+            for request, text in enumerate((
+                    'class Test { int caf\u00e9 = missing; }',
+                    'class Test { String value = "caf\u00e9"; }',
+                    'class Test { int caf\u00e9 = missingAgain; }')):
+                source.write_text(text, encoding='utf-8')
+                reset()
+                prefix = f'locale-{locale_index}-{request}'
+                expected = execute(command, changed, root/(prefix+'-cli.txt'), 20)
+                classes, diagnostic = snapshot(), (root/(prefix+'-cli.txt')).read_bytes()
+                reset()
+                actual = session.execute(command, changed, root/(prefix+'-api.txt'), 20)
+                backend = actual['compiler_backend']
+                assert backend['mode'] == 'reused-jvm'
+                assert backend['cold'] == (request == 0)
+                request_pids.append(backend['pid'])
+                assert actual['exit_code'] == expected['exit_code'] == (0 if request == 1 else 1)
+                if request != 1:
+                    expected_word = b'caf?' if locale == 'C' else 'caf\u00e9'.encode('utf-8')
+                    assert expected_word in diagnostic, (locale, diagnostic)
+                assert diagnostic == (root/(prefix+'-api.txt')).read_bytes(), (locale, diagnostic)
+                assert snapshot() == classes
+            assert len(set(request_pids)) == 1
+            locale_pids.append(request_pids[0])
+        assert len(set(locale_pids)) == 3
+    finally:
+        for name, value in locale_environment.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
     final_child = session.child
 assert final_child.poll() is not None
 print(json.dumps(dict(equivalent=True, same_pid=len(set(pids)) == 1, restarted=True,

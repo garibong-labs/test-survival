@@ -83,6 +83,9 @@ has its existing separate event overhead. The recorded command remains the
 equivalent javac invocation; `compiler_backend` distinguishes its actual executor.
 First-start stderr is retained next to the first log as `.jvm-stderr`; failure
 diagnostics are copied to `.jvm-failure` before CLI fallback overwrites the log.
+Request diagnostics retain the JVM's original stderr charset, including replacement
+of unmappable source characters under non-UTF-8 locales. The control protocol stays
+UTF-8. Locale changes restart the JVM through the existing environment identity.
 
 ## Verification and limits
 
@@ -92,6 +95,8 @@ coverage equality. Protocol fault tests exercise truncated/bad responses, crashe
 and timeout cleanup. Real-JDK tests compare status, complete diagnostics and class
 hashes over success/failure/success, reversed order, changed cwd and production
 class replacement at the same path, processor activation and plugin fallback.
+Non-ASCII source diagnostics and class outputs are compared byte-for-byte through
+`C` → `C.UTF-8` → `C` locale transitions and repeated requests within each JVM.
 
 Three independent sessions each execute 66 requests, crossing the real recycle
 boundary. Every result is compared with a fresh CLI baseline. The fixture verifies
