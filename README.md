@@ -407,6 +407,11 @@ survival run /absolute/path/to/target-fork/experiments/replay
 
 Imports record copied-file hashes and synthesize round manifests from archived directories and funnels. See the [reference replay configuration](examples/jsv-run2/experiment.yaml) for a complete example.
 
+Both developer import modes preserve and checksum `dev/dev-unmapped-excluded.csv`
+when present, remove a stale destination audit when the source has none, and refresh
+anchor exclusion counts and notes immediately. Dependent scope, funnel, and report
+outputs are invalidated so their disclosures are rebuilt even when prepare is reused.
+
 For weekly reruns, reuse completed developer measurements while regenerating LLM tests.
 Prepare the destination first so both experiments have resolved anchors, commit
 sequences, and frozen test snapshots, then import:
@@ -421,10 +426,13 @@ Before copying evidence, `dev-results` requires identical project repo paths,
 anchor SHAs, ordered commit SHAs in `results/commits.csv`, `skip_untouched`, and
 `dev/src-test-t` tree hashes (relative file paths and contents). It refuses an
 incompatible import with the differing field named in the error. Result-affecting
-runner/runtime settings, project module and test framework, baseline stability runs,
+runner/runtime settings, project module and test framework, baseline stability runs and `dev.unmapped`,
 survival rules, and coverage settings must also match. Scheduling and host wiring
 may differ. Archived generation/report options are not validated; unknown measurement
 options are refused instead of silently assuming compatibility.
+Saved compatibility manifests without `dev.unmapped` are treated as `error`.
+Changing the policy after import also refuses reuse until compatible evidence is imported
+or the import is detached.
 
 Every Dev group with the same name and denominator rule is reused. The import
 retains the already-identical frozen test tree, copies shared baselines, maps each

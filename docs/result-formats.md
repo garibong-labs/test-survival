@@ -24,6 +24,8 @@ Headers below follow the archived experiment and are checked by `tests/test_form
 
 `dev/dev-methods-all.csv`: `class,method,kind,stable,run1,run2,run3`. `kind` is `plain`, `parameterized`, `test-factory`, or `test-template`. `stable` is `yes` when every run passed.
 
+Both `dev-baseline` and `dev-results` imports include `dev/dev-unmapped-excluded.csv` in `state/import.json` file checksums when the source has it, remove stale destination audits when absent, and immediately refresh the anchor count and deviation note. Imported audit bytes are verified before baseline reuse. `dev-results` compatibility records store the resolved policy as `measurement_settings.unmapped`; an omitted field in an older manifest means `error`.
+
 `dev/dev-denominator.csv`: `class,method,kind`.
 
 `population/class-survey.csv`: `class,file,m,has_test,d,c` where `m` is the focal method count, `has_test` `yes`/`no`, `d` the dedicated-test method count, `c` the number of commits in range that change the class.

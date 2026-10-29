@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 
 from ..adapters.java_maven import JavaMavenAdapter
-from ..io import read_json, read_csv, write_json, write_csv, atomic_text, now
+from ..io import read_json, write_json, write_csv, atomic_text, now
 from ..pipeline import log
 from ..config import range_fingerprint
 from ..rules.commits import skip_reason
@@ -62,18 +62,15 @@ def run(exp, config):
     if anchor_build != 'ok':
         raise RuntimeError('Anchor build failed')
     imported = read_json(exp/'state/import.json', {})
-    from ..dev_results import imported_baseline
-    if not imported.get('dev-baseline') and not imported_baseline(exp, config):
+    from ..dev_results import imported_baseline, check_unmapped_audit, refresh_unmapped_metadata
+    if imported.get('dev-baseline'):
+        check_unmapped_audit(exp, imported['dev-baseline'])
+    elif not imported_baseline(exp, config):
         baseline = adapter.baseline()
         log(exp, f'prepare: baseline has {sum(r["stable"]=="yes" for r in baseline)} stable methods', config)
-    excluded_path = exp/'dev/dev-unmapped-excluded.csv'
-    anchor['dev_unmapped_excluded'] = len(read_csv(excluded_path)) if excluded_path.exists() else 0
-    from ..rules.dev_denominator import unmapped_note
-    note = unmapped_note(anchor['dev_unmapped_excluded'])
+    note = refresh_unmapped_metadata(exp)
     if note:
-        anchor['deviations'].append(note)
         log(exp, 'prepare: '+note, config)
-    write_json(exp/'results/anchor.json', anchor)
     def build(row):
         reason=skip_reason(touches[str(row['index'])],config['project']['module'],config['range']['skip_untouched'])
         if reason:

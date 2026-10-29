@@ -10,7 +10,33 @@ import yaml
 from .config import MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate
 from .io import now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
-from .rules.dev_denominator import denominator_file
+from .rules.dev_denominator import denominator_file, unmapped_note
+
+
+UNMAPPED_AUDIT = 'dev/dev-unmapped-excluded.csv'
+
+
+def refresh_unmapped_metadata(exp):
+    """Keep disclosures current even when an import reuses completed prepare."""
+    anchor = read_json(exp/'results/anchor.json')
+    if anchor is None:
+        return ''
+    old_note = unmapped_note(anchor.get('dev_unmapped_excluded', 0))
+    path = exp/UNMAPPED_AUDIT
+    anchor['dev_unmapped_excluded'] = len(read_csv(path)) if path.exists() else 0
+    note = unmapped_note(anchor['dev_unmapped_excluded'])
+    anchor['deviations'] = [value for value in anchor.get('deviations', []) if value != old_note and value != note]
+    if note:
+        anchor['deviations'].append(note)
+    write_json(exp/'results/anchor.json', anchor)
+    return note
+
+
+def check_unmapped_audit(exp, record):
+    if UNMAPPED_AUDIT in record['files']:
+        require_record(exp, record, UNMAPPED_AUDIT)
+    elif (exp/UNMAPPED_AUDIT).exists():
+        raise PipelineError('Imported baseline has an unrecorded exclusion audit; reimport the baseline')
 
 
 @lru_cache(maxsize=16384)
@@ -66,7 +92,8 @@ def identity(exp, config):
                 dev_tree_sha256=tree_hash(exp/'dev/src-test-t'),
                 measurement_settings=dict(project={k: v for k, v in config['project'].items() if k != 'repo'},
                                           runner=runner_inputs(config['runner']), survival=config['survival'],
-                                          stable_runs=config['dev']['stable_runs'], coverage=config['coverage']))
+                                          stable_runs=config['dev']['stable_runs'], unmapped=config['dev']['unmapped'],
+                                          coverage=config['coverage']))
 
 
 DETACH = '; remove the dev-results entry from state/import.json to measure these groups afresh'
@@ -82,6 +109,9 @@ def _divergence(actual, expected, prefix=''):
 
 
 def check_identity(actual, expected, *, advice=''):
+    # Manifests written before dev.unmapped used the default error policy.
+    actual = {**actual, 'measurement_settings': {'unmapped': 'error', **actual.get('measurement_settings', {})}}
+    expected = {**expected, 'measurement_settings': {'unmapped': 'error', **expected.get('measurement_settings', {})}}
     labels = dict(project_repo='project repo', anchor_sha='anchor sha', commit_shas='commit sha sequence',
                   skip_untouched='skip_untouched', dev_tree_sha256='dev/src-test-t tree hash',
                   measurement_settings='result-affecting measurement settings')
@@ -107,7 +137,7 @@ def import_results(exp, source, config):
     # mapped by name, since the first group's filename is always dev-denominator.
     for path in sorted((source/'dev').rglob('*')):
         relative = str(path.relative_to(source))
-        if path.is_file() and not path.name.endswith(('-denominator.csv', '-excluded.csv')):
+        if path.is_file() and (relative == UNMAPPED_AUDIT or not path.name.endswith(('-denominator.csv', '-excluded.csv'))):
             plan[relative] = path
     for index, group in matched:
         name = group['name']
@@ -152,6 +182,9 @@ def import_results(exp, source, config):
         if not target.startswith('dev/src-test-t/'):
             shutil.copy2(path, destination)
         hashes[target] = file_hash(destination)
+    if UNMAPPED_AUDIT not in plan:
+        (exp/UNMAPPED_AUDIT).unlink(missing_ok=True)
+    refresh_unmapped_metadata(exp)
     destination_frozen = read_json(exp/'results/frozen-denominators.json', {})
     destination_frozen.update({name: record['frozen'] for name, record in groups.items()})
     write_json(exp/'results/frozen-denominators.json', destination_frozen)
@@ -181,6 +214,7 @@ def imported_groups(exp, config, stage=None, *, provenance=None):
     if not groups:
         return {}
     check_identity(identity(exp, config), record['compatibility'], advice=DETACH)
+    check_unmapped_audit(exp, record)
     frozen = read_json(exp/'results/frozen-denominators.json', {})
     for name, item in groups.items():
         if current[name]['denominator'] != item['denominator']:
@@ -234,4 +268,5 @@ def imported_baseline(exp, config):
         return False
     check_identity(identity(exp, config), record['compatibility'], advice=DETACH)
     require_record(exp, record, 'dev/dev-methods-all.csv')
+    check_unmapped_audit(exp, record)
     return True

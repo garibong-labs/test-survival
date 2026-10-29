@@ -77,9 +77,15 @@ def import_experiment(exp, source, what, *, display=None):
                 invalidate(exp,'generate')
                 write_json(exp/'state/generate.json',dict(status=status,config_hash=stage_hash(config,'generate'),started=now(),finished=now(),notes='Imported groups: '+', '.join(imported),source_hash=canonical_hash(copied),group_hashes={g['name']:stage_hash(config,'generate',g['name']) for g in config['generators'] if g['name'] in imported}))
             else:
+                from .dev_results import UNMAPPED_AUDIT, refresh_unmapped_metadata
                 for name in ['dev-methods-all.csv','dev-denominator.csv']:
                     copy(source/'dev'/name,exp/'dev'/name)
-                invalidate(exp,'scope')
+                if (source/UNMAPPED_AUDIT).exists():
+                    copy(source/UNMAPPED_AUDIT,exp/UNMAPPED_AUDIT)
+                else:
+                    (exp/UNMAPPED_AUDIT).unlink(missing_ok=True)
+                refresh_unmapped_metadata(exp)
+                invalidate(exp,'prepare')
                 prepare=read_json(exp/'state/prepare.json',{})
                 prepare['dev_baseline']=dict(status='completed',source_hash=canonical_hash(copied))
                 write_json(exp/'state/prepare.json',prepare)
