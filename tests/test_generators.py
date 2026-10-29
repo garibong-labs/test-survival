@@ -19,7 +19,9 @@ def test_prompt_substitution_does_not_rescan_source():
 def test_dependency_gate():
     gate('// public API of p.A\npublic abstract class A<T> {\n public void f(String... args);\n}\n')
     with pytest.raises(ValueError):gate('public class A<> {\n}')
-    with pytest.raises(ValueError):gate('class A {\n}')
+    gate('class A {\n}')
+    gate('interface ExecutionCustomizer {\n}')
+    with pytest.raises(ValueError):gate('nonsense class A {\n}')
 
 
 def test_round_stopping_priority_and_limits():

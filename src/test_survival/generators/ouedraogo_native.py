@@ -43,7 +43,7 @@ class OuedraogoNative:
                     raise RuntimeError('Cannot change a prompt after its model call')
                 atomic_text(path,rendered)
                 jobs.append((name,technique,rendered))
-        write_json(directory/'prompts/pre-call-check.json',dict(passed=True,checked_at=now(),blocks=blocks,empty_angle_brackets=False,headers_have_modifiers=True))
+        write_json(directory/'prompts/pre-call-check.json',dict(passed=True,checked_at=now(),blocks=blocks,empty_angle_brackets=False,headers_valid=True))
         client=OpenRouter(self.config['model'])
         records=read_json(directory/'generation.json')
         if records is not None:

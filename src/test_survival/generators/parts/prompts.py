@@ -17,6 +17,27 @@ def gate(block):
     if re.search(r'<\s*>',block):
         raise ValueError('Dependency block has empty type parameters')
     for line in block.splitlines():
-        if re.search(r'\b(class|interface|enum)\s+\w+',line) and not line.startswith((' ','//')):
-            if not re.match(r'^(?:(?:'+MODIFIERS+r')\s+)+(?:class|interface|enum)\s+',line):
-                raise ValueError('Dependency block type header lacks declaration modifiers')
+        if not line.strip() or line.startswith((' ', '//')) or line == '}':
+            continue
+        # Inventory headers are normalized to one line; Java's default access
+        # has no modifier. Still require a declaration kind, name, and body.
+        match=re.fullmatch(r'(?:(?:'+MODIFIERS+r')\s+)*(class|interface|enum|record|@interface)\s+'
+                           r'([A-Za-z_$][\w$]*)(.*?)\s*\{',line)
+        if not match:
+            raise ValueError('Malformed dependency block type header')
+        kind,_,tail=match.groups()
+        tail=tail.strip()
+        def consume_group(text,opening,closing):
+            depth=0
+            for index,char in enumerate(text):
+                if char==opening:depth+=1
+                elif char==closing:
+                    depth-=1
+                    if depth==0:return text[index+1:].strip()
+            raise ValueError('Malformed dependency block type header')
+        if tail.startswith('<'):tail=consume_group(tail,'<','>')
+        if kind=='record':
+            if not tail.startswith('('):raise ValueError('Malformed dependency block record header')
+            tail=consume_group(tail,'(',')')
+        if tail and not re.fullmatch(r'(?:(?:extends|implements|permits)\s+[\w$.,<>?@\[\] &]+\s*)+',tail):
+            raise ValueError('Malformed dependency block type header')
