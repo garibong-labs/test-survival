@@ -41,13 +41,14 @@ def tree_hash(root, pattern='*'):
 
 
 def snapshot(source_exp, destination, tests, *, group, method, scope, prefix):
-    """Copy evidence, never symlink into the read-only baseline."""
+    """Use local snapshots in place; copy evidence from other workspaces."""
     result = []
     if method == 'dev':
         source = source_exp/'dev/src-test-t'
         target = destination/prefix/'dev/src-test-t'
         # Generator groups may already have populated the shared resource folders.
-        shutil.copytree(source, target, dirs_exist_ok=True)
+        if source.resolve() != target.resolve():
+            shutil.copytree(source, target, dirs_exist_ok=True)
     else:
         for name in ('resources', 'suite'):
             source = source_exp/'dev/src-test-t'/name

@@ -46,6 +46,8 @@ def parser():
     for name in ('plan', 'run', 'status'):
         command = policy_sub.add_parser(name)
         command.add_argument('exp_dir', type=Path)
+        if name == 'status':
+            command.add_argument('--watch', action='store_true', help='Refresh policy progress every five seconds until the run stops')
         if name == 'run':
             command.add_argument('--background', action='store_true')
             command.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
@@ -63,7 +65,7 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         # The background child writes stdout into state/background.log, a UTC record.
-        display = (UTC_DISPLAY if args.command == 'run' and args.lock_fd is not None
+        display = (UTC_DISPLAY if args.command in ('run', 'policy') and getattr(args, 'lock_fd', None) is not None
                    else load_display_settings())
         if args.command == 'init':
             if (args.language, args.build) != ('java', 'maven'):
@@ -75,7 +77,7 @@ def main(argv=None):
             print(path)
         elif args.command == 'policy':
             from .policy.pipeline import command
-            command(args)
+            command(args, display=display)
         elif args.command == 'dashboard':
             from .dashboard.build import build
             build(args.experiments, args.out)
