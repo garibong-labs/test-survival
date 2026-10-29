@@ -252,3 +252,25 @@ def test_shared_container_cleanup_verifies_exit_and_preserves_state_on_failure(t
     assert not running
     assert read_json(path)['status'] == 'stopped'
     assert read_json(path)['finished']
+
+
+def test_nested_pool_owns_workers_and_containers_at_coordinator(tmp_path):
+    root=tmp_path/'experiment';nested=root/'results/policy/pools/dev/1'
+    with pipeline.run_lock(root), pipeline.run_session(root) as record:
+        write_json(nested/'state/run-owner.json',dict(experiment=str(root),run_id=record['run_id']))
+        options=lifecycle.container_options(nested)
+        assert 'test-survival.run='+record['run_id'] in options
+        assert len(list((root/'state/containers').glob('*.json')))==1
+        assert not (nested/'state/containers').exists()
+        worker=lifecycle.launch(nested,[sys.executable,'-c','pass'])
+        worker.wait(timeout=5)
+        saved=[read_json(p) for p in (root/'state/workers').glob('*.json')]
+        assert len(saved)==1 and saved[0]['run_id']==record['run_id'] and saved[0]['pid']==worker.pid
+        write_json(root/'state/stopping.json',{})
+        with pytest.raises(RuntimeError,match='stop cleanup'):
+            lifecycle.launch(nested,[sys.executable,'-c','pass'])
+        with pytest.raises(RuntimeError,match='stop cleanup'):
+            lifecycle.container_options(nested)
+        (root/'state/stopping.json').unlink()
+    with pytest.raises(RuntimeError,match='inactive run'):
+        lifecycle.container_options(nested)

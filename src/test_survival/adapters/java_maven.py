@@ -203,6 +203,7 @@ class JavaMavenAdapter:
     def provenance(self):
         paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).with_name('compilation.py'), Path(__file__).with_name('maven_dependencies.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py', Path(__file__).parents[1]/'rules/environment.py']
         paths.append(Path(__file__).with_name('compiler_session.py'))
+        paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py'))
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
     def worker(self, job):
@@ -270,7 +271,7 @@ class JavaMavenAdapter:
 
     def run_fingerprints(self, methods, repeats=1):
         """Current key first, then the pre-policy key of records that hashed operational settings."""
-        inputs={'methods':[(r['id'],hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
+        inputs={'methods':[(r['id'],r.get('execution_hash') or hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
                 'project':self.config['project'], 'survival':self.config['survival'], 'repeats':repeats}
         return (canonical_hash({**inputs, 'runner':record_runner_inputs(self.config['runner'])}),
                 canonical_hash({**inputs, 'runner':self.config['runner']}))

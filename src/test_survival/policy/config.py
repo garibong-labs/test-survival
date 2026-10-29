@@ -1,0 +1,44 @@
+"""Policy configuration is separate from the baseline stage family."""
+from copy import deepcopy
+import re
+
+from ..config import ConfigError, Field, _validate, _strings, enum, integer
+
+SCHEMA = {
+    'baseline': Field(str), 'baseline_config': Field(str, None, nullable=True),
+    'groups': Field(list), 'releases': Field(list, []),
+    'threshold': Field(float, .5, minimum=0), 'max_threshold_triggers': integer(1, 0),
+    'generator_overrides': Field(dict, {}), 'concurrency': Field(dict, {}),
+    'fill_seed': integer(20261029, 0), 'set': Field(list),
+}
+
+
+def validate(data):
+    c = _validate(data, SCHEMA, 'policies.')
+    for key in ('groups', 'releases'):
+        _strings(c[key], 'policies.' + key)
+    if not c['groups'] or not c['set']:
+        raise ConfigError('policies.groups and policies.set must be nonempty')
+    if not 0 < c['threshold'] <= 1:
+        raise ConfigError('policies.threshold must be in (0, 1]')
+    names = {'none'}
+    for i, policy in enumerate(c['set']):
+        policy = _validate(policy, {'name': Field(str), 'trigger': enum('release', 'release', 'threshold'),
+                                    'action': enum('reset', 'reset', 'fill')}, f'policies.set[{i}].')
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', policy['name']) or policy['name'] in names:
+            raise ConfigError('policies.set: names must be unique safe path components, excluding none')
+        names.add(policy['name']); c['set'][i] = policy
+    for name, value in c['concurrency'].items():
+        if name not in [*c['groups'], 'dev_selection'] or type(value) is not int or value < 1:
+            raise ConfigError('policies.concurrency: expected group/dev_selection -> positive integer')
+    for name, value in c['generator_overrides'].items():
+        if name not in c['groups'] or not isinstance(value, dict) or {'name', 'method', 'impl'} & value.keys():
+            raise ConfigError('policies.generator_overrides: expected settings for selected generators; identity cannot change')
+    return c
+
+
+def merge(base, override):
+    result = deepcopy(base)
+    for key, value in override.items():
+        result[key] = merge(result[key], value) if isinstance(value, dict) and isinstance(result.get(key), dict) else deepcopy(value)
+    return result

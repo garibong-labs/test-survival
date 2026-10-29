@@ -470,3 +470,8 @@ Open `dashboard/index.html` in a browser. It is a single offline file and works 
 Read [docs/design.md](docs/design.md) for configuration details, stage behavior, and generator design.
 
 Read [docs/result-formats.md](docs/result-formats.md) for saved evidence schemas and report formats.
+
+Checkpoint/regeneration experiments are a separate post-baseline stage family:
+`survival policy plan|run|status <exp>`. See
+[regeneration policies](docs/regeneration-policies.md) for configuration, source
+snapshots, shared runs, per-test coverage, and the two validated project plans.

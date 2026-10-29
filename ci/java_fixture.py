@@ -11,6 +11,9 @@ import xml.etree.ElementTree as ET
 
 MANIFEST = Path(__file__).resolve().parents[1]/'src/test_survival/adapters/java/classpath-artifacts.json'
 FIXTURES = {
+    'test_policy_coverage_does_not_assign_container_teardown_to_next_test[jupiter]',
+    'test_policy_coverage_does_not_assign_container_teardown_to_next_test[vintage]',
+    'test_policy_per_test_coverage_one_jvm_with_vintage_and_source_versions',
     'test_junit4_inventory_selectors_and_vintage_launcher',
     'test_real_worker_environment_retries_and_single_method_coverage',
     'test_real_compiler_session_equivalence',

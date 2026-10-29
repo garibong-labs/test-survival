@@ -140,3 +140,172 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
     assert (tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind.xml').exists()
     lines=read_csv(tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind-lines.csv')
     assert any(r['file']=='src/main/java/fixture/Production.java' and r['covered']=='yes' for r in lines)
+
+
+@pytest.mark.java_integration
+@pytest.mark.parametrize('framework', ['jupiter', 'vintage'])
+def test_policy_coverage_does_not_assign_container_teardown_to_next_test(tmp_path, java_environment, framework):
+    image, libs = java_environment
+    root = Path(__file__).parents[1]
+    (tmp_path/'Production.java').write_text('''package fixture;
+public class Production {
+ public static int teardown() { return 1; }
+ public static int body() { return 2; }
+}''')
+    sources = {
+        'jupiter': '''package fixture;
+import org.junit.jupiter.api.*;
+@TestClassOrder(ClassOrderer.OrderAnnotation.class)
+public class LifecycleTest {
+ @Nested @Order(1) class A {
+  @Test void first() {}
+  @AfterAll static void cleanup() { Production.teardown(); }
+ }
+ @Nested @Order(2) class B {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints={1,2})
+  void second(int n) { Assertions.assertEquals(2, Production.body()); }
+ }
+}''',
+        'vintage': '''package fixture;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Suite;
+@RunWith(Suite.class)
+@Suite.SuiteClasses({LifecycleTest.A.class, LifecycleTest.B.class})
+public class LifecycleTest {
+ public static class A {
+  @Test public void first() {}
+  @AfterClass public static void cleanup() { Production.teardown(); }
+ }
+ public static class B {
+  @Test public void second() { Assert.assertEquals(2, Production.body()); }
+ }
+}''',
+    }
+    (tmp_path/'LifecycleTest.java').write_text(sources[framework])
+    script = r'''
+from pathlib import Path
+import json, subprocess, sys
+cp=':'.join('/libs/'+p for p in json.loads(sys.argv[1]))
+agent='/libs/org.jacoco.agent-0.8.14-runtime.jar'
+cp+=':/libs/org.jacoco.cli-0.8.14-nodeps.jar:'+agent
+def call(args): subprocess.run(args, check=True)
+call(['javac','-d','/out/production','/out/Production.java'])
+call(['javac','-cp',cp,'-d','/out/helper','/helpers/PerTestCoverage.java'])
+call(['javac','-cp','/out/production:'+cp,'-d','/out/tests','/out/LifecycleTest.java'])
+Path('/out/selectors.tsv').write_text('fixture.LifecycleTest\n')
+runtime='/out/tests:/out/helper:/out/production:'+cp
+Path('/out/batches.tsv').write_text('/out/dumps\t/out/production\t/out/selectors.tsv\t'+runtime+'\n')
+call(['java','-javaagent:'+agent+'=output=none,dumponexit=false','-cp','/out/helper:'+cp,'PerTestCoverage','/out/batches.tsv'])
+'''
+    jars = runner_test_jars(json.loads((root/'src/test_survival/adapters/java/classpath-artifacts.json').read_text()))
+    result = subprocess.run(['docker','run','--rm','--network','none',
+                             '-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro',
+                             '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',
+                             image,'python3','-c',script,json.dumps(jars)], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout+result.stderr
+    observations = [line.split('\t') for line in (tmp_path/'dumps/tests.tsv').read_text().splitlines()]
+    assert [row[2] for row in observations] == (['first','second','second'] if framework == 'jupiter' else ['first','second'])
+    for serial, cls, method, state, message in observations:
+        assert state == 'SUCCESSFUL', message
+        hits = {int(row.split('\t')[1]) for row in (tmp_path/f'dumps/{serial}.tsv').read_text().splitlines() if row.endswith('\ttrue')}
+        assert hits == ({4} if method == 'second' else set()), 'container teardown leaked into test coverage'
+
+
+@pytest.mark.java_integration
+def test_policy_per_test_coverage_one_jvm_with_vintage_and_source_versions(tmp_path, java_environment):
+    """Real listener/agent: parameterized cases, resets, and conflicting test versions."""
+    image, libs = java_environment
+    root = Path(__file__).parents[1]
+    (tmp_path/'Production.java').write_text('''package fixture;
+public class Production {
+ public static int a() { return 1; }
+ public static int b() { return 2; }
+}''')
+    for version, method in [('one','a'),('two','b')]:
+        folder=tmp_path/version;folder.mkdir()
+        (folder/'VersionTest.java').write_text('''package fixture;
+import org.junit.jupiter.api.Test;
+public class VersionTest {
+ @Test void works() throws Exception {
+  int result = (int) Class.forName("fixture.Provider").getMethod("value").invoke(null);
+  org.junit.jupiter.api.Assertions.assertTrue(result > 0);
+ }
+}''')
+        (folder/'Provider.java').write_text('package fixture; public class Provider { public static int value() { return Production.'+method+'(); } }')
+    (tmp_path/'VintageTest.java').write_text('''package fixture;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+@RunWith(Parameterized.class)
+public class VintageTest {
+ @Parameterized.Parameters public static Object[][] data() { return new Object[][] {{1},{2}}; }
+ public VintageTest(int n) {}
+ @Test public void works() { org.junit.Assert.assertEquals(1, Production.a()); }
+}''')
+    script = r'''
+from pathlib import Path
+import json,subprocess,sys
+jars=json.loads(sys.argv[1]); cp=':'.join('/libs/'+p for p in jars)
+cli='/libs/org.jacoco.cli-0.8.14-nodeps.jar'; agent='/libs/org.jacoco.agent-0.8.14-runtime.jar'
+helpercp=cp+':'+cli+':'+agent
+Path('/out/production').mkdir();Path('/out/helper').mkdir()
+def call(args): subprocess.run(args,check=True,capture_output=True,text=True)
+call(['javac','-d','/out/production','/out/Production.java'])
+call(['javac','-cp',helpercp,'-d','/out/helper','/helpers/PerTestCoverage.java'])
+manifest=[]
+for version in ['one','two','vintage']:
+ classes=Path('/out')/version/'classes';classes.mkdir(parents=True)
+ source='/out/VintageTest.java' if version=='vintage' else '/out/'+version+'/VersionTest.java'
+ sources=[source] if version=='vintage' else [str(p) for p in (Path('/out')/version).glob('*.java')]
+ call(['javac','-cp','/out/production:'+cp,'-d',str(classes),*sources])
+ selector=Path('/out')/(version+'.selectors');selector.write_text('fixture.VintageTest\n' if version=='vintage' else 'fixture.VersionTest\tworks\n')
+ runtime=':'.join([str(classes),'/out/helper','/out/production',helpercp])
+ manifest.append('\t'.join(['/out/'+version+'/dumps','/out/production',str(selector),runtime]))
+Path('/out/batches.tsv').write_text('\n'.join(manifest)+'\n')
+call(['java','-javaagent:'+agent+'=output=none,dumponexit=false','-cp','/out/helper:'+helpercp,'PerTestCoverage','/out/batches.tsv'])
+# Exercise the real Python worker orchestration with the same compiled dependencies.
+sys.path.insert(0,'/survival-package')
+from adapters import java_worker as worker, policy_coverage
+worker.EXP=Path('/out');worker.SHARED=worker.EXP;worker.HELPERS=Path('/helpers')
+worker.JVM={'jacoco':'512m','javac':'256m','launcher':'512m'};worker.TIMEOUTS={'compile':60,'test_class':60}
+Path('/out/work').mkdir();Path('/out/work/libs').symlink_to('/libs')
+worker.classpath=lambda index:(Path('/out'),'/out/production:'+cp)
+worker.jacoco_version=lambda classes:'0.8.14'
+Path('/out/target').mkdir();Path('/out/target/classes').symlink_to('/out/production')
+methods=[dict(id=version,file_hash='same-test-source',execution_hash=version,file=version+'/VersionTest.java',source_root=version,
+              resource_root='resources',**{'class':'fixture.VersionTest'},method='works') for version in ['one','two']]
+policy_coverage.run(worker,dict(index=0,sha='fixture',methods=methods[:1],full_suite=True,work='pool',output='pool-result.json'))
+assert json.loads(Path('/out/pool-result.json').read_text())['methods'][0]['state']=='pass'
+# An unrelated formerly-valid test must not hide runtime helpers for the alive test.
+Path('/out/two/BrokenTest.java').write_text('package fixture; public class BrokenTest { @org.junit.jupiter.api.Test void removed() { Production.removed(); } }')
+policy_coverage.run(worker,dict(index=0,sha='fixture',methods=methods,work='worker',output='worker-result.json'))
+result=json.loads(Path('/out/worker-result.json').read_text())
+assert len(result['methods'])==2 and all(t['state']=='pass' for t in result['methods']),result
+assert {t['execution_hash'] for t in result['methods']}=={'one','two'}
+assert result['compile'][0]['snapshot_full_suite']
+assert not result['compile'][1]['snapshot_full_suite']
+assert 'Provider.java' in result['compile'][1]['helper_sources']
+for number,line in [(0,3),(1,4)]:
+ assert ['src/main/java/fixture/Production.java',line] in result['methods'][number]['lines']
+worker.REPO=Path('/out');worker.DEVELOPER=False;worker.TEST_FRAMEWORK='auto';worker.FLAKY_RERUN=0
+worker.ENVIRONMENT_ERRORS={'patterns':[],'max_reruns':0,'backoff_seconds':0}
+for t in methods:
+ record=worker.run_file(0,'policy',t['file'],[t],Path('/out')/('survive-'+t['id']),retry=False)
+ assert record['methods'][0]['state']=='pass',record
+'''
+    jars=runner_test_jars(json.loads((root/'src/test_survival/adapters/java/classpath-artifacts.json').read_text()))
+    result=subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro',
+                           '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(root/'src/test_survival')+':/survival-package:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script,json.dumps(jars)],capture_output=True,text=True,timeout=120)
+    assert result.returncode == 0, result.stdout+result.stderr
+    for version,count,line in [('one',1,3),('two',1,4),('vintage',2,3)]:
+        folder=tmp_path/version/'dumps'
+        observations=(folder/'tests.tsv').read_text().splitlines()
+        assert len(observations)==count
+        assert all(r.split('\t')[3]=='SUCCESSFUL' for r in observations)
+        for row in observations:
+            coverage=(folder/(row.split('\t')[0]+'.tsv')).read_text().splitlines()
+            covered={int(r.split('\t')[1]) for r in coverage if r.endswith('\ttrue')}
+            assert line in covered
+            assert ({3,4}-{line}).isdisjoint(covered), 'execution data leaked between tests or source versions'

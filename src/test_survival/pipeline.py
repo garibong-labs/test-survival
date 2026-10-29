@@ -125,8 +125,9 @@ def _stop(exp, *, idle, display):
     # Its signal is skipped, while stale experiment resources can be recovered.
     if pending and pending['run'].get('run_id') != record.get('run_id'):
         raise PipelineError('Run changed during stop cleanup; state retained')
+    stages = [*STAGES, *[p.stem for p in (exp/'state').glob('policy-*.json')]]
     pending = pending or dict(run=record, processes=[], stages={
-        stage: state.get('started') for stage in STAGES
+        stage: state.get('started') for stage in stages
         if (state := read_json(exp/'state'/f'{stage}.json', {})).get('status') == 'running'})
     write_json(pending_path, pending)
     try:
@@ -140,7 +141,7 @@ def _stop(exp, *, idle, display):
                 raise PipelineError('Run changed while stopping; new run state retained')
             cleanup_containers(exp, record)
             finished = now()
-            for stage in STAGES:
+            for stage in stages:
                 path = exp/'state'/f'{stage}.json'
                 state = read_json(path, {})
                 if state.get('status') == 'running' or (stage in pending.get('stages', {}) and state.get('started') == pending['stages'][stage]):
@@ -187,7 +188,9 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
         return _run(exp, config, selected=selected, force=force, group=group, handlers=handlers)
 
 
-def _run(exp, config, *, selected, force=False, group=None, handlers=None):
+@contextmanager
+def run_session(exp):
+    """Publish the coordinator identity shared by ordinary and policy stages."""
     run_path = exp / 'state/run.json'
     record = read_json(run_path, {})
     log_path = record.get('log') if record.get('pid') == os.getpid() and record.get('status') == 'running' else str(exp / 'state/log.txt')
@@ -198,8 +201,19 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
     run_id = (record.get('run_id') if same_run else None) or uuid4().hex
     record.update(pid=os.getpid(), identity=identity, run_id=run_id, log=log_path, status='running', started=now(), finished=None)
     write_json(run_path, record)
-    completed = []
     try:
+        yield record
+        record.update(status='completed', finished=now())
+    except BaseException:
+        record.update(status='failed', finished=now())
+        raise
+    finally:
+        write_json(run_path, record)
+
+
+def _run(exp, config, *, selected, force=False, group=None, handlers=None):
+    completed = []
+    with run_session(exp):
         for current in selected:
             path = exp / 'state' / f'{current}.json'
             digest = stage_hash(config, current)
@@ -247,32 +261,38 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
             write_json(path, state)
             log(exp, f'{current}: {state["notes"]}', config)
             completed.append(current)
-        record.update(status='completed', finished=now())
         return completed
-    except BaseException:
-        record.update(status='failed', finished=now())
-        raise
-    finally:
-        write_json(run_path, record)
 
 
 def background(exp, *, until=None, stage=None, force=False, group=None):
     exp = Path(exp).resolve()
+    arguments = ['run', str(exp)]
+    for option, value in [('--until', until), ('--stage', stage), ('--group', group)]:
+        if value:
+            arguments.extend([option, value])
+    if force:
+        arguments.append('--force')
+    return launch_background(exp, arguments)
+
+
+def launch_background(exp, arguments, log_name='background.log'):
+    """Hand off the lock only after the child's run identity has been published."""
     with run_lock(exp) as fd:
         ready_read, ready_write = os.pipe()
-        command = [sys.executable, '-m', 'test_survival.cli', 'run', str(exp), '--lock-fd', str(fd), '--ready-fd', str(ready_read)]
-        for option, value in [('--until', until), ('--stage', stage), ('--group', group)]:
-            if value:
-                command.extend([option, value])
-        if force:
-            command.append('--force')
-        path = exp / 'state/background.log'
-        with path.open('a') as stream:
-            child = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                     start_new_session=True, pass_fds=(fd, ready_read))
-        os.close(ready_read)
+        command = [sys.executable, '-m', 'test_survival.cli', *arguments, '--lock-fd', str(fd), '--ready-fd', str(ready_read)]
+        path = exp/'state'/log_name
         try:
-            write_json(exp / 'state/run.json', dict(pid=child.pid, identity=process_identity(child.pid), run_id=uuid4().hex, log=str(path), status='running', started=now()))
+            with path.open('a') as stream:
+                child = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                         start_new_session=True, pass_fds=(fd, ready_read))
+        except BaseException:
+            os.close(ready_write)
+            raise
+        finally:
+            os.close(ready_read)
+        try:
+            write_json(exp/'state/run.json', dict(pid=child.pid, identity=process_identity(child.pid), run_id=uuid4().hex,
+                                                 log=str(path), status='running', started=now()))
             os.write(ready_write, b'1')
         finally:
             os.close(ready_write)

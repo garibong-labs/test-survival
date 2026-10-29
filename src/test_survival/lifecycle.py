@@ -68,9 +68,24 @@ def signal_owned(record, sig):
     return False
 
 
+def owner_experiment(exp):
+    """Pool workspaces publish ownership explicitly; never infer it from parents."""
+    exp = Path(exp).resolve()
+    owner = read_json(exp/'state/run-owner.json')
+    if owner is None:
+        return exp
+    root = Path(owner['experiment']).resolve()
+    if root == exp or not exp.is_relative_to(root):
+        raise RuntimeError('Invalid nested run owner')
+    run = read_json(root/'state/run.json', {})
+    if not owner.get('run_id') or run.get('run_id') != owner['run_id'] or run.get('status') != 'running':
+        raise RuntimeError('Nested workspace belongs to an inactive run')
+    return root
+
+
 def launch(exp, command, **kwargs):
     """Retain identity even if the coordinator dies before its worker exits."""
-    exp = Path(exp)
+    exp = owner_experiment(exp)
     if (exp/'state/stopping.json').exists():
         raise RuntimeError('Experiment stop cleanup is in progress')
     run = read_json(exp/'state/run.json', {})
@@ -83,7 +98,7 @@ def launch(exp, command, **kwargs):
 
 def container_options(exp):
     """Record launch intent before Docker can create even a short-lived container."""
-    exp = Path(exp)
+    exp = owner_experiment(exp)
     if (exp/'state/stopping.json').exists():
         raise RuntimeError('Experiment stop cleanup is in progress')
     run = read_json(exp/'state/run.json', {})

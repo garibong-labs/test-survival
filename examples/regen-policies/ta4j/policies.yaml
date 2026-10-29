@@ -1,0 +1,26 @@
+policies:
+  baseline: experiments/commit-survival
+  baseline_config: null
+  groups:
+  - dev-scope
+  - ouedraogo
+  releases:
+  - 0.22.0
+  - 0.23.0
+  threshold: 0.5
+  max_threshold_triggers: 1
+  generator_overrides: {}
+  concurrency:
+    ouedraogo: 3
+    dev_selection: 1
+  fill_seed: 20261029
+  set:
+  - name: release-reset
+    trigger: release
+    action: reset
+  - name: half-reset
+    trigger: threshold
+    action: reset
+  - name: half-fill
+    trigger: threshold
+    action: fill

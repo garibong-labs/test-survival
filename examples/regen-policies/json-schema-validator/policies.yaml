@@ -1,0 +1,31 @@
+policies:
+  baseline: experiments/commit-survival-run2
+  baseline_config: experiments/commit-survival-replay-followup/experiment.yaml
+  groups:
+  - dev-scope
+  - ktester
+  - ouedraogo-adj2
+  releases:
+  - 1.5.0
+  - 2.0.0
+  threshold: 0.5
+  max_threshold_triggers: 1
+  generator_overrides:
+    ktester:
+      params:
+        fix_tries: 3
+  concurrency:
+    ktester: 3
+    ouedraogo-adj2: 3
+    dev_selection: 1
+  fill_seed: 20261029
+  set:
+  - name: release-reset
+    trigger: release
+    action: reset
+  - name: half-reset
+    trigger: threshold
+    action: reset
+  - name: half-fill
+    trigger: threshold
+    action: fill
