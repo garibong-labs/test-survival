@@ -91,10 +91,11 @@ def test_ci_permissions_triggers_and_pins():
     for path in (ROOT/'.github/workflows').glob('*.yml'):
         data = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
         workflows[path.name] = data
-        assert data['permissions'] == {'contents': 'read'}
-        assert set(data['on']) == {'pull_request', 'push', 'workflow_dispatch'}
-        assert data['on']['push']['branches'] == ['main']
-        assert data['concurrency']['cancel-in-progress'] == 'true'
+        if path.name != 'eli-review-request.yml':
+            assert data['permissions'] == {'contents': 'read'}
+            assert set(data['on']) == {'pull_request', 'push', 'workflow_dispatch'}
+            assert data['on']['push']['branches'] == ['main']
+            assert data['concurrency']['cancel-in-progress'] == 'true'
         for job in data['jobs'].values():
             assert 0 < int(job['timeout-minutes']) <= 15
             for step in job['steps']:
@@ -111,3 +112,55 @@ def test_ci_permissions_triggers_and_pins():
     for line in (ROOT/'ci/java.Dockerfile').read_text().splitlines():
         if line.startswith('FROM '):
             assert re.search(r'@sha256:[0-9a-f]{64}(?: |$)', line)
+
+
+def test_eli_review_notification_workflow_security_contract():
+    workflow = yaml.load((ROOT/'.github/workflows/eli-review-request.yml').read_text(),
+                         Loader=yaml.BaseLoader)
+    # Exact keys also prevent extra triggers, permission overrides, cancellation,
+    # environment injection, or additional jobs/steps outside this contract.
+    assert set(workflow) == {'name', 'on', 'permissions', 'jobs'}
+    assert workflow['name'] == 'Eli review request notification'
+    assert workflow['permissions'] == {'contents': 'read', 'pull-requests': 'read'}
+    assert workflow['on'] == {
+        'pull_request_target': {'branches': ['main'], 'types': ['review_requested']},
+        'workflow_dispatch': '',
+    }
+    assert set(workflow['jobs']) == {'notify'}
+    notify = workflow['jobs']['notify']
+    assert set(notify) == {'if', 'runs-on', 'timeout-minutes', 'steps'}
+    # Compare the whole expression, preserving AND/OR grouping and branch gates.
+    expected_gate = """
+        github.repository == 'garibong-labs/test-survival' &&
+        github.actor == 'Hamjoon' && github.run_attempt == 1 &&
+        ((github.event_name == 'pull_request_target' &&
+          github.event.action == 'review_requested' &&
+          github.event.pull_request.base.ref == 'main' &&
+          github.event.requested_reviewer.login == 'agent-eli' &&
+          github.event.pull_request.state == 'open' &&
+          github.event.pull_request.draft == false) ||
+         (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+    """
+    assert ' '.join(notify['if'].split()) == ' '.join(expected_gate.split())
+    assert notify['runs-on'] == 'ubuntu-latest'
+    assert notify['timeout-minutes'] == '2'
+    assert notify['steps'] == [
+        {
+            'name': 'Read isolated helper from trusted base commit',
+            'uses': 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+            'with': {
+                'ref': '${{ github.sha }}',
+                'persist-credentials': 'false',
+                'sparse-checkout-cone-mode': 'false',
+                'sparse-checkout': '/.github/scripts/review_request_discord.py',
+            },
+        },
+        {
+            'name': 'Verify live request and notify Discord',
+            'run': 'python3 -I .github/scripts/review_request_discord.py',
+            'env': {
+                'GH_TOKEN': '${{ github.token }}',
+                'ELI_REVIEW_DISCORD_WEBHOOK_URL': '${{ secrets.ELI_REVIEW_DISCORD_WEBHOOK_URL }}',
+            },
+        },
+    ]
