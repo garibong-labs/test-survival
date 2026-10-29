@@ -47,7 +47,7 @@ def test_fixture_checksum_mismatch_does_not_publish(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('problem', ['skipped', 'failure', 'error', 'missing', 'duplicate', None])
-def test_integration_report_requires_both_successful_fixtures(tmp_path, problem):
+def test_integration_report_requires_all_successful_fixtures(tmp_path, problem):
     names = sorted(fixture.FIXTURES)
     if problem == 'missing':
         names.pop()
@@ -105,6 +105,8 @@ def test_ci_permissions_triggers_and_pins():
     assert workflows['python-tests.yml']['jobs']['python']['strategy']['matrix']['python'] == ['3.12', '3.14']
     java = workflows['java-integration.yml']['jobs']['java']
     assert java['env']['SURVIVAL_REQUIRE_JAVA_TESTS'] == '1'
+    fixtures = next(step['run'] for step in java['steps'] if step.get('name') == 'Run real Java fixtures')
+    assert 'tests/test_compiler_session.py' in fixtures and 'tests/test_junit4.py' in fixtures
     assert java['steps'][-1]['run'] == 'python ci/java_fixture.py report java-results.xml'
     for line in (ROOT/'ci/java.Dockerfile').read_text().splitlines():
         if line.startswith('FROM '):

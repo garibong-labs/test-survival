@@ -26,11 +26,13 @@ try:
     from ..rules.environment import matches as environment_matches
     from . import maven_dependencies
     from .compilation import CompilationService
+    from .compiler_session import CompilerSession
 except ImportError:  # This worker is also invoked directly inside the container.
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
     from rules.environment import matches as environment_matches
     from adapters import maven_dependencies
     from adapters.compilation import CompilationService
+    from adapters.compiler_session import CompilerSession
 
 RUNNER_JAR_TRANSIENT_PATTERNS = maven_dependencies.TRANSIENT_PATTERNS
 
@@ -268,6 +270,11 @@ def setup(wait=time.sleep):
 
 
 def run_group(job):
+    with CompilerSession(EXP, execute, job.get('javac_mode', 'subprocess')) as session:
+        return _run_group(job, session)
+
+
+def _run_group(job, session):
     start=time.monotonic()
     index,group,phase=job['index'],job['group'],job['phase']
     rows=job['methods']
@@ -279,7 +286,7 @@ def run_group(job):
     by_file=collections.defaultdict(list)
     for row in rows:by_file[row['file']].append(row)
     files=[];suite_compile=None;precompiled=None
-    compiler=CompilationService(EXP,execute,{k:job[k] for k in ('index','sha','group','phase')})
+    compiler=CompilationService(EXP,session.execute,{k:job[k] for k in ('index','sha','group','phase')},backend=session.identity)
     if DEVELOPER and rows:
         folder,cp=classpath(index)
         suite_classes=work/'suite-classes';suite_classes.mkdir()
