@@ -156,13 +156,19 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
     sourcepath=EXP/members[0]['source_root'] if members and members[0].get('source_root') else EXP/'dev/src-test-t/java' if DEVELOPER else source.parent
     if precompiled is not None:
         classes,compile_run=precompiled
+    elif members and members[0].get('execution_hash'):
+        try:
+            from .snapshot_compile import compile_snapshot
+        except ImportError:
+            from adapters.snapshot_compile import compile_snapshot
+        classes,compile_run=compile_snapshot(sys.modules[__name__],sourcepath,[source],part/'snapshot',cp,folder,compiler=compiler)
     elif compiler is not None:
         compile_run=compiler.compile([source],sourcepath,cp,classes,folder,part/'javac.txt',JVM['javac'],TIMEOUTS['compile'])
     else:
         compile_run=execute(['javac','-J-Xmx'+JVM['javac'],'-cp',cp,'-sourcepath',str(sourcepath),'-d',str(classes),str(source)],folder,part/'javac.txt',TIMEOUTS['compile'])
     record=dict(file=filename,compile=compile_run,runs=[],methods=[])
     if compile_run['exit_code']:
-        record['methods']=[{**r,'state':'compile-fail','initial_state':'compile-fail','baseline_states':[],'selector':[],'flaky':False,'message':(part/'javac.txt').read_text(errors='replace')[:4000]} for r in members]
+        record['methods']=[{**r,'state':'compile-fail','initial_state':'compile-fail','baseline_states':[],'selector':[],'flaky':False,'message':(EXP/compile_run['log']).read_text(errors='replace')[:4000]} for r in members]
         return record
     resources=EXP/members[0].get('resource_root','dev/src-test-t') if members else EXP/'dev/src-test-t'
     runtime=':'.join([str(classes),cp,str(resources/'resources'),str(resources/'suite')])

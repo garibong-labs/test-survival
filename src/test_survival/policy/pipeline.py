@@ -2,12 +2,10 @@
 import os
 from pathlib import Path
 import shutil
-import subprocess
-import sys
 
 from ..config import ConfigError, canonical_hash, load, result_inputs
 from ..io import now, read_json, write_json
-from ..pipeline import PipelineError, run_lock, process_alive
+from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
 from . import plan as planning
 
@@ -17,7 +15,7 @@ STEPS = ('pools','survive','cover','report')
 class Steps:
     def __init__(self, baseline, plan):
         self.b = baseline
-        self.digest = canonical_hash(dict(config=result_inputs(baseline.execution_config), policies=baseline.options, plan=plan,
+        self.digest = canonical_hash(dict(evidence_version=2, config=result_inputs(baseline.execution_config), policies=baseline.options, plan=plan,
                                           frozen=baseline.frozen, survival=baseline.curves))
 
     def __call__(self, name, action, *, outputs=()):
@@ -41,7 +39,7 @@ class Steps:
 
 def run(exp, config, until='report', force=False, lock_fd=None):
     b = Baseline(exp,config)  # Validate the read-only boundary before creating lock/state files.
-    with run_lock(b.exp, lock_fd):
+    with run_lock(b.exp, lock_fd), run_session(b.exp):
         if force:
             root = b.exp/'results/policy'
             if root.exists():
@@ -80,15 +78,10 @@ def run(exp, config, until='report', force=False, lock_fd=None):
 
 def background(exp, config, until, force):
     b = Baseline(exp,config)
-    with run_lock(b.exp) as fd:
-        command = [sys.executable,'-m','test_survival.cli','policy','run',str(b.exp),'--until',until,'--lock-fd',str(fd)]
-        if force:
-            command.append('--force')
-        log = b.exp/'state/policy-background.log'
-        with log.open('a') as stream:
-            child = subprocess.Popen(command,stdout=stream,stderr=subprocess.STDOUT,stdin=subprocess.DEVNULL,start_new_session=True,pass_fds=(fd,))
-        write_json(b.exp/'state/policy-background.json',dict(pid=child.pid,started=now(),log=str(log)))
-        return child.pid,log
+    arguments = ['policy','run',str(b.exp),'--until',until]
+    if force:
+        arguments.append('--force')
+    return launch_background(b.exp, arguments, log_name='policy-background.log')
 
 
 def status(exp,config):
@@ -110,4 +103,10 @@ def command(args):
         pid,log = background(args.exp_dir,config,args.until,args.force)
         print(f'PID {pid}; log {log}')
     else:
+        if args.ready_fd is not None:
+            try:
+                if os.read(args.ready_fd, 1) != b'1':
+                    raise PipelineError('Background startup was interrupted')
+            finally:
+                os.close(args.ready_fd)
         run(args.exp_dir,config,args.until,args.force,args.lock_fd)

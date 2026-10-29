@@ -10,7 +10,7 @@ from test_survival.config import ConfigError, validate, stage_hash
 from test_survival.io import read_csv, read_json, write_json, write_csv
 from test_survival.policy.baseline import Baseline
 from test_survival.policy.plan import release_index, threshold_indices, next_evaluable, build_plan, run as plan
-from test_survival.policy.segments import key, segment, regenerate, evaluate, assemble
+from test_survival.policy.segments import execution_id, key, segment, regenerate, evaluate, assemble
 from test_survival.policy.pipeline import Steps
 
 
@@ -244,7 +244,7 @@ def test_pool_and_baseline_records_import_without_java_execution(baseline,monkey
     runs.baseline_catalog=frozen
     tests=frozen['dev-scope'];runs.register(tests)
     monkeypatch.setattr(runs,'initialize',lambda:pytest.fail('Imported records must not launch Java'))
-    imported=runs.get(1,tests[0]['file_hash'])
+    imported=runs.get(1,execution_id(tests[0]))
     assert imported['methods'][0]['state']=='pass' and imported['imported']
     new=test_test('new')
     runs.register([new]); runs.pool_catalog[2,new['file_hash']]={'A#new':dict(new,state='pass')}
@@ -284,3 +284,154 @@ def test_coverage_batches_by_resource_snapshot_not_test_method(tmp_path):
     result=coverage(SimpleNamespace(exp=tmp_path,worker=worker),1,tests,'union')
     assert [len(j['methods']) for j in jobs]==[4,3]
     assert len(result['methods'])==7 and result['universe']==[('A.java',1)]
+
+
+@pytest.mark.parametrize('changed', ['helper', 'resource'])
+def test_execution_identity_retains_snapshot_dependencies(baseline, tmp_path, monkeypatch, changed):
+    from test_survival.policy.artifacts import snapshot
+    from test_survival.policy.execute import Runs
+    exp,config,root = baseline
+    b = Baseline(exp,config)
+    test = b.frozen['dev-scope'][0]
+    helper = root/'dev/src-test-t/java/Provider.java'; helper.write_text('class Provider { int value = 1; }')
+    resource = root/'dev/src-test-t/resources/value'; resource.parent.mkdir(parents=True); resource.write_text('1')
+    def capture(name):
+        return snapshot(root, exp, [test], group='dev-scope', method='dev', scope=[], prefix=name)[0]
+    original = capture('original')
+    identical = capture('same-content-different-path')
+    assert original['file_hash'] == identical['file_hash']
+    assert key(original) == key(identical)
+    if changed == 'helper': helper.write_text('class Provider { int value = 2; }')
+    else: resource.write_text('2')
+    regenerated = capture('regenerated')
+    assert original['file_hash'] == regenerated['file_hash']
+    assert key(original) != key(regenerated)
+    runs = Runs(b,Steps(b,build_plan(b)))
+    runs.register([original,regenerated]);runs.baseline_catalog={'dev-scope':[original]}
+    runs.pool_catalog[2,execution_id(regenerated)]={'ATest#works':dict(regenerated,state='pass')}
+    monkeypatch.setattr(runs,'initialize',lambda:pytest.fail('Both snapshot observations should be imported'))
+    before = runs.get(2,execution_id(original)); after = runs.get(2,execution_id(regenerated))
+    assert before['methods'][0]['state'] == 'fail'
+    assert after['methods'][0]['state'] == 'pass'
+    assert runs.catalog[execution_id(original)]['ATest#works']['source_root'] == original['source_root']
+    assert assemble([original,regenerated],{execution_id(original):before,execution_id(regenerated):after})[1]['state']=='pass'
+    assert len(runs.needed) == 2
+
+
+def test_coverage_keeps_same_source_with_different_snapshots(baseline, monkeypatch):
+    from test_survival.policy import cover
+    exp,config,root = baseline; b=Baseline(exp,config)
+    commit=b.by_index[1]
+    write_csv(root/'results/changed-lines.csv',[dict(**{k:commit[k] for k in ('index','sha','date','subject')},scope_executable=2)],['index','sha','date','subject','scope_executable'])
+    write_json(root/'results/changes/1.json',dict(post_image={'src/main/java/A.java':[1,2]}))
+    old=dict(test_test('a'),execution_hash='old-dependencies')
+    new=dict(old,execution_hash='new-dependencies')
+    for p,t in [('none',old),('half-fill',old),('release-reset',new)]:
+        write_json(exp/f'results/policy/{p}/alive.json',{'1':{'dev-scope':[t]}})
+    monkeypatch.setattr(cover.JavaMavenAdapter,'build',lambda *_:dict(build='ok'))
+    monkeypatch.setattr(cover.JavaMavenAdapter,'setup_runner',lambda *_:None)
+    def measure(adapter,index,tests,name):
+        assert {key(t) for t in tests} == {key(old),key(new)}
+        return dict(methods=[dict(t,state='pass',lines=[['src/main/java/A.java',1]] if t==old else [['src/main/java/A.java',1],['src/main/java/A.java',2]]) for t in tests])
+    monkeypatch.setattr(cover,'coverage',measure)
+    cover.run(b,Steps(b,build_plan(b)))
+    assert read_json(exp/'results/policy/half-fill/coverage-total.json')['groups']['dev-scope']==1
+    assert read_json(exp/'results/policy/release-reset/coverage-total.json')['groups']['dev-scope']==2
+    raw=read_json(exp/'results/policy/coverage/1.json');raw['methods'][0]['state']='error'
+    write_json(exp/'results/policy/coverage/1.json',raw)
+    with pytest.raises(ValueError,match='Coverage failed for alive tests'):
+        cover.run(b,Steps(b,build_plan(b)))
+
+
+def test_plan_excludes_tags_already_contained_at_anchor(baseline):
+    exp,config,_=baseline
+    b=Baseline(exp,config)
+    b.git('tag','historical',b.anchor['sha'])
+    config['policies']['releases']=['historical','release']
+    result=build_plan(Baseline(exp,config))
+    historical=next(p for p in result['points'] if p.get('tag')=='historical')
+    assert historical['index'] is None and historical['reason']=='release outside range'
+    assert {p['index'] for p in result['pools']}=={2}
+    assert release_index(b.commits,'old',lambda *_:True,anchor_sha=b.anchor['sha']) is None
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_policy_coordinator_registers_and_finalizes_lifecycle(baseline,monkeypatch,fails):
+    from test_survival.policy import pipeline, pools
+    from test_survival.lifecycle import process_identity
+    import os
+    exp,config,_=baseline
+    def build(b,plan,step):
+        record=read_json(exp/'state/run.json')
+        assert record['status']=='running' and record['pid']==os.getpid()
+        assert record['identity']==process_identity(os.getpid()) and record['run_id']
+        if fails: raise RuntimeError('fixture failure')
+        return {}
+    monkeypatch.setattr(pools,'run',build)
+    if fails:
+        with pytest.raises(RuntimeError,match='fixture failure'):pipeline.run(exp,config,until='pools')
+    else:pipeline.run(exp,config,until='pools')
+    assert read_json(exp/'state/run.json')['status']==('failed' if fails else 'completed')
+    assert read_json(exp/'state/run.json')['finished']
+
+
+@pytest.mark.parametrize('kill_coordinator', [False, True])
+def test_stop_cleans_nested_policy_workers_and_preserves_completed_steps(baseline,kill_coordinator):
+    import os
+    import sys
+    import time
+    from test_survival import lifecycle
+    from test_survival.pipeline import stop, run_lock
+    exp,config,_=baseline
+    exp.mkdir();(exp/'experiment.yaml').write_text(yaml.safe_dump(config))
+    script = '''
+import sys,time
+from pathlib import Path
+from test_survival.config import load
+from test_survival.io import read_json,write_json
+from test_survival.lifecycle import launch
+from test_survival.policy import pipeline,pools
+exp=Path(sys.argv[1])
+def fixture_pools(b,plan,step):
+    nested=exp/'results/policy/pools/dev-scope/2'
+    owner=read_json(exp/'state/run.json')
+    write_json(nested/'state/run-owner.json',dict(experiment=str(exp),run_id=owner['run_id']))
+    worker=launch(nested,[sys.executable,'-c','import time;time.sleep(30)'],start_new_session=True)
+    (exp/'worker.pid').write_text(str(worker.pid))
+    print('ready',flush=True)
+    time.sleep(30)
+    return {}
+pools.run=fixture_pools
+pipeline.run(exp,load(exp),until='pools')
+'''
+    child=subprocess.Popen([sys.executable,'-c',script,str(exp)],stdout=subprocess.PIPE,text=True,start_new_session=True)
+    worker=None
+    try:
+        assert child.stdout.readline().strip()=='ready'
+        worker=int((exp/'worker.pid').read_text())
+        assert read_json(exp/'state/run.json')['status']=='running'
+        assert len(list((exp/'state/workers').glob('*.json')))==1
+        if kill_coordinator:
+            child.kill();child.wait(timeout=5)
+            assert lifecycle.process_identity(worker) is not None
+        stop(exp)
+        child.wait(timeout=5)
+        assert lifecycle.process_identity(worker) is None
+        assert read_json(exp/'state/policy-pools.json')['notes']=='stopped by user'
+        assert read_json(exp/'state/policy-plan.json')['status']=='completed'
+        with run_lock(exp):pass
+    finally:
+        if worker and lifecycle.process_identity(worker):os.kill(worker,9)
+        if child.poll() is None:child.kill()
+        child.wait()
+
+
+def test_policy_background_uses_registered_handshake(baseline,monkeypatch):
+    from test_survival.policy import pipeline
+    exp,config,_=baseline
+    calls=[]
+    def launch(root,args,log_name):
+        calls.append((root,args,log_name));return 123,root/'state'/log_name
+    monkeypatch.setattr(pipeline,'launch_background',launch)
+    assert pipeline.background(exp,config,'pools',False)[0]==123
+    assert calls==[(exp,['policy','run',str(exp),'--until','pools'],'policy-background.log')]

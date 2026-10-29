@@ -57,7 +57,7 @@ def run(b):
         raise ValueError('none differs from baseline')
     checks.append('- none: survival.csv is byte-for-byte identical to the baseline.')
     needed = read_json(root/'needed-runs.json',[])
-    missing = [r for r in needed if not (root/f'runs/{r["file_hash"]}/{r["index"]}.json').exists()]
+    missing = [r for r in needed if not (root/f'runs/{r["execution_hash"]}/{r["index"]}.json').exists()]
     if missing:
         raise ValueError('Missing policy runs')
     checks.append(f'- Every needed shared run is present ({len(needed)} runs).')

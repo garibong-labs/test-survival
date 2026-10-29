@@ -49,6 +49,7 @@ def parser():
         if name == 'run':
             command.add_argument('--background', action='store_true')
             command.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
+            command.add_argument('--ready-fd', type=int, help=argparse.SUPPRESS)
             command.add_argument('--until', choices=('pools', 'survive', 'cover', 'report'), default='report')
             command.add_argument('--force', action='store_true')
     dashboard = sub.add_parser('dashboard')

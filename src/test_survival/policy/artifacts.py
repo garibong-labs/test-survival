@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import shutil
 
+from ..config import canonical_hash
 from ..io import read_csv, read_json
 
 
@@ -32,6 +33,13 @@ def unit(exp, group, test, method, scope):
     return candidates[0]
 
 
+def tree_hash(root, pattern='*'):
+    """Content and relative names, independent of the snapshot's storage path."""
+    root = Path(root)
+    return canonical_hash([(p.relative_to(root).as_posix(), hashlib.sha256(p.read_bytes()).hexdigest())
+                           for p in sorted(root.rglob(pattern)) if p.is_file()])
+
+
 def snapshot(source_exp, destination, tests, *, group, method, scope, prefix):
     """Copy evidence, never symlink into the read-only baseline."""
     result = []
@@ -46,14 +54,30 @@ def snapshot(source_exp, destination, tests, *, group, method, scope, prefix):
             target = destination/prefix/'dev/src-test-t'/name
             if source.exists() and not target.exists():
                 shutil.copytree(source, target)
+    resource_root = destination/prefix/'dev/src-test-t'
+    resources_hash = canonical_hash({name:tree_hash(resource_root/name) for name in ('resources','suite')})
+    roots = {}
     for t in tests:
         source = source_exp/t['file']
         target = destination/prefix/t['file']
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        source_root = destination/prefix/'dev/src-test-t/java' if method == 'dev' else target.parent
+        if method != 'dev':
+            # Retain sibling sources that javac or reflective providers may need.
+            for sibling in source.parent.rglob('*.java'):
+                copied = source_root/sibling.relative_to(source.parent)
+                if not copied.exists():
+                    copied.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(sibling, copied)
+        if source_root not in roots:
+            roots[source_root] = tree_hash(source_root, '*.java')
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        execution_hash = canonical_hash(dict(file=digest, sources=roots[source_root], resources=resources_hash))
         row = {**t, 'file':str(target.relative_to(destination)), 'file_hash':digest,
+               'execution_hash':execution_hash, 'source_root':str(source_root.relative_to(destination)),
+               'source_tree_hash':roots[source_root], 'resource_tree_hash':resources_hash,
                'unit':unit(source_exp, group, t, method, scope), 'origin_id':t['id'], 'resource_root':str(Path(prefix)/'dev/src-test-t')}
         if method == 'dev':
             row.update(source_root=str(Path(prefix)/'dev/src-test-t/java'), resource_root=str(Path(prefix)/'dev/src-test-t'))

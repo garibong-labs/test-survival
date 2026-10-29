@@ -4,6 +4,8 @@ from collections import defaultdict
 from pathlib import Path
 import shutil
 
+from .snapshot_compile import compile_snapshot
+
 
 def run(w, job):
     work = w.EXP/job['work']
@@ -21,19 +23,21 @@ def run(w, job):
         raise RuntimeError('Cannot compile per-test coverage launcher')
     groups = defaultdict(list)
     for t in job['methods']:
-        groups['suite' if job.get('full_suite') else t['file_hash']].append(t)
-    manifest = []; outputs = []; compile_runs = []
+        groups['suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])].append(t)
+    manifest = []; outputs = []; compile_runs = []; snapshots = {}
     for number, tests in enumerate(groups.values()):
         part = work/str(number); part.mkdir()
-        classes = part/'classes'; classes.mkdir()
         root = w.EXP/tests[0].get('source_root', str(Path(tests[0]['file']).parent))
-        sources = sorted(root.rglob('*.java')) if job.get('full_suite') else [w.EXP/tests[0]['file']]
-        args = part/'sources.args'
-        args.write_text('\n'.join('"'+str(p).replace('\\', '\\\\').replace('"', '\\"')+'"' for p in sources))
-        compiled = w.execute(['javac', '-J-Xmx'+w.JVM['javac'], '-cp', cp, '-sourcepath', str(root), '-d', str(classes), '@'+str(args)], folder, part/'javac.txt', w.TIMEOUTS['compile'])
+        if root in snapshots:
+            classes, compiled = snapshots[root]
+        else:
+            classes, compiled = compile_snapshot(w, root, [w.EXP/tests[0]['file']], part, cp, folder,
+                                                  full_suite=job.get('full_suite', False))
+            if compiled['exit_code'] == 0 and compiled['snapshot_full_suite']:
+                snapshots[root] = (classes, compiled)
         compile_runs.append(compiled)
         if compiled['exit_code']:
-            raise RuntimeError('Coverage suite compilation failed; see '+str(part/'javac.txt'))
+            raise RuntimeError('Coverage snapshot compilation failed; see '+compiled['log'])
         selection = part/'selectors.tsv'
         selection.write_text('\n'.join(sorted({t['class'] if job.get('full_suite') else t['class']+'\t'+t['method'] for t in tests}))+'\n')
         resource_root = w.EXP/tests[0].get('resource_root', 'dev/src-test-t')
@@ -68,7 +72,7 @@ def run(w, job):
         for t in tests:
             ident = (t['class'], t['method']); states = observed[ident]
             state = 'pass' if states and all(s == 'SUCCESSFUL' for s, _ in states) else 'error' if states else 'absent'
-            methods.append(dict(id=t['id'], file_hash=t['file_hash'], **{'class':t['class']}, method=t['method'], state=state,
+            methods.append(dict(id=t['id'], file_hash=t['file_hash'], execution_hash=t.get('execution_hash', t['file_hash']), **{'class':t['class']}, method=t['method'], state=state,
                                 message='\n'.join(m for _, m in states), lines=sorted(covered[ident])))
     w.write_json(w.EXP/job['output'], dict(status='evaluated', index=job['index'], sha=job['sha'], methods=methods,
                                          universe=sorted(universe), run=run, compile=compile_runs))

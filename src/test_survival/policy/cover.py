@@ -5,6 +5,12 @@ from .pools import coverage
 from .segments import key
 
 
+def require_passed(raw):
+    failed = [t['id'] for t in raw['methods'] if t.get('state') != 'pass']
+    if failed:
+        raise ValueError('Coverage failed for alive tests; inspect per-test evidence: '+', '.join(failed[:5]))
+
+
 def run(b, step):
     adapter = JavaMavenAdapter(b.exp, b.execution_config)
     policy_names = [p['name'] for p in b.options['set']]
@@ -32,11 +38,13 @@ def run(b, step):
                 raise RuntimeError('Coverage build differs from baseline')
             raw = coverage(adapter,index,list(tests.values()),str(index))
             write_json(path,raw)
+            require_passed(raw)
         step('coverage-'+str(index),measure,outputs=[path])
         raw = read_json(path)
-        observed = {t['file_hash']+'|'+t['class']+'#'+t['method']:t for t in raw['methods']}
+        observed = {key(t):t for t in raw['methods']}
         if set(observed) != set(tests):
             raise ValueError('Coverage union is incomplete')
+        require_passed(raw)
         universe_path = next((b.path/f'results/coverage/{index}-{g}-lines.csv' for g in b.frozen
                               if (b.path/f'results/coverage/{index}-{g}-lines.csv').exists()), None)
         executable = changed & {(r['file'],int(r['line'])) for r in read_csv(universe_path)} if universe_path else changed

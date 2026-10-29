@@ -40,6 +40,10 @@ def coverage(adapter, index, tests, name, full_suite=False):
 def build_pool(b, point, dev_target):
     group, index = point['group'], point['index']
     exp = b.exp/f'results/policy/pools/{group}/{index}'
+    owner = read_json(b.exp/'state/run.json', {})
+    if owner.get('status') != 'running' or not owner.get('run_id'):
+        raise RuntimeError('Pool generation requires a registered policy run')
+    write_json(exp/'state/run-owner.json', dict(experiment=str(b.exp), run_id=owner['run_id']))
     config = deepcopy(b.execution_config)
     config['anchor'] = point['sha']
     config['screen']['stable_runs'] = 3

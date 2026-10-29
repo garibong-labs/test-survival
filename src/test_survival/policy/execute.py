@@ -4,7 +4,7 @@ from collections import defaultdict
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv
 from .artifacts import snapshot
-from .segments import key, identity, segment, regenerate, assemble, evaluate
+from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
 
 
 class Runs:
@@ -29,7 +29,7 @@ class Runs:
 
     def register(self, tests):
         for t in tests:
-            self.catalog[t['file_hash']][identity(t)] = t
+            self.catalog[execution_id(t)][identity(t)] = t
 
     def get(self, index, digest):
         self.needed.add((digest,index))
@@ -39,12 +39,13 @@ class Runs:
         source = methods[0]
         methods = [{**t, 'file':source['file'], **{k:source[k] for k in ('source_root','resource_root') if k in source}} for t in methods]
         def execute():
-            imported = dict(self.pool_catalog.get((index,digest), {}))
+            imported = {}
             for group, baseline_tests in self.baseline_catalog.items():
-                candidates = [t for t in baseline_tests if t['file_hash'] == digest]
+                candidates = [t for t in baseline_tests if execution_id(t) == digest]
                 if candidates:
                     raw = {r['id']:r for r in self.b.raw(index,group)['methods']}
                     imported.update({identity(t):raw[t['origin_id']] for t in candidates})
+            imported.update(self.pool_catalog.get((index,digest), {}))
             if set(imported) >= {identity(t) for t in methods}:
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated', imported=True,
                                       methods=[imported[identity(t)] for t in methods]))
@@ -87,7 +88,7 @@ def survive(b, plan, pools, step):
     runs.baseline_catalog = frozen
     for (_,index), tests in pools.items():
         for t in tests:
-            runs.pool_catalog[index,t['file_hash']][identity(t)] = dict(t,state='pass',flaky=False)
+            runs.pool_catalog[index,execution_id(t)][identity(t)] = dict(t,state='pass',flaky=False)
     for tests in [*frozen.values(), *pools.values()]:
         runs.register(tests)
     policies = {p['name']:p for p in b.options['set']}
@@ -114,9 +115,9 @@ def survive(b, plan, pools, step):
                         by_id = {r['id']:r for r in raw['methods']}
                         observations = [{**by_id[t['origin_id']], 'id':key(t)} for t in s['tests']]
                     else:
-                        observations = assemble(s['tests'], {h:runs.get(index,h) for h in sorted({t['file_hash'] for t in s['tests']})})
+                        observations = assemble(s['tests'], {h:runs.get(index,h) for h in sorted({execution_id(t) for t in s['tests']})})
                 if index and not evaluable and s['segment'] > 1:
-                    for digest in {t['file_hash'] for t in s['tests']}:
+                    for digest in {execution_id(t) for t in s['tests']}:
                         runs.carry(index,digest)
                 alive[p][g], lost, stats[g] = evaluate(s, alive[p][g], observations, evaluated=evaluable)
                 failures[p].extend(dict(index=index,sha=commit['sha'],group=g,segment=s['segment'],id=t['id'],kind=t['state'],flaky=t.get('flaky',False)) for t in lost)
@@ -125,7 +126,7 @@ def survive(b, plan, pools, step):
             if triggered:
                 for g in triggered:
                     s = regenerate(current[p][g],alive[p][g],pools[(g,index)],action=policy['action'],developer=g in b.dev,seed=b.options['fill_seed'],index=index)
-                    for digest in sorted({t['file_hash'] for t in s['tests']}):
+                    for digest in sorted({execution_id(t) for t in s['tests']}):
                         runs.get(index,digest)
                     current[p][g] = s; segments[p][g].append(s); alive[p][g] = {key(t) for t in s['tests']}
                     _, _, stats[g] = evaluate(s,alive[p][g],[],evaluated=False)
@@ -150,4 +151,4 @@ def survive(b, plan, pools, step):
         write_json(directory/'alive.json', alive_at[p])
         write_csv(directory/'survival.csv',curves[p],list(curves[p][0]))
         write_csv(directory/'first-failures.csv',failures[p],['index','sha','group','segment','id','kind','flaky'])
-    write_json(b.exp/'results/policy/needed-runs.json',[dict(file_hash=h,index=i) for h,i in sorted(runs.needed)])
+    write_json(b.exp/'results/policy/needed-runs.json',[dict(execution_hash=h,index=i) for h,i in sorted(runs.needed)])

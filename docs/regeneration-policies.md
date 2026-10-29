@@ -33,6 +33,8 @@ survival policy run experiments/regen-policies --background --until report
 
 Planning never builds or calls a model. A tag maps to the first indexed commit
 containing that tag by Git ancestry, including tags on merged side branches.
+Tags already contained in the baseline anchor are outside the observation window
+and do not create a checkpoint.
 Thresholds are detected from cumulative baseline losses with an inclusive
 comparison. With multiple threshold triggers, the remaining baseline population
 at the preceding trigger is the next *planning* segment denominator; generated
@@ -72,6 +74,11 @@ source roots from each test's source snapshot. Classloader isolation allows
 multiple versions of a generated/developer test class to coexist in a coverage
 job without launching one JVM per method. Different source snapshots with
 filesystem-relative test resources are separate suite runs, each using one JVM.
+The runner compiles each frozen source snapshot, including helpers loaded via
+reflection, external method providers, or service loading. If an unrelated test
+no longer compiles, it retries with the selected test and non-test helper sources.
+A failed coverage execution is retained as evidence and fails the step instead
+of silently contributing zero covered lines.
 
 Segment 1 imports baseline raw evidence. At a regeneration commit the old segment
 is evaluated first, then a second `regenerate` row opens the new segment. Reset
@@ -81,8 +88,12 @@ Developer fill retains survivor sources and adds every pool `class#method` absen
 from the survivors. `segments.json` records members, source hashes, replacement
 units, and carried/new composition.
 
-Shared survival runs are stored by source content hash and commit index. A run
-contains the union of methods needed from that source across all policies; policy
+Shared survival runs are stored by execution hash and commit index. The execution
+hash includes the test file, its frozen Java source tree, and resource/suite
+contents using relative filenames; `file_hash` separately records the test source
+content. Identical snapshots stored at different paths share runs, while changed
+helpers or resources cannot overwrite a carried snapshot. A run contains the
+union of methods needed from that snapshot across all policies; policy
 rows select from that record. Baseline source records are also imported for
 carried tests. Skips and build failures preserve the current alive set. Coverage
 uses the union of alive policy tests after each commit's transitions, and counts
@@ -94,7 +105,12 @@ The `none` policy imports baseline survival and coverage unchanged.
 shared runs, coverage jobs, and stages. Changed inputs require `--force`; completed
 work is otherwise reused. Force archives policy artifacts under
 `work/policy-history/` before rebuilding. Foreground and background policy runs
-share the experiment's exclusive lock with ordinary stages. Status reports
+share the experiment's exclusive lock and run lifecycle with ordinary stages.
+`survival stop <exp>` stops the coordinator and its nested pool workers/containers,
+including cleanup after the coordinator dies. Worker ownership is recorded at the
+parent experiment; background startup publishes that identity before releasing
+the child. Policy evidence uses schema version 2; version-1 policy caches require
+`--force` because their keys omitted snapshot dependencies. Status reports
 interrupted steps when their process is no longer alive.
 
 Outputs under `results/policy/` include the plan, segment compositions, survival

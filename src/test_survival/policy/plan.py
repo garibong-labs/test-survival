@@ -7,7 +7,9 @@ from ..io import atomic_text, write_json, write_csv
 from .baseline import Baseline
 
 
-def release_index(commits, tag_sha, contains):
+def release_index(commits, tag_sha, contains, *, anchor_sha=None):
+    if anchor_sha is not None and contains(tag_sha, anchor_sha):
+        return None
     return next((int(r['index']) for r in commits if contains(tag_sha, r['sha'])), None)
 
 
@@ -39,7 +41,7 @@ def build_plan(baseline):
         return result.returncode == 0
     for tag in b.options['releases']:
         sha = b.git('rev-parse', '--verify', 'refs/tags/'+tag+'^{commit}')
-        index = release_index(b.commits, sha, contains)
+        index = release_index(b.commits, sha, contains, anchor_sha=b.anchor['sha'])
         releases.append(dict(tag=tag, tag_sha=sha, requested_index=index))
     points = []
     prefix = str(PurePosixPath(b.config['project']['module']))

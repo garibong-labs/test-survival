@@ -10,8 +10,12 @@ def identity(test):
     return test['class']+'#'+test['method']
 
 
+def execution_id(test):
+    return test.get('execution_hash', test['file_hash'])
+
+
 def key(test):
-    return test['file_hash']+'|'+identity(test)
+    return execution_id(test)+'|'+identity(test)
 
 
 def segment(number, index, carried, new):
@@ -50,7 +54,7 @@ def assemble(tests, runs):
     """Map shared physical method results onto the selected segment members."""
     result = []
     for t in tests:
-        run = runs[t['file_hash']]
+        run = runs[execution_id(t)]
         matches = [r for r in run['methods'] if identity(r) == identity(t)]
         if len(matches) != 1:
             raise ValueError('Missing or ambiguous shared run method: '+key(t))

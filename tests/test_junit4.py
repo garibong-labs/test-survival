@@ -157,8 +157,12 @@ public class Production {
         (folder/'VersionTest.java').write_text('''package fixture;
 import org.junit.jupiter.api.Test;
 public class VersionTest {
- @Test void works() { org.junit.jupiter.api.Assertions.assertTrue(Production.METHOD() > 0); }
-}'''.replace('METHOD',method))
+ @Test void works() throws Exception {
+  int result = (int) Class.forName("fixture.Provider").getMethod("value").invoke(null);
+  org.junit.jupiter.api.Assertions.assertTrue(result > 0);
+ }
+}''')
+        (folder/'Provider.java').write_text('package fixture; public class Provider { public static int value() { return Production.'+method+'(); } }')
     (tmp_path/'VintageTest.java').write_text('''package fixture;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -183,7 +187,8 @@ manifest=[]
 for version in ['one','two','vintage']:
  classes=Path('/out')/version/'classes';classes.mkdir(parents=True)
  source='/out/VintageTest.java' if version=='vintage' else '/out/'+version+'/VersionTest.java'
- call(['javac','-cp','/out/production:'+cp,'-d',str(classes),source])
+ sources=[source] if version=='vintage' else [str(p) for p in (Path('/out')/version).glob('*.java')]
+ call(['javac','-cp','/out/production:'+cp,'-d',str(classes),*sources])
  selector=Path('/out')/(version+'.selectors');selector.write_text('fixture.VintageTest\n' if version=='vintage' else 'fixture.VersionTest\tworks\n')
  runtime=':'.join([str(classes),'/out/helper','/out/production',helpercp])
  manifest.append('\t'.join(['/out/'+version+'/dumps','/out/production',str(selector),runtime]))
@@ -193,16 +198,31 @@ call(['java','-javaagent:'+agent+'=output=none,dumponexit=false','-cp','/out/hel
 sys.path.insert(0,'/survival-package')
 from adapters import java_worker as worker, policy_coverage
 worker.EXP=Path('/out');worker.SHARED=worker.EXP;worker.HELPERS=Path('/helpers')
-worker.JVM={'jacoco':'512m','javac':'256m'};worker.TIMEOUTS={'compile':60,'test_class':60}
+worker.JVM={'jacoco':'512m','javac':'256m','launcher':'512m'};worker.TIMEOUTS={'compile':60,'test_class':60}
 Path('/out/work').mkdir();Path('/out/work/libs').symlink_to('/libs')
 worker.classpath=lambda index:(Path('/out'),'/out/production:'+cp)
 worker.jacoco_version=lambda classes:'0.8.14'
 Path('/out/target').mkdir();Path('/out/target/classes').symlink_to('/out/production')
-methods=[dict(id=version,file_hash=version,file=version+'/VersionTest.java',source_root=version,
+methods=[dict(id=version,file_hash='same-test-source',execution_hash=version,file=version+'/VersionTest.java',source_root=version,
               resource_root='resources',**{'class':'fixture.VersionTest'},method='works') for version in ['one','two']]
+policy_coverage.run(worker,dict(index=0,sha='fixture',methods=methods[:1],full_suite=True,work='pool',output='pool-result.json'))
+assert json.loads(Path('/out/pool-result.json').read_text())['methods'][0]['state']=='pass'
+# An unrelated formerly-valid test must not hide runtime helpers for the alive test.
+Path('/out/two/BrokenTest.java').write_text('package fixture; public class BrokenTest { @org.junit.jupiter.api.Test void removed() { Production.removed(); } }')
 policy_coverage.run(worker,dict(index=0,sha='fixture',methods=methods,work='worker',output='worker-result.json'))
 result=json.loads(Path('/out/worker-result.json').read_text())
 assert len(result['methods'])==2 and all(t['state']=='pass' for t in result['methods']),result
+assert {t['execution_hash'] for t in result['methods']}=={'one','two'}
+assert result['compile'][0]['snapshot_full_suite']
+assert not result['compile'][1]['snapshot_full_suite']
+assert 'Provider.java' in result['compile'][1]['helper_sources']
+for number,line in [(0,3),(1,4)]:
+ assert ['src/main/java/fixture/Production.java',line] in result['methods'][number]['lines']
+worker.REPO=Path('/out');worker.DEVELOPER=False;worker.TEST_FRAMEWORK='auto';worker.FLAKY_RERUN=0
+worker.ENVIRONMENT_ERRORS={'patterns':[],'max_reruns':0,'backoff_seconds':0}
+for t in methods:
+ record=worker.run_file(0,'policy',t['file'],[t],Path('/out')/('survive-'+t['id']),retry=False)
+ assert record['methods'][0]['state']=='pass',record
 '''
     jars=runner_test_jars(json.loads((root/'src/test_survival/adapters/java/classpath-artifacts.json').read_text()))
     result=subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro',
