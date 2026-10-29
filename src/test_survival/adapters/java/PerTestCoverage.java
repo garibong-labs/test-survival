@@ -45,9 +45,11 @@ public final class PerTestCoverage implements TestExecutionListener {
     }
 
     public synchronized void executionFinished(TestIdentifier id, TestExecutionResult result) {
-        if (!id.isTest()) return;
         try {
             byte[] bytes = (byte[]) dump.invoke(agent, true);
+            // Container teardown runs after the last test dump. Clear those probes
+            // separately so the next test cannot inherit another class's cleanup.
+            if (!id.isTest()) return;
             MethodSource source = method(id);
             if (source == null) throw new IllegalStateException("Unmapped test: " + id.getUniqueId());
             String name = Integer.toString(serial++);

@@ -143,6 +143,77 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
 
 
 @pytest.mark.java_integration
+@pytest.mark.parametrize('framework', ['jupiter', 'vintage'])
+def test_policy_coverage_does_not_assign_container_teardown_to_next_test(tmp_path, java_environment, framework):
+    image, libs = java_environment
+    root = Path(__file__).parents[1]
+    (tmp_path/'Production.java').write_text('''package fixture;
+public class Production {
+ public static int teardown() { return 1; }
+ public static int body() { return 2; }
+}''')
+    sources = {
+        'jupiter': '''package fixture;
+import org.junit.jupiter.api.*;
+@TestClassOrder(ClassOrderer.OrderAnnotation.class)
+public class LifecycleTest {
+ @Nested @Order(1) class A {
+  @Test void first() {}
+  @AfterAll static void cleanup() { Production.teardown(); }
+ }
+ @Nested @Order(2) class B {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(ints={1,2})
+  void second(int n) { Assertions.assertEquals(2, Production.body()); }
+ }
+}''',
+        'vintage': '''package fixture;
+import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Suite;
+@RunWith(Suite.class)
+@Suite.SuiteClasses({LifecycleTest.A.class, LifecycleTest.B.class})
+public class LifecycleTest {
+ public static class A {
+  @Test public void first() {}
+  @AfterClass public static void cleanup() { Production.teardown(); }
+ }
+ public static class B {
+  @Test public void second() { Assert.assertEquals(2, Production.body()); }
+ }
+}''',
+    }
+    (tmp_path/'LifecycleTest.java').write_text(sources[framework])
+    script = r'''
+from pathlib import Path
+import json, subprocess, sys
+cp=':'.join('/libs/'+p for p in json.loads(sys.argv[1]))
+agent='/libs/org.jacoco.agent-0.8.14-runtime.jar'
+cp+=':/libs/org.jacoco.cli-0.8.14-nodeps.jar:'+agent
+def call(args): subprocess.run(args, check=True)
+call(['javac','-d','/out/production','/out/Production.java'])
+call(['javac','-cp',cp,'-d','/out/helper','/helpers/PerTestCoverage.java'])
+call(['javac','-cp','/out/production:'+cp,'-d','/out/tests','/out/LifecycleTest.java'])
+Path('/out/selectors.tsv').write_text('fixture.LifecycleTest\n')
+runtime='/out/tests:/out/helper:/out/production:'+cp
+Path('/out/batches.tsv').write_text('/out/dumps\t/out/production\t/out/selectors.tsv\t'+runtime+'\n')
+call(['java','-javaagent:'+agent+'=output=none,dumponexit=false','-cp','/out/helper:'+cp,'PerTestCoverage','/out/batches.tsv'])
+'''
+    jars = runner_test_jars(json.loads((root/'src/test_survival/adapters/java/classpath-artifacts.json').read_text()))
+    result = subprocess.run(['docker','run','--rm','--network','none',
+                             '-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro',
+                             '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',
+                             image,'python3','-c',script,json.dumps(jars)], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stdout+result.stderr
+    observations = [line.split('\t') for line in (tmp_path/'dumps/tests.tsv').read_text().splitlines()]
+    assert [row[2] for row in observations] == (['first','second','second'] if framework == 'jupiter' else ['first','second'])
+    for serial, cls, method, state, message in observations:
+        assert state == 'SUCCESSFUL', message
+        hits = {int(row.split('\t')[1]) for row in (tmp_path/f'dumps/{serial}.tsv').read_text().splitlines() if row.endswith('\ttrue')}
+        assert hits == ({4} if method == 'second' else set()), 'container teardown leaked into test coverage'
+
+
+@pytest.mark.java_integration
 def test_policy_per_test_coverage_one_jvm_with_vintage_and_source_versions(tmp_path, java_environment):
     """Real listener/agent: parameterized cases, resets, and conflicting test versions."""
     image, libs = java_environment

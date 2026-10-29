@@ -161,6 +161,18 @@ def test_policy_section_does_not_change_baseline_stage_hashes(baseline):
         assert stage_hash(config,stage) == stage_hash(without,stage)
 
 
+def test_policy_rejects_cached_evidence_from_before_snapshot_and_teardown_fixes(baseline):
+    from test_survival.config import canonical_hash, result_inputs
+    exp, config, _ = baseline
+    b = Baseline(exp, config)
+    p = build_plan(b)
+    old_hash = canonical_hash(dict(evidence_version=2, config=result_inputs(b.execution_config),
+                                   policies=b.options, plan=p, frozen=b.frozen, survival=b.curves))
+    write_json(exp/'state/policy-pools.json', dict(status='completed', config_hash=old_hash))
+    with pytest.raises(ConfigError, match='--force'):
+        Steps(b, p)('pools', lambda: pytest.fail('Old evidence must be rejected before executing'))
+
+
 @pytest.mark.parametrize('patch', [dict(threshold=0),dict(threshold=1.1),dict(concurrency={'dev_selection':0}),dict(set=[dict(name='../oops')]),dict(set=[dict(name='none')])])
 def test_invalid_policy_configuration(baseline,patch):
     _,config,_ = baseline
@@ -284,6 +296,27 @@ def test_coverage_batches_by_resource_snapshot_not_test_method(tmp_path):
     result=coverage(SimpleNamespace(exp=tmp_path,worker=worker),1,tests,'union')
     assert [len(j['methods']) for j in jobs]==[4,3]
     assert len(result['methods'])==7 and result['universe']==[('A.java',1)]
+
+
+@pytest.mark.parametrize('resource_directory', ['resources', 'suite'])
+def test_generator_first_snapshot_preserves_complete_developer_tree(baseline, resource_directory):
+    from test_survival.policy.artifacts import snapshot
+    exp, config, root = baseline
+    test = Baseline(exp, config).frozen['dev-scope'][0]
+    helper = root/'dev/src-test-t/java/Provider.java'
+    helper.write_text('class Provider {}')
+    resource = root/'dev/src-test-t'/resource_directory/'value'
+    resource.parent.mkdir(parents=True)
+    resource.write_text('fixture')
+    # A generator snapshot copies shared resources before developer groups run.
+    snapshot(root, exp, [], group='generator', method='ktester', scope=[], prefix='generator-first')
+    def capture(prefix):
+        return snapshot(root, exp, [test], group='dev-scope', method='dev', scope=[], prefix=prefix)[0]
+    actual = capture('generator-first')
+    expected = capture('developer-first')
+    assert (exp/actual['source_root']/'Provider.java').read_bytes() == helper.read_bytes()
+    assert (exp/actual['resource_root']/resource_directory/'value').read_bytes() == resource.read_bytes()
+    assert actual['execution_hash'] == expected['execution_hash']
 
 
 @pytest.mark.parametrize('changed', ['helper', 'resource'])

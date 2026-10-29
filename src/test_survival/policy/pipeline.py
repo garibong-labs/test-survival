@@ -15,7 +15,7 @@ STEPS = ('pools','survive','cover','report')
 class Steps:
     def __init__(self, baseline, plan):
         self.b = baseline
-        self.digest = canonical_hash(dict(evidence_version=2, config=result_inputs(baseline.execution_config), policies=baseline.options, plan=plan,
+        self.digest = canonical_hash(dict(evidence_version=3, config=result_inputs(baseline.execution_config), policies=baseline.options, plan=plan,
                                           frozen=baseline.frozen, survival=baseline.curves))
 
     def __call__(self, name, action, *, outputs=()):

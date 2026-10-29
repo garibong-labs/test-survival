@@ -99,6 +99,8 @@ carried tests. Skips and build failures preserve the current alive set. Coverage
 uses the union of alive policy tests after each commit's transitions, and counts
 covered changed executable scope lines using the baseline executable universe.
 Totals sum line/commit pairs, rather than deduplicating a line across history.
+Container teardown probes are reset separately and excluded from per-test hits,
+so one class's cleanup cannot contribute coverage to the next class's tests.
 The `none` policy imports baseline survival and coverage unchanged.
 
 `state/policy-*.json` records configuration fingerprints and completion for pools,
@@ -109,8 +111,8 @@ share the experiment's exclusive lock and run lifecycle with ordinary stages.
 `survival stop <exp>` stops the coordinator and its nested pool workers/containers,
 including cleanup after the coordinator dies. Worker ownership is recorded at the
 parent experiment; background startup publishes that identity before releasing
-the child. Policy evidence uses schema version 2; version-1 policy caches require
-`--force` because their keys omitted snapshot dependencies. Status reports
+the child. Policy evidence uses schema version 3; earlier policy caches require
+`--force` to rebuild snapshot dependencies and isolate container teardown coverage. Status reports
 interrupted steps when their process is no longer alive.
 
 Outputs under `results/policy/` include the plan, segment compositions, survival

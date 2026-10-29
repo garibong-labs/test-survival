@@ -46,8 +46,8 @@ def snapshot(source_exp, destination, tests, *, group, method, scope, prefix):
     if method == 'dev':
         source = source_exp/'dev/src-test-t'
         target = destination/prefix/'dev/src-test-t'
-        if not target.exists():
-            shutil.copytree(source, target)
+        # Generator groups may already have populated the shared resource folders.
+        shutil.copytree(source, target, dirs_exist_ok=True)
     else:
         for name in ('resources', 'suite'):
             source = source_exp/'dev/src-test-t'/name

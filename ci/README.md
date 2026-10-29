@@ -19,11 +19,13 @@ They also compare compiler backends, processor activation, timeout/crash recover
 suite-to-file fallback and cache/coverage equivalence. Three independent compiler
 sessions execute 66 requests each, cross the 64-request recycling boundary, compare
 diagnostics/class bytes, and check RSS/file-descriptor bounds under a 180-second cap.
-The policy fixture checks per-test JaCoCo resets, parameterized Vintage tests, and multiple source versions in one JVM.
+The policy fixtures check per-test JaCoCo resets, parameterized Vintage tests,
+multiple source versions in one JVM, and isolation of container teardown probes
+in both Jupiter and Vintage.
 They do not run ta4j, Maven project builds, or any model calls.
 
 Missing image/library variables fail when `SURVIVAL_REQUIRE_JAVA_TESTS=1`; an absent
-or empty library directory always fails. The final JUnit XML check requires all six named
+or empty library directory always fails. The final JUnit XML check requires all eight named
 fixtures to pass with no skips/errors/failures, so missing prerequisites cannot produce
 a green integration job. Fast tests deselect the marked Java tests explicitly.
 
