@@ -226,6 +226,14 @@ survival show /absolute/path/to/target-fork/experiments/first-run screen
 
 Status and stage log lines show elapsed time, completed/total items, and an estimated finish time. Prepare counts builds including the anchor; generate counts model calls; screen counts files; survive counts commits; cover counts indices.
 
+Terminal timestamps and ETAs default to **Asia/Seoul** (UTC+09:00). Configure
+`display.timezone` as `"UTC"` (or another IANA zone) in
+`~/.config/test-survival/config.toml`; `XDG_CONFIG_HOME` selects an alternative
+config directory. This is separate from `experiment.yaml`: stored state/logs
+remain UTC, and fingerprints/resume behavior are unchanged. See
+[tool settings](docs/tool-settings.md) for the TOML example, precedence, background
+logs, and validation behavior.
+
 Foreground runs automatically reserve the bottom two terminal rows for the same
 panel when stderr is a TTY, with logs scrolling above. Use `--no-panel` on `run`
 or `status --watch` to disable it. The panel shows

@@ -9,18 +9,21 @@ import time
 from .config import STAGES, stage_hash
 from .io import now, read_json
 from .progress import snapshot, duration, generation_progress
+from .display import load_display_settings
 
 OUTPUT_LOCK = threading.RLock()
 _MONITORS = {}
 
 
-def panel_lines(exp, config, width=160):
+def panel_lines(exp, config, width=160, *, display=None):
+    display = display or load_display_settings()
     states = {stage: read_json(Path(exp)/'state'/f'{stage}.json', {}) for stage in STAGES}
     current = next((s for s in STAGES if states[s].get('status') == 'running'), None)
     if current is None:
         current = max((s for s in STAGES if states[s].get('started')), default=STAGES[0],
                       key=lambda s: states[s].get('started', ''))
     p = snapshot(exp, current, config)
+    shown_eta = display.timestamp(p['eta'], timespec='seconds')
     done, total = p['done'], p['total']
     fraction = min(1, done/total) if total else (1 if total == 0 and p['status'] == 'completed' else None)
     bar = '#' * int(10*fraction) + '-' * (10-int(10*fraction)) if fraction is not None else '?'*10
@@ -29,7 +32,7 @@ def panel_lines(exp, config, width=160):
     repair = ','.join(name.rsplit('.', 1)[-1] for name in p.get('repair', '').split(', ')) if p.get('repair') else ''
     first = (f'{current} [{bar}] {percent} {done}/{total if total is not None else "?"} {p["unit"]}'
              f'{secondary}; remaining {duration(p["remaining"])}; elapsed {duration(p["elapsed"])}; '
-             f'estimated finish {p["eta"]}')
+             f'estimated finish {shown_eta}')
     if len(first) >= width:
         def short(seconds):
             if seconds is None:
@@ -37,17 +40,24 @@ def panel_lines(exp, config, width=160):
             seconds = int(seconds)
             return f'{seconds//3600}h{seconds%3600//60}m' if seconds >= 3600 else f'{seconds//60}m{seconds%60}s'
         bar = '#' * int(5*fraction) + '-' * (5-int(5*fraction)) if fraction is not None else '?'*5
-        eta = p['eta'][11:19] if p['eta'] != 'unknown' else '?'
+        eta = display.timestamp(p['eta'], timespec='minutes') if p['eta'] != 'unknown' else '?'
         secondary = f' calls:{p["calls"]}' if p.get('calls') is not None else ''
         first = (f'{current} [{bar}] {percent} {done}/{total if total is not None else "?"} {p["unit"]}'
                  f'{secondary} rem {short(p["remaining"])} elapsed {short(p["elapsed"])} ETA {eta}')
         if len(first) >= width:
-            # Keep every metric on a typical 80-column terminal even for
-            # multi-hour runs and four-digit response counts.
+            # Keep a complete date and offset; never show a clipped clock value.
             small_bar = '#' * int(3*fraction) + '-' * (3-int(3*fraction)) if fraction is not None else '???'
-            first = first.replace(f'[{bar}]', f'[{small_bar}]').replace(' elapsed ', ' elap ')
-            if eta != '?':
-                first = first.removesuffix(eta) + eta[:5]
+            unit_short = {'methods': 'm', 'builds': 'b', 'calls': 'c', 'files': 'f',
+                          'commits': 'c', 'indices': 'i', 'tables': 't', 'items': 'i'}[p['unit']]
+            calls = f' c{p["calls"]}' if p.get('calls') is not None else ''
+            first = (f'{current} [{small_bar}] {percent} {done}/{total if total is not None else "?"}{unit_short}'
+                     f'{calls} r{short(p["remaining"])} e{short(p["elapsed"])} ETA {eta}')
+            if len(first) >= width:
+                first = f'{current} {percent} ETA {eta}'
+            if len(first) >= width:
+                first = f'ETA {eta}'
+            if len(first) >= width:
+                first = 'ETA hidden'
     marks = []
     for stage in STAGES:
         state = states[stage]
@@ -69,8 +79,9 @@ def panel_lines(exp, config, width=160):
 
 
 class Panel:
-    def __init__(self, exp, config, *, disabled=False, stream=None):
+    def __init__(self, exp, config, *, disabled=False, stream=None, display=None):
         self.exp, self.config = Path(exp), config
+        self.display = display or load_display_settings()
         self.stream = stream if stream is not None else sys.stderr
         self.enabled = not disabled and self.stream.isatty()
         self.size = None
@@ -83,7 +94,7 @@ class Panel:
         except (OSError, ValueError, AttributeError):
             size = os.terminal_size((160, 24))
         # Read outside the terminal critical section; render in one write.
-        lines = panel_lines(self.exp, self.config, size.columns)
+        lines = panel_lines(self.exp, self.config, size.columns, display=self.display)
         with OUTPUT_LOCK:
             cols, rows = size
             if rows < 4:
@@ -124,11 +135,17 @@ def notify(exp):
         monitor.wake.set()
 
 
+def active_display(exp):
+    monitor = _MONITORS.get(Path(exp).resolve())
+    return monitor.display if monitor else None
+
+
 class LiveProgress:
     """Heartbeat also runs without a TTY, for author-tool durable progress."""
-    def __init__(self, exp, config, *, disabled=False):
+    def __init__(self, exp, config, *, disabled=False, display=None):
         self.exp, self.config = Path(exp).resolve(), config
-        self.panel = Panel(exp, config, disabled=disabled)
+        self.display = display or load_display_settings()
+        self.panel = Panel(exp, config, disabled=disabled, display=self.display)
         self.stop = threading.Event()
         self.wake = threading.Event()
         self.last_log = time.monotonic()
@@ -193,15 +210,16 @@ class LiveProgress:
             signal.signal(signal.SIGTERM, self.previous_term)
 
 
-def watch(exp, config, *, no_panel=False):
+def watch(exp, config, *, no_panel=False, display=None):
     from .pipeline import process_alive, status
-    panel = Panel(exp, config, disabled=no_panel)
+    display = display or load_display_settings()
+    panel = Panel(exp, config, disabled=no_panel, display=display)
     try:
         while True:
             if panel.enabled:
                 panel.refresh()
             else:
-                print(status(exp, config), flush=True)
+                print(status(exp, config, display=display), flush=True)
             run = read_json(Path(exp)/'state/run.json', {})
             if run.get('status') != 'running' or not process_alive(run.get('pid')):
                 break
@@ -211,4 +229,4 @@ def watch(exp, config, *, no_panel=False):
     finally:
         panel.close()
     if panel.enabled:
-        print(status(exp, config), flush=True)
+        print(status(exp, config, display=display), flush=True)
