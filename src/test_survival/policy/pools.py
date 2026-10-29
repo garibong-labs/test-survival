@@ -1,5 +1,5 @@
 """Independent regeneration pools, using existing generators and screening."""
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from collections import defaultdict
 from copy import deepcopy
 import hashlib
@@ -151,20 +151,55 @@ def matching_target(b, plan, group, index, pools):
 
 
 def run(b, plan, step):
-    semaphores = {g:threading.Semaphore(b.options['concurrency'].get('dev_selection' if g in b.dev else g, 1)) for g in b.groups}
-    dev_lock = threading.Semaphore(b.options['concurrency'].get('dev_selection', 1))
+    # Only submit work for available slots: executor queues and semaphore waiters
+    # would otherwise keep starting expensive pools after an earlier failure.
+    limits = {'dev_selection': b.options['concurrency'].get('dev_selection', 1),
+              **{g:b.options['concurrency'].get(g, 1) for g in b.groups if g not in b.dev}}
+    stopped = threading.Event()
     pools = {}
     def build(point):
+        if stopped.is_set():
+            return None
         g, i = point['group'], point['index']
-        generator = next((item for item in b.execution_config['generators'] if item['name'] == g), None)
-        target = matching_target(b,plan,g,i,pools) if generator and generator['rounds']['until_dev_matched'] else len(next(iter(b.frozen.values())))
-        path = b.exp/f'results/policy/pools/{g}/{i}/pool.json'
-        with dev_lock if g in b.dev else semaphores[g]:
+        try:
+            generator = next((item for item in b.execution_config['generators'] if item['name'] == g), None)
+            target = matching_target(b,plan,g,i,pools) if generator and generator['rounds']['until_dev_matched'] else len(next(iter(b.frozen.values())))
+            path = b.exp/f'results/policy/pools/{g}/{i}/pool.json'
             step(f'pool-{g}-{i}', lambda: build_pool(b, point, target), outputs=[path])
-        return (g,i), read_json(path)
+            return (g,i), read_json(path)
+        except BaseException:
+            stopped.set()
+            raise
     # Developer targets are dependencies of generators; each wave is otherwise independent.
     for developer in (True, False):
         selected = [p for p in plan['pools'] if (p['group'] in b.dev) == developer]
-        with ThreadPoolExecutor(max_workers=max(1, sum(b.options['concurrency'].values()))) as executor:
-            pools.update(executor.map(build, selected))
+        executor = ThreadPoolExecutor(max_workers=sum(limits.values()))
+        pending = {}
+        active = defaultdict(int)
+        try:
+            while selected or pending:
+                for point in selected[:]:
+                    slot = 'dev_selection' if developer else point['group']
+                    if stopped.is_set():
+                        break
+                    if active[slot] < limits[slot]:
+                        pending[executor.submit(build, point)] = slot
+                        active[slot] += 1
+                        selected.remove(point)
+                if not pending:
+                    break
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                # Observe every completed failure before refilling any slots.
+                for future in done:
+                    result = future.result()
+                    if result is not None:
+                        key, pool = result
+                        pools[key] = pool
+                    active[pending.pop(future)] -= 1
+        finally:
+            # Already-running pools retain the run lock/owner until they finish;
+            # queued work must never start while failure cleanup is draining.
+            if pending:
+                stopped.set()
+            executor.shutdown(wait=True, cancel_futures=True)
     return pools

@@ -26,6 +26,7 @@ policies:
 ```sh
 survival policy plan experiments/regen-policies
 survival policy status experiments/regen-policies
+survival policy status experiments/regen-policies --watch
 # Run only when ready to generate and measure:
 survival policy run experiments/regen-policies --background --until pools
 survival policy run experiments/regen-policies --background --until report
@@ -114,6 +115,20 @@ parent experiment; background startup publishes that identity before releasing
 the child. Policy evidence uses schema version 3; earlier policy caches require
 `--force` to rebuild snapshot dependencies and isolate container teardown coverage. Status reports
 interrupted steps when their process is no longer alive.
+
+Policy runs print each step's name, completed/total items, elapsed time, and
+estimated finish, with a heartbeat every five seconds. Pool totals count completed
+pools with saved evidence; cached pools count toward completion but not the current
+attempt's rate. An estimate stays unknown until fresh work completes. Other steps
+count their output artifacts. `policy status --watch` refreshes the same metrics
+every five seconds until the run stops; Ctrl-C exits the watcher.
+
+The first pool failure stops new pool submissions, including the generator wave.
+Already-running pools finish under the run lock before the command exits non-zero.
+The failing step immediately saves its traceback in `state/policy-<step>-error.txt`
+and prints that path. Completed pools remain reusable on retry. Developer source
+snapshots already inside their destination pool are used in place; snapshots from
+other workspaces are still copied.
 
 Outputs under `results/policy/` include the plan, segment compositions, survival
 and first failures, coverage per commit and totals, per-policy event tables,

@@ -440,7 +440,8 @@ pipeline.run(exp,load(exp),until='pools')
     child=subprocess.Popen([sys.executable,'-c',script,str(exp)],stdout=subprocess.PIPE,text=True,start_new_session=True)
     worker=None
     try:
-        assert child.stdout.readline().strip()=='ready'
+        while child.stdout.readline().strip() != 'ready':
+            assert child.poll() is None
         worker=int((exp/'worker.pid').read_text())
         assert read_json(exp/'state/run.json')['status']=='running'
         assert len(list((exp/'state/workers').glob('*.json')))==1
@@ -468,3 +469,149 @@ def test_policy_background_uses_registered_handshake(baseline,monkeypatch):
     monkeypatch.setattr(pipeline,'launch_background',launch)
     assert pipeline.background(exp,config,'pools',False)[0]==123
     assert calls==[(exp,['policy','run',str(exp),'--until','pools'],'policy-background.log')]
+
+
+@pytest.mark.parametrize('method', ['dev', 'ouedraogo'])
+def test_snapshot_uses_same_path_in_place(tmp_path, monkeypatch, method):
+    from test_survival.policy import artifacts
+    prefix = Path('results/policy/pools/dev-scope/21')
+    source = tmp_path/prefix
+    relative = 'dev/src-test-t/java/ATest.java' if method == 'dev' else 'generated/A/ATest.java'
+    test = dict(id='original-id', file=relative, **{'class':'ATest'}, method='works', kind='plain')
+    (source/relative).parent.mkdir(parents=True)
+    (source/relative).write_text('class ATest {}')
+    helper = (source/relative).parent/'Provider.java'
+    helper.write_text('class Provider {}')
+    for directory in ('resources', 'suite'):
+        resource = source/'dev/src-test-t'/directory/'value'
+        resource.parent.mkdir(parents=True)
+        resource.write_text(directory)
+    scope = [{'class':'A'}]
+    expected = artifacts.snapshot(source, tmp_path/'copied', [test], group='fixture', method=method, scope=scope, prefix=prefix)[0]
+    before = {p:(p.read_bytes(), p.stat().st_mtime_ns) for p in source.rglob('*') if p.is_file()}
+    monkeypatch.setattr(artifacts.shutil, 'copytree', lambda *a, **kw:pytest.fail('Same-path tree must not be copied'))
+    monkeypatch.setattr(artifacts.shutil, 'copy2', lambda *a, **kw:pytest.fail('Same-path file must not be copied'))
+    # Resolve lexical aliases too, as paths need not have identical spellings.
+    actual = artifacts.snapshot(source/'dev/..', tmp_path, [test], group='fixture', method=method, scope=scope, prefix=prefix)[0]
+    assert actual == expected
+    assert actual['file'] == str(prefix/relative)
+    assert actual['origin_id'] == 'original-id'
+    assert (tmp_path/actual['source_root']/'Provider.java').exists()
+    assert before == {p:(p.read_bytes(), p.stat().st_mtime_ns) for p in source.rglob('*') if p.is_file()}
+
+
+def test_pool_failure_stops_new_work_before_waiting_for_earlier_pool(baseline, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+    from test_survival.policy import pools
+    exp, config, _ = baseline
+    b = Baseline(exp, config)
+    b.groups = ['dev-scope', 'generator']
+    b.options['concurrency'] = {'dev_selection':2, 'generator':1}
+    points = [dict(group='dev-scope', index=i) for i in range(4)]
+    p = dict(pools=[*points, dict(group='generator', index=5)])
+    steps = Steps(b, p)
+    slow_started, release_slow, failed = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+    def build(b, point, target):
+        calls.append(point['index'])
+        if point['index'] == 0:
+            slow_started.set()
+            assert release_slow.wait(5)
+            write_json(exp/'results/policy/pools/dev-scope/0/pool.json', [])
+            return []
+        assert slow_started.wait(5)
+        raise RuntimeError('pool fixture failure')
+    def step(*args, **kwargs):
+        try:
+            return steps(*args, **kwargs)
+        except RuntimeError:
+            failed.set()
+            raise
+    monkeypatch.setattr(pools, 'build_pool', build)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(pools.run, b, p, step)
+        try:
+            assert failed.wait(5)
+            assert not future.done()  # In-flight work retains ownership until drained.
+            assert sorted(calls) == [0, 1]
+            state = read_json(exp/'state/policy-pool-dev-scope-1.json')
+            assert state['status'] == 'failed'
+            error = Path(state['error']).read_text()
+            assert 'Traceback (most recent call last)' in error and 'RuntimeError: pool fixture failure' in error
+        finally:
+            release_slow.set()
+        with pytest.raises(RuntimeError, match='pool fixture failure'):
+            future.result(timeout=5)
+    assert sorted(calls) == [0, 1]  # Neither later Dev pools nor generators start.
+    assert not (exp/'state/policy-pool-dev-scope-2.json').exists()
+
+
+def test_policy_failure_exits_nonzero_and_saves_traceback(baseline, monkeypatch, capsys):
+    from test_survival.cli import main
+    from test_survival.policy import pools
+    exp, config, _ = baseline
+    exp.mkdir()
+    (exp/'experiment.yaml').write_text(yaml.safe_dump(config))
+    def fail(*args):
+        raise RuntimeError('pool fixture failure')
+    monkeypatch.setattr(pools, 'build_pool', fail)
+    assert main(['policy', 'run', str(exp), '--until', 'pools']) == 1
+    assert 'RuntimeError: pool fixture failure' in (exp/'state/policy-pool-dev-scope-2-error.txt').read_text()
+    assert 'RuntimeError: pool fixture failure' in (exp/'state/policy-pools-error.txt').read_text()
+    assert read_json(exp/'state/run.json')['status'] == 'failed'
+    output = capsys.readouterr().out
+    assert 'policy-pool-dev-scope-2: failed (RuntimeError); see ' in output
+    assert '0/1 pools; estimated finish unknown' in output
+    assert not (exp/'state/policy-survive.json').exists()
+
+
+def test_policy_retry_clears_error_and_resumes_completed_pool(baseline):
+    exp, config, _ = baseline
+    b = Baseline(exp, config)
+    steps = Steps(b, build_plan(b))
+    def fail():
+        raise RuntimeError('fixture failure')
+    with pytest.raises(RuntimeError):
+        steps('pool-fixture', fail)
+    steps('pool-fixture', lambda:None)
+    assert not (exp/'state/policy-pool-fixture-error.txt').exists()
+    assert read_json(exp/'state/policy-pool-fixture.json')['status'] == 'completed'
+    steps('pool-fixture', lambda:pytest.fail('Completed work should be reused'))
+
+
+def test_pool_scheduler_respects_shared_dev_and_generator_slots(tmp_path, monkeypatch):
+    from collections import defaultdict
+    import threading
+    from test_survival.policy import pools
+    b = SimpleNamespace(exp=tmp_path, groups=['dev-a', 'dev-b', 'gen-a', 'gen-b'],
+                        dev={'dev-a':{}, 'dev-b':{}}, frozen={'dev-a':[]},
+                        options={'concurrency':{'dev_selection':2, 'gen-a':1, 'gen-b':1}},
+                        execution_config={'generators':[]})
+    points = [dict(group=g, index=i) for i, g in enumerate(['dev-a', 'dev-a', 'dev-b', 'gen-a', 'gen-a', 'gen-b'])]
+    barriers = {True:threading.Barrier(2), False:threading.Barrier(2)}
+    lock = threading.Lock()
+    active, peaks = defaultdict(int), defaultdict(int)
+    completed = set()
+    def build(b, point, target):
+        group, index = point['group'], point['index']
+        dev = group in b.dev
+        slot = 'dev_selection' if dev else group
+        with lock:
+            if not dev:
+                assert completed >= {0, 1, 2}
+            active[slot] += 1
+            peaks[slot] = max(peaks[slot], active[slot])
+            assert active[slot] <= b.options['concurrency'][slot]
+        if index in (0, 1, 3, 5):
+            barriers[dev].wait(timeout=5)
+        result = [dict(id=str(index))]
+        write_json(tmp_path/f'results/policy/pools/{group}/{index}/pool.json', result)
+        with lock:
+            active[slot] -= 1
+            completed.add(index)
+        return result
+    monkeypatch.setattr(pools, 'build_pool', build)
+    result = pools.run(b, {'pools':points}, lambda name, action, **kwargs:action())
+    assert result == {(p['group'], p['index']):[dict(id=str(p['index']))] for p in points}
+    assert dict(peaks) == {'dev_selection':2, 'gen-a':1, 'gen-b':1}
