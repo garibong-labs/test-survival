@@ -18,7 +18,7 @@ def show(exp, stage):
     headers, rows = ['Output', 'Value'], []
     if stage == 'prepare':
         anchor = read_json(exp/'results/anchor.json', {})
-        rows = [(key, anchor[key]) for key in ['tag', 'sha', 'origin_master', 'n', 'key_check'] if key in anchor]
+        rows = [(key, anchor[key]) for key in ['tag', 'sha', 'origin_master', 'n', 'key_check', 'dev_unmapped_excluded'] if key in anchor]
     elif stage == 'scope':
         headers = ['Class', 'Focal methods', 'Changed commits']
         rows = [(r['class'], r['m'], r['c']) for r in read_json(exp/'population/scope.json', {}).get('classes', [])]

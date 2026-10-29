@@ -66,6 +66,10 @@ def test_runner_setup_finishes_before_parallel_builds(tmp_path, monkeypatch, set
             return {'build': 'ok'}
         def baseline(self):
             assert not has_import, 'Imported baseline was recomputed'
+            from test_survival.io import write_csv
+            write_csv(tmp_path/'dev/dev-unmapped-excluded.csv',
+                      [{'class': 'Outer$Nested', 'name': 'inherited()', 'runs_seen': 3, 'reason': 'no-source-method'}],
+                      ['class', 'name', 'runs_seen', 'reason'])
             return []
         def setup_runner(self):
             events.append('setup')
@@ -88,3 +92,7 @@ def test_runner_setup_finishes_before_parallel_builds(tmp_path, monkeypatch, set
     else:
         prepare.run(tmp_path, config)
         assert events == ['build-0', 'setup', 'pool', 'build-1']
+        from test_survival.io import read_json
+        anchor = read_json(tmp_path/'results/anchor.json')
+        assert anchor['dev_unmapped_excluded'] == (0 if has_import else 1)
+        assert bool(anchor['deviations']) == (not has_import)

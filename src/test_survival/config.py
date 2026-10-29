@@ -206,7 +206,7 @@ SCHEMA = {
               'target_methods': Field(list, [50, 80]), 'max_classes': integer(10),
               'classes': Field(list, []), 'min_classes': integer(1)},
     'dev': {'denominator': enum('project', 'project', 'scope-targeted', 'coverage-scoped'), 'stable_runs': integer(3),
-            'groups': Field(list, [])},
+            'groups': Field(list, []), 'unmapped': enum('error', 'error', 'exclude')},
     'model': {'provider': enum('openrouter', 'openrouter'), 'name': Field(str, 'openai/gpt-oss-120b'),
               'env_file': Field(str, None, nullable=True),
               'env_key': Field(str, 'OPENROUTER_API_KEY')},
@@ -521,8 +521,9 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
     index = STAGES.index(stage)
     c = as_written(c) if legacy else result_inputs(c)
     data = {k: c[k] for k in ('project', 'anchor', 'range', 'runner') if k in c}
-    if 'stable_runs' in c.get('dev', {}):
-        data['dev'] = {'stable_runs': c['dev']['stable_runs']}
+    baseline = {k: c['dev'][k] for k in ('stable_runs', 'unmapped') if k in c.get('dev', {})}
+    if baseline:
+        data['dev'] = baseline
     if index >= 1:
         data.update({k: c[k] for k in ('scope', 'dev') if k in c})
         if any(g.get('denominator') == 'coverage-scoped' for g in c.get('dev', {}).get('groups', [])) and 'environment_errors' in c.get('survival', {}):

@@ -61,6 +61,7 @@ scope:
   min_classes: 1                # stop if fewer classes are selected
 
 dev:
+  unmapped: error                # error | exclude; exclude unmappable baseline cases from every Dev group
   stable_runs: 3
   groups:                       # one or more developer groups; each becomes a column. Shorthand `dev: {denominator: project, stable_runs: 3}` means one group named `dev`.
     - name: dev

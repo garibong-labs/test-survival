@@ -18,6 +18,8 @@ Headers below follow the archived experiment and are checked by `tests/test_form
 
 `results/anchor.json`: keys `tag`, `sha`, `origin_master` (the resolved range end sha), `n` (commit count), `started`, `date` (committer date of `t`), `deviations` (list of strings), `key_check` (`KEY_OK (value never logged)` or `KEY_MISSING`), plus `ktester_base` (the KTester tool commit) when a ktester group exists.
 
+`dev.unmapped` defaults to `error`, which stops preparation when an executed baseline case cannot map to exactly one source method. With `exclude`, preparation continues and excludes those cases (including unmapped skipped cases) from every Dev denominator. Mapped cases retain their existing stability rules. `dev/dev-unmapped-excluded.csv` contains one row per distinct `(class, name)`, with `runs_seen` counting distinct baseline runs and `reason` equal to `no-source-method` or `ambiguous-source-method`. `results/baseline-unmapped.json` retains per-run observations. `results/anchor.json` and generation funnels record the distinct-case count as `dev_unmapped_excluded`; anchor deviations, funnel notes, and report notes disclose the exclusion. `results/final-summary.json` also includes the count and notes.
+
 `results/builds/<index>.json`: `index`, `sha`, `build` (`ok`|`fail`), `attempts` (list of `{command, cwd, exit_code, timeout, seconds, log}`). Attempt order: offline Maven first (`mvn -q -o -DskipTests compile`), then online if offline fails.
 
 `dev/dev-methods-all.csv`: `class,method,kind,stable,run1,run2,run3`. `kind` is `plain`, `parameterized`, `test-factory`, or `test-template`. `stable` is `yes` when every run passed.

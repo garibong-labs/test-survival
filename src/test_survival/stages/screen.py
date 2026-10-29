@@ -9,7 +9,7 @@ from ..importer import rounds
 from ..io import read_csv, read_json, write_csv, write_json, atomic_text
 from ..pipeline import log
 from ..rules.matching import subsample
-from ..rules.dev_denominator import frozen_method,denominator_file,validate_derived_subsets
+from ..rules.dev_denominator import frozen_method,denominator_file,validate_derived_subsets,unmapped_note
 
 FIELDS=['file','class','method','kind','body_hash','round','technique']
 
@@ -55,7 +55,9 @@ def screen_round(exp,config,g,directory,prior=()):
                 duplicate+=1;row['duplicate']=True;continue
             seen.add(row['body_hash']);kept.append(row)
     ndev=len(read_csv(exp/'dev/dev-denominator.csv'))
+    excluded=read_json(exp/'results/anchor.json',{}).get('dev_unmapped_excluded',0)
     funnel=dict(group=g['name'],round=directory.name,files=len(sources),compiled=sum(bool(r['compile']) and r['compile']['exit_code']==0 for r in records),methods=sum(len(r['methods']) for r in records),stable_3_of_3=stable,duplicates=duplicate,kept_this_round=stable-duplicate,total_kept=len(kept),developer_denominator=ndev,ratio_to_dev=len(kept)/ndev if ndev else None,per_prompt={})
+    funnel.update(dev_unmapped_excluded=excluded,notes=[unmapped_note(excluded)] if excluded else [])
     for tech in ['KTester'] if g['method']=='ktester' else ['ZSL','FSL','CoT','ToT','GToT']:
         selected=[r for r in records if g['method']=='ktester' or Path(r['file']).parent.name==tech]
         funnel['per_prompt'][tech]=dict(files=len(selected),compiled=sum(bool(r['compile']) and r['compile']['exit_code']==0 for r in selected),methods=sum(len(r['methods']) for r in selected),stable=sum(m['state']=='pass' for r in selected for m in r['methods']),duplicates=sum(m.get('duplicate',False) for r in selected for m in r['methods']),kept=sum(m['state']=='pass' and not m.get('duplicate',False) for r in selected for m in r['methods']))

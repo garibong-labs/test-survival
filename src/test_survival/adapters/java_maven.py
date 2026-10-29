@@ -149,6 +149,8 @@ class JavaMavenAdapter:
         for row in tests:
             byclass[row['class']].append(row)
         observations, unmapped = [], []
+        exclude_unmapped = self.config['dev'].get('unmapped', 'error') == 'exclude'
+        excluded = {}
         for repeat in range(1, self.config['dev']['stable_runs']+1):
             record_path = self.exp / f'results/baseline-run{repeat}.json'
             destination = self.exp / f'results/baseline-reports/run{repeat}'
@@ -178,16 +180,24 @@ class JavaMavenAdapter:
                         if candidates:
                             longest = max(len(m['display']) for m in candidates)
                             candidates = [m for m in candidates if len(m['display']) == longest]
-                    if not candidates and case.find('skipped') is not None:
+                    if not candidates and case.find('skipped') is not None and not exclude_unmapped:
                         continue
                     if len(candidates) != 1:
                         unmapped.append(dict(run=repeat, **{'class': cls}, name=name))
+                        reason = 'no-source-method' if not candidates else 'ambiguous-source-method'
+                        entry = excluded.setdefault((cls, name), {'runs': set(), 'reasons': set()})
+                        entry['runs'].add(repeat)
+                        entry['reasons'].add(reason)
                         continue
                     state = 'error' if case.find('error') is not None else 'fail' if case.find('failure') is not None else 'skipped' if case.find('skipped') is not None else 'pass'
                     observed[(cls, candidates[0]['method'])].append(state)
             observations.append(observed)
         write_json(self.exp/'results/baseline-unmapped.json', unmapped)
-        if unmapped:
+        excluded_rows = [dict(zip(('class', 'name'), key), runs_seen=len(value['runs']),
+                              reason=','.join(sorted(value['reasons'])))
+                         for key, value in sorted(excluded.items())] if exclude_unmapped else []
+        write_csv(self.exp/'dev/dev-unmapped-excluded.csv', excluded_rows, ['class', 'name', 'runs_seen', 'reason'])
+        if unmapped and not exclude_unmapped:
             raise RuntimeError('Baseline cases cannot be mapped unambiguously to source methods')
         rows = []
         for method in tests:

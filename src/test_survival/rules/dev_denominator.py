@@ -1,5 +1,11 @@
 """Stable developer populations; class-name matching follows the archived rule."""
 
+
+def unmapped_note(count):
+    return (f'{count} unmapped baseline cases excluded from all Dev denominators '
+            '(dev.unmapped: exclude); see dev/dev-unmapped-excluded.csv.') if count else ''
+
+
 def denominator(methods, mode, scope, production_names):
     if mode not in ['project','scope-targeted']:
         raise ValueError('Use per-method coverage observations for coverage-scoped denominators')
