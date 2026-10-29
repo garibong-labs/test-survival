@@ -37,5 +37,7 @@ jobs:
         run: |
           python -m pip check
           python -m compileall -q src tests ci
+      - name: Run review notification security contract tests
+        run: python -I -m unittest discover -s .github/scripts -p 'test_review_request_discord.py' -v
       - name: Run fast tests
         run: python -m pytest -q --strict-markers -m 'not java_integration'
