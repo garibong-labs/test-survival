@@ -39,6 +39,7 @@ def test_defaults_and_acceptance_example(minimal):
     c = validate(minimal)
     assert c['dev']['groups']==[{'name':'dev','display':'Dev','denominator':'project','derive_from':None}]
     assert c['dev']['stable_runs']==3
+    assert c['dev']['unmapped']=='error'
     assert c['runner']['workers'] == {'build': 4, 'survive': 4, 'cover': 4}
     assert c['scope']['rank_by'] == 'change-count'
     assert len(load(Path(__file__).parents[1] / 'examples/jsv-run2/experiment.yaml')['generators']) == 4
@@ -47,6 +48,7 @@ def test_defaults_and_acceptance_example(minimal):
 
 @pytest.mark.parametrize('patch, key', [
     ({'unexpected': 3}, 'unexpected'),
+    ({'dev': {'unmapped': 'ignore'}}, 'dev.unmapped'),
     ({'runner': {'workers': {'survive': False}}}, 'runner.workers.survive'),
     ({'scope': {'target_methods': [80, 50]}}, 'scope.target_methods'),
     ({'scope': {'rule': 'explicit'}}, 'scope.classes'),
@@ -76,6 +78,21 @@ def test_hash_boundaries_and_key_order(minimal):
     modified['coverage']['at_anchor'] = False
     assert [stage_hash(c, s) != stage_hash(modified, s) for s in STAGES] == [False]*6+[True]*2
     assert stage_hash(c, 'report') == stage_hash(dict(reversed(list(as_written(c).items()))), 'report')
+
+
+def test_unmapped_policy_invalidates_prepare_and_later_stages(minimal):
+    config = validate(minimal)
+    changed = validate({**minimal, 'dev': {'unmapped': 'exclude'}})
+    assert changed['dev']['unmapped'] == 'exclude'
+    assert all(stage_hash(config, stage) != stage_hash(changed, stage) for stage in STAGES)
+
+
+@pytest.mark.parametrize('name', ['dev-unmapped', 'Dev-Unmapped'])
+@pytest.mark.parametrize('policy', ['error', 'exclude'])
+def test_developer_group_cannot_overwrite_shared_unmapped_audit(minimal, name, policy):
+    minimal['dev'] = {'groups': [{'name': name}], 'unmapped': policy}
+    with pytest.raises(ConfigError, match=r'dev.groups\[0\].name:.*reserved.*audit'):
+        validate(minimal)
 
 
 @pytest.mark.parametrize('denominator,start', [('project',5),('coverage-scoped',1)])

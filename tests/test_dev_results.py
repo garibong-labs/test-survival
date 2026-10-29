@@ -505,3 +505,143 @@ def test_imported_baseline_validation_preserves_source_stability_set(experiments
     write_csv(target/'dev/dev-methods-all.csv', [], ['class', 'method', 'stable'])
     with pytest.raises(PipelineError, match='dev-methods-all.csv'):
         imported_baseline(target, load(target))
+
+
+def set_unmapped_policy(exp, policy):
+    config = yaml.safe_load((exp/'experiment.yaml').read_text())
+    config['dev']['unmapped'] = policy
+    (exp/'experiment.yaml').write_text(yaml.safe_dump(config))
+
+
+def write_unmapped_audit(exp, count=1):
+    from test_survival.dev_results import UNMAPPED_AUDIT
+    write_csv(exp/UNMAPPED_AUDIT,
+              [{'class': 'Outer$Nested', 'name': f'inherited{i}()', 'runs_seen': 3,
+                'reason': 'no-source-method'} for i in range(count)],
+              ['class', 'name', 'runs_seen', 'reason'])
+
+
+@pytest.fixture
+def prepare_import(monkeypatch):
+    from test_survival.stages import prepare
+    class Adapter:
+        def __init__(self, *args): pass
+        def git(self, *args):
+            if args[0] == 'rev-parse': return 'anchor' if args[1] == 't^{commit}' else 'sha3'
+            if args[0] == 'rev-list':
+                return 'sha1\nsha2\nsha3' if '--reverse' in args else 'sha3\nsha2\nsha1\nanchor'
+            if args[0] == 'diff': return 'src/main/java/A.java'
+            if args[0] == 'show': return '2026-01-01\nchange' if '%n' in args[2] else '2026-01-01'
+            raise AssertionError(args)
+        def build(self, *args): return {'build': 'ok'}
+        def setup_runner(self): pass
+        def baseline(self): raise AssertionError('Imported baseline must be reused')
+    monkeypatch.setattr(prepare, 'JavaMavenAdapter', Adapter)
+    monkeypatch.setattr(prepare, 'log', lambda *args: None)
+    return prepare.run
+
+
+@pytest.mark.parametrize('selection', ['dev-baseline', 'dev-results'])
+@pytest.mark.parametrize('source_count', [None, 0, 1])
+def test_import_preserves_unmapped_audit_and_refreshes_disclosures(experiments, prepare_import, selection, source_count):
+    from test_survival.config import STAGES, canonical_hash
+    from test_survival.dev_results import UNMAPPED_AUDIT
+    from test_survival.rules.dev_denominator import unmapped_note
+    source, target, _ = experiments
+    for exp in (source, target):
+        set_unmapped_policy(exp, 'exclude')
+    if source_count is not None:
+        write_unmapped_audit(source, source_count)
+    write_unmapped_audit(target, 2)
+    anchor = read_json(target/'results/anchor.json')
+    anchor.update(dev_unmapped_excluded=2, deviations=['unrelated deviation', unmapped_note(2)])
+    write_json(target/'results/anchor.json', anchor)
+    for stage in STAGES:
+        write_json(target/f'state/{stage}.json', {'status': 'completed'})
+    source_before = {str(p.relative_to(source)): file_hash(p) for p in source.rglob('*') if p.is_file()}
+    import_experiment(target, source, selection)
+    provenance = read_json(target/'state/import.json')[selection]
+    assert provenance['source_sha256'] == canonical_hash(provenance['files'])
+    if source_count is None:
+        assert not (target/UNMAPPED_AUDIT).exists()
+        assert UNMAPPED_AUDIT not in provenance['files']
+    else:
+        assert provenance['files'][UNMAPPED_AUDIT] == file_hash(source/UNMAPPED_AUDIT) == file_hash(target/UNMAPPED_AUDIT)
+        if selection == 'dev-results':
+            assert provenance['source_files'][UNMAPPED_AUDIT] == UNMAPPED_AUDIT
+    assert read_json(target/'state/prepare.json')['status'] == 'completed'
+    assert all(read_json(target/f'state/{stage}.json')['status'] == 'pending' for stage in STAGES[1:])
+    anchor = read_json(target/'results/anchor.json')
+    assert anchor['dev_unmapped_excluded'] == (source_count or 0)
+    assert anchor['deviations'] == ['unrelated deviation'] + ([unmapped_note(1)] if source_count else [])
+    # A normal resume can skip prepare; funnels must already see the new count.
+    _, funnel = screen.screen_round(target, load(target), load(target)['generators'][0], target/'generated/llm/round1')
+    assert funnel['dev_unmapped_excluded'] == (source_count or 0)
+    assert funnel['notes'] == ([unmapped_note(1)] if source_count else [])
+    # Explicit preparation must preserve the imported count without rerunning tests.
+    prepare_import(target, load(target))
+    assert read_json(target/'results/anchor.json')['dev_unmapped_excluded'] == (source_count or 0)
+    assert source_before == {str(p.relative_to(source)): file_hash(p) for p in source.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('selection', ['dev-baseline', 'dev-results'])
+@pytest.mark.parametrize('change', ['edit', 'delete', 'inject'])
+def test_prepare_rejects_changed_imported_unmapped_audit(experiments, prepare_import, selection, change):
+    from test_survival.dev_results import UNMAPPED_AUDIT, imported_groups
+    source, target, _ = experiments
+    for exp in (source, target):
+        set_unmapped_policy(exp, 'exclude')
+    if change != 'inject':
+        write_unmapped_audit(source)
+    import_experiment(target, source, selection)
+    if change in ('edit', 'inject'):
+        write_unmapped_audit(target, 2)
+    else:
+        (target/UNMAPPED_AUDIT).unlink()
+    message = 'unrecorded exclusion audit' if change == 'inject' else 'dev-unmapped-excluded.csv'
+    if selection == 'dev-results':
+        with pytest.raises(PipelineError, match=message):
+            imported_groups(target, load(target))
+    with pytest.raises(PipelineError, match=message):
+        prepare_import(target, load(target))
+
+
+@pytest.mark.parametrize('source_policy,target_policy', [('error', 'exclude'), ('exclude', 'error')])
+def test_dev_results_refuses_unmapped_policy_mismatch_before_copy(experiments, source_policy, target_policy):
+    source, target, _ = experiments
+    set_unmapped_policy(source, source_policy)
+    set_unmapped_policy(target, target_policy)
+    before = {str(p.relative_to(target)): p.read_bytes() for p in target.rglob('*') if p.is_file()}
+    with pytest.raises(PipelineError, match='measurement settings.*unmapped'):
+        import_experiment(target, source, 'dev-results')
+    assert all((target/path).read_bytes() == data for path, data in before.items())
+    assert not (target/'state/import.json').exists()
+
+
+@pytest.mark.parametrize('policy', ['error', 'exclude'])
+def test_dev_results_revalidates_unmapped_policy_after_import(experiments, prepare_import, policy):
+    from test_survival.dev_results import imported_baseline, imported_groups
+    source, target, _ = experiments
+    for exp in (source, target):
+        set_unmapped_policy(exp, policy)
+    import_experiment(target, source, 'dev-results')
+    set_unmapped_policy(target, 'error' if policy == 'exclude' else 'exclude')
+    for check in (imported_baseline, imported_groups, prepare_import):
+        with pytest.raises(PipelineError, match='unmapped'):
+            check(target, load(target))
+
+
+def test_legacy_dev_results_manifest_defaults_to_error_without_mutation(experiments):
+    from test_survival.dev_results import imported_baseline, imported_groups
+    source, target, _ = experiments
+    import_experiment(target, source, 'dev-results')
+    manifest = read_json(target/'state/import.json')
+    del manifest['dev-results']['compatibility']['measurement_settings']['unmapped']
+    write_json(target/'state/import.json', manifest)
+    before = (target/'state/import.json').read_bytes()
+    assert imported_baseline(target, load(target))
+    assert imported_groups(target, load(target))
+    assert (target/'state/import.json').read_bytes() == before
+    set_unmapped_policy(target, 'exclude')
+    with pytest.raises(PipelineError, match='unmapped'):
+        imported_baseline(target, load(target))

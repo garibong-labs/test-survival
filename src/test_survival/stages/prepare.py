@@ -33,7 +33,7 @@ def run(exp, config):
     if config['range']['limit'] is not None:
         shas = shas[:config['range']['limit']]
     anchor = dict(tag=config['anchor'], sha=anchor_sha, origin_master=end, n=len(shas), started=prior.get('started', now()),
-                  date=adapter.git('show','-s','--format=%cI',anchor_sha), deviations=[], key_check='KEY_MISSING')
+                  date=adapter.git('show','-s','--format=%cI',anchor_sha), deviations=[], key_check='KEY_MISSING', dev_unmapped_excluded=0)
     # No generation is needed for prepare. Credential presence is probed without returning its value.
     from ..model.credentials import key_available
     if key_available(config['model']):
@@ -62,10 +62,15 @@ def run(exp, config):
     if anchor_build != 'ok':
         raise RuntimeError('Anchor build failed')
     imported = read_json(exp/'state/import.json', {})
-    from ..dev_results import imported_baseline
-    if not imported.get('dev-baseline') and not imported_baseline(exp, config):
+    from ..dev_results import imported_baseline, check_unmapped_audit, refresh_unmapped_metadata
+    if imported.get('dev-baseline'):
+        check_unmapped_audit(exp, imported['dev-baseline'])
+    elif not imported_baseline(exp, config):
         baseline = adapter.baseline()
         log(exp, f'prepare: baseline has {sum(r["stable"]=="yes" for r in baseline)} stable methods', config)
+    note = refresh_unmapped_metadata(exp)
+    if note:
+        log(exp, 'prepare: '+note, config)
     def build(row):
         reason=skip_reason(touches[str(row['index'])],config['project']['module'],config['range']['skip_untouched'])
         if reason:
@@ -80,4 +85,4 @@ def run(exp, config):
     with ThreadPoolExecutor(max_workers=config['runner']['workers']['build']) as pool:
         builds = list(pool.map(build, commits))
     atomic_text(exp/'results/commits-check.md', '# Complete range build check\n\n'+f'{len(commits)} first-parent commits; {sum(r["build"]=="ok" for r in builds)} built successfully. Build failures carry forward survival and are excluded from evaluation.\n')
-    return f'{len(commits)} commits; anchor {anchor_sha}; builds recorded'
+    return f'{len(commits)} commits; anchor {anchor_sha}; builds recorded'+('; '+note if note else '')

@@ -27,6 +27,7 @@ scope:
   min_classes: 1                # stop if fewer classes are selected
 
 dev:
+  unmapped: error                # error | exclude; exclude unmappable baseline cases from every Dev group
   groups:
     - {name: dev, denominator: project}
     - {name: dev-scope, display: "Dev (scope)", denominator: coverage-scoped, derive_from: dev}
