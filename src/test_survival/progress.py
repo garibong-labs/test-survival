@@ -22,7 +22,6 @@ def items(exp, stage, config, state):
     if stage == 'prepare':
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
-        from .stages.survive import raw_folder
         adapter = JavaMavenAdapter(exp, config)
         resolution_path = exp/'state/resolved-range.json'
         resolution = read_json(resolution_path, {})
@@ -115,6 +114,7 @@ def items(exp, stage, config, state):
         imported_files = imports.get('files', {})
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
+        from .stages.survive import raw_folder
         adapter = JavaMavenAdapter(exp, config)
         provenance = adapter.provenance()
         filename = 'commits.csv' if stage == 'survive' else 'coverage-commits.csv'

@@ -42,7 +42,7 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
             failed = scenario == 'compile-failure' and any(p.name == 'Bad.java' for p in sources)
             log.write_text('Bad compile' if failed else '')
         elif 'SourceInventory.java' in ' '.join(command):
-            source = Path(command[-2])
+            source = Path(command[next(i for i, a in enumerate(command) if str(a).endswith('SourceInventory.java'))+1])
             assert not (source/'Rejected.java').exists()
             log.write_text('\n'.join(f'C\t{p.stem}\tclass\ttrue\t{p.stem}\t{p}\n'+
                                       (f'M\t{p.stem}\tworks\tplain' if p.stem != 'Helper' else '') for p in source.glob('*.java')))
@@ -264,11 +264,20 @@ def test_screening_exclusions_keep_helpers_without_modifying_pool(tmp_path):
         path=root/f'generated/ktester/round1/test_classes/{name}.java';path.parent.mkdir(parents=True,exist_ok=True)
         path.write_text('???;' if name=='Rejected' else f'class {name} {{}}')
         write_json(root/f'generated/ktester/round1/validation/{n}.json',dict(file=str(path.relative_to(root)),methods=methods,compile=compile))
-    tests=[dict(file=str((root/'generated/ktester/round1/test_classes/Kept.java').relative_to(tmp_path)))]
+    # KTester repair attempts under <test_classes>/temp/ are never helpers; an
+    # unscreened sibling elsewhere (a package subdirectory) stays available.
+    temp=root/'generated/ktester/round1/test_classes/temp/Kept_0.java';temp.parent.mkdir(parents=True)
+    temp.write_text('class Kept_0 { String s = """x"""; }')
+    sibling=root/'generated/ktester/round1/test_classes/util/Support.java';sibling.parent.mkdir(parents=True)
+    sibling.write_text('class Support {}')
+    source_root=str((root/'generated/ktester/round1/test_classes').relative_to(tmp_path))
+    tests=[dict(file=str((root/'generated/ktester/round1/test_classes/Kept.java').relative_to(tmp_path)),source_root=source_root)]
     before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
     excluded=screening_exclusions(tmp_path,{('ktester',10):tests})
-    assert {Path(p).name for p in excluded}=={'Rejected.java','Failed.java'}
+    assert {Path(p).name for p in excluded}=={'Rejected.java','Failed.java','Kept_0.java'}
     assert before=={p:p.read_bytes() for p in before}
+    summary=read_json(tmp_path/'results/policy/excluded-sources.json')
+    assert summary=={'ktester/10':dict(kept=1,rejected=2,scratch=1)}
 
 
 def test_legacy_imported_run_is_reused_byte_for_byte(baseline,monkeypatch):
