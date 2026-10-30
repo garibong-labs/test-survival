@@ -152,8 +152,8 @@ def items(exp, stage, config, state):
                 key = (group, tuple(m['id'] for m in methods))
                 if key not in fingerprints:
                     fingerprints[key] = adapter.run_fingerprints(methods)
-                runner_matches = (survival_provenance_matches(raw.get('runner_sha256'), provenance) if stage == 'survive'
-                                  else raw.get('runner_sha256') == provenance)
+                # Same reuse rule as run_group(): historical provenances count, failed coverage does not.
+                runner_matches = survival_provenance_matches(raw.get('runner_sha256'), provenance) and raw.get('status') != 'coverage-fail'
                 valid = ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or (raw.get('input_sha256') in fingerprints[key] and runner_matches))
                          and bool(commit.get('sha')) and raw.get('sha') == commit['sha'])
                 if stage == 'cover':
