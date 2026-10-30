@@ -294,6 +294,49 @@ worker.ENVIRONMENT_ERRORS={'patterns':[],'max_reruns':0,'backoff_seconds':0}
 for t in methods:
  record=worker.run_file(0,'policy',t['file'],[t],Path('/out')/('survive-'+t['id']),retry=False)
  assert record['methods'][0]['state']=='pass',record
+# Different versions of the same class compile once PER ROOT without a
+# duplicate-class failure. Rejected syntax never reaches helper inventory.
+Path('/out/two/Rejected.java').write_text('???;')
+policy_coverage.run(worker,dict(index=0,sha='fixture',methods=methods,survival=True,
+    excluded_files=['two/Rejected.java','two/BrokenTest.java'],scope_files=['src/main/java/fixture/Production.java'],
+    work='combined',output='combined-result.json'))
+combined=json.loads(Path('/out/combined-result.json').read_text())
+assert combined['coverage_status']=='complete' and all(t['state']=='pass' for t in combined['methods']),combined
+assert all(f=='src/main/java/fixture/Production.java' for t in combined['methods'] for f,n in t['lines'])
+assert Path('/out/two/Rejected.java').read_text()=='???;'
+assert all(c['snapshot_full_suite'] and c['exit_code']==0 for c in combined['compile'])
+assert len({c['log'] for c in combined['compile']})==2
+for number,line in [(0,3),(1,4)]:
+ assert ['src/main/java/fixture/Production.java',line] in combined['methods'][number]['lines']
+# Non-conflicting names must not leak runtime-only or compile-time dependencies.
+for name in ('isolated-a','isolated-b','isolated-c'): (Path('/out')/name).mkdir()
+Path('/out/isolated-a/ATest.java').write_text('package fixture; public class ATest { @org.junit.jupiter.api.Test public void works() throws Exception { Class.forName("fixture.ForeignHelper"); } }')
+Path('/out/isolated-b/BTest.java').write_text('package fixture; public class BTest { @org.junit.jupiter.api.Test public void works() throws Exception { Class.forName("fixture.ForeignHelper"); } }')
+Path('/out/isolated-b/ForeignHelper.java').write_text('package fixture; public class ForeignHelper {}')
+Path('/out/isolated-c/CTest.java').write_text('package fixture; public class CTest { @org.junit.jupiter.api.Test public void works() { new ForeignHelper(); } }')
+isolated=[dict(id=n,file_hash=n,execution_hash=n,file='isolated-'+n+'/'+n.upper()+'Test.java',source_root='isolated-'+n,
+               **{'class':'fixture.'+n.upper()+'Test'},method='works') for n in ('a','b','c')]
+policy_coverage.run(worker,dict(index=0,sha='fixture',methods=isolated,survival=True,
+    scope_files=['src/main/java/fixture/Production.java'],work='isolated',output='isolated-result.json'))
+result=json.loads(Path('/out/isolated-result.json').read_text())
+assert {t['id']:t['state'] for t in result['methods']}=={'a':'fail','b':'pass','c':'compile-fail'},result
+assert next(t for t in result['methods'] if t['id']=='a')['message'].startswith('java.lang.ClassNotFoundException: fixture.ForeignHelper')
+assert result['compile'][0]['snapshot_full_suite'] and result['compile'][1]['snapshot_full_suite']
+policy_coverage.run(worker,dict(index=0,sha='fixture',methods=isolated[:1],survival=True,
+    scope_files=['src/main/java/fixture/Production.java'],work='alone',output='alone-result.json'))
+assert json.loads(Path('/out/alone-result.json').read_text())['methods'][0]['state']=='fail'
+# Direct scoped developer execution still compiles runtime-only frozen helpers.
+import shutil
+shutil.copytree('/out/one','/out/dev/src-test-t/java')
+Path('/out/work/runtime').mkdir(exist_ok=True)
+worker.DEVELOPER=True
+selected=[dict(id='scoped',file='dev/src-test-t/java/VersionTest.java',**{'class':'fixture.VersionTest'},method='works',kind='plain')]
+for phase in ('control','A','B'):
+ worker.run_group(dict(index=0,sha='fixture',group='dev-scope',phase=phase,methods=selected,
+                       input_sha256='fixture',runner_sha256='fixture',work='dev-'+phase,output='dev-'+phase+'.json'))
+ result=json.loads((Path('/out')/('dev-'+phase+'.json')).read_text())
+ assert result['methods'][0]['state']=='pass',result
+ assert result['whole_frozen_suite_compile']['source_count']==2
 '''
     jars=runner_test_jars(json.loads((root/'src/test_survival/adapters/java/classpath-artifacts.json').read_text()))
     result=subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro',
@@ -309,3 +352,17 @@ for t in methods:
             covered={int(r.split('\t')[1]) for r in coverage if r.endswith('\ttrue')}
             assert line in covered
             assert ({3,4}-{line}).isdisjoint(covered), 'execution data leaked between tests or source versions'
+
+
+def test_direct_scoped_child_keeps_whole_frozen_tree_compilation(tmp_path,monkeypatch):
+    config=validate(dict(name='fixture',anchor='t',project=dict(repo=str(tmp_path),test_framework='junit5'),
+                         dev=dict(groups=[dict(name='dev',frozen=False),dict(name='dev-scope',derive_from='dev')])))
+    adapter=JavaMavenAdapter(tmp_path,config)
+    jobs=[]
+    def execute(command,*args):
+        jobs.append(json.loads(Path(command[-1]).read_text()))
+        return dict(exit_code=0)
+    monkeypatch.setattr(adapter.runner,'execute',execute)
+    adapter.worker(dict(action='run',group='dev-scope'))
+    assert jobs[0]['developer'] is True
+    assert jobs[0].get('developer_suite',True) is True

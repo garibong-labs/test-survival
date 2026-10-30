@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import range_fingerprint
+from .config import range_fingerprint, execution_groups, derived_source
 from .display import UTC_DISPLAY
 from .io import read_csv, read_json
 
@@ -22,6 +22,7 @@ def items(exp, stage, config, state):
     if stage == 'prepare':
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
+        from .stages.survive import raw_folder
         adapter = JavaMavenAdapter(exp, config)
         resolution_path = exp/'state/resolved-range.json'
         resolution = read_json(resolution_path, {})
@@ -110,20 +111,21 @@ def items(exp, stage, config, state):
         return completed, None if unknown else total, 'calls' if stage == 'generate' else 'files'
     if stage in ('survive', 'cover'):
         from .dev_results import imported_file_valid, load_provenance
-        imported_files = load_provenance(exp).get('files', {})
+        imports = load_provenance(exp)
+        imported_files = imports.get('files', {})
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
         adapter = JavaMavenAdapter(exp, config)
         provenance = adapter.provenance()
         filename = 'commits.csv' if stage == 'survive' else 'coverage-commits.csv'
         rows = csv_rows(exp/'results'/filename)
-        frozen = read_json(exp/'results/frozen-denominators.json', {})
+        frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json', {}))
         groups = list(frozen)
         alive = read_json(exp/'results/alive-entering.json', {})
         changes = read_json(exp/'results/commit-paths.json', {})
         fingerprints = {}
         if stage == 'survive':
-            derived = {g['name'] for g in config['dev']['groups'] if g.get('derive_from')}
+            derived = {g['name'] for g in config['dev']['groups'] if derived_source(config, g['name'])}
             groups = [g for g in groups if g not in derived]
         for row in rows:
             index = row['index']
@@ -135,7 +137,7 @@ def items(exp, stage, config, state):
             commit = read_json(exp/'results/anchor.json', {}) if index == '0' else build
             skipped = stage == 'survive' and index in changes and skip_reason(changes[index], config['project']['module'], config['range']['skip_untouched'])
             for group in groups:
-                folder = 'raw' if stage == 'survive' else 'raw-coverage'
+                folder = raw_folder(group, config, imports) if stage == 'survive' else 'raw-coverage'
                 path = exp/f'results/{folder}/{index}-{group}.json'
                 raw = read_json(path, {})
                 if skipped:
@@ -303,10 +305,13 @@ def panel_items(exp, stage, config, state):
         return p['completed'], p['total'], UNITS[stage], p
     if stage == 'control':
         from .dev_results import imported_file_valid, load_provenance
-        imported_files = load_provenance(exp).get('files', {})
+        imports = load_provenance(exp)
+        imported_files = imports.get('files', {})
         from .adapters.java_maven import JavaMavenAdapter
         adapter = JavaMavenAdapter(exp, config)
         frozen = read_json(exp/'results/frozen-denominators.json')
+        if frozen is not None:
+            frozen = execution_groups(config, frozen)
         completed = []
         provenance = adapter.provenance()
         anchor = read_json(exp/'results/anchor.json', {}).get('sha')

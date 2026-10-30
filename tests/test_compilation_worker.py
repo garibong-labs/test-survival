@@ -25,6 +25,7 @@ def group_worker(tmp_path, monkeypatch):
                             TIMEOUTS={'compile': 300, 'test_class': 120}, FLAKY_RERUN=1,
                             ENVIRONMENT_ERRORS={'patterns': []}).items():
         monkeypatch.setattr(worker, name, value, raising=False)
+    monkeypatch.setattr(worker, 'jacoco_version', lambda _: '0.8.12')
     monkeypatch.setattr(worker, 'classpath', lambda _: (tmp_path, str(production)))
     monkeypatch.setattr(CompilationService, 'compiler_identity', lambda *args: {'version': 'fixture'})
     monkeypatch.setattr(worker, 'selectors', lambda rows, *args: {r['id']: [r['class']+'#test'] for r in rows})

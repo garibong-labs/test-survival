@@ -9,6 +9,7 @@ artifacts remain unchanged. Add a `policies` section to a new experiment's
 policies:
   baseline: experiments/commit-survival
   baseline_config: null
+  regenerate_developer: false   # default true for compatibility
   groups: [dev-scope, ktester, ouedraogo]
   releases: ["1.5.0", "2.0.0"]
   threshold: 0.5
@@ -46,7 +47,8 @@ Coincident triggers share one pool and one segment transition per policy/group.
 
 `baseline_config` is used only when the baseline has no configuration. Missing
 commit paths are reconstructed in the new experiment. A missing skip list is
-accepted only when every baseline commit/group has raw evidence. `raw-derived`
+accepted only when every selected baseline commit/group has raw evidence; a
+selection-only project-wide developer group needs no raw records. `raw-derived`
 is checked before `raw`. The baseline is never used as a checkout or output tree;
 overlapping output directories and symlinks into it are rejected. Policy
 containers also mount the baseline read-only, including when its parent
@@ -66,20 +68,56 @@ Dev pool is required so the target is known before the commit loop. Developer
 pools are built before dependent generator pools, with one shared concurrency
 limit for developer selection.
 
-Developer selection runs the full suite in one JVM, with JUnit Platform and the
-Vintage engine. `PerTestCoverage` dumps and resets JaCoCo data after each test;
-parameterized invocations are unioned by `class#method`. It also analyzes those
-dumps within that JVM, avoiding a report JVM per test. The selected population is
-then screened for strict 3/3 passes. Coverage preserves resources and dependency
-source roots from each test's source snapshot. Classloader isolation allows
-multiple versions of a generated/developer test class to coexist in a coverage
-job without launching one JVM per method. Different source snapshots with
-filesystem-relative test resources are separate suite runs, each using one JVM.
-The runner compiles each frozen source snapshot, including helpers loaded via
-reflection, external method providers, or service loading. If an unrelated test
-no longer compiles, it retries with the selected test and non-test helper sources.
-A failed coverage execution is retained as evidence and fails the step instead
-of silently contributing zero covered lines.
+With `policies.regenerate_developer: false`, only LLM groups regenerate. New
+plans contain no developer points or threshold triggers. Saved plans retain their
+original bytes and hash; execution filters their developer points and never runs
+`dev-full` selection or developer pools. Existing developer pool artifacts remain
+on disk and are ignored. Matching uses the fixed scoped developer denominator at
+t. Every policy's `dev-scope` curve is the baseline no-regeneration reference;
+tables and coverage outputs label it accordingly. Its coverage comes from the
+baseline when available and is omitted when unavailable.
+
+The default `true` retains developer regeneration. In that mode developer
+selection runs the full suite with JUnit Platform and Vintage, then screens the
+selected population for strict 3/3 passes.
+
+Policy survival and coverage share one execution pass. Between successive
+regeneration points, commit indices run concurrently with
+`runner.workers.survive` workers. The coordinator aggregates those measurements
+in commit order before deciding fill membership at the next transition. Each
+evaluable index submits one worker job containing all non-importable methods
+needed across policies. The worker compiles each source root (snapshot) once,
+with its own sourcepath and class output directory. Different regeneration points
+can therefore contain different versions of the same class without duplicate-class
+errors or access to another snapshot's helpers. If a root batch fails, its files
+fall back to separate compilation with their helpers; the failed whole-root
+attempt is reused rather than repeated for each file. Screening
+validation records exclude rejected test files before snapshot inventory or
+compilation. Scratch copies leave pool sources and stored execution hashes intact.
+
+All compiled methods execute in one JVM through `PerTestCoverage`, with isolated
+class loaders for distinct snapshots. Each snapshot supplies its classpath and
+filesystem resources. The helper dumps and resets JaCoCo after each test;
+parameterized invocations are unioned by `class#method`. Only scope source-file
+coordinates from `population/scope.json` are persisted for policy survival.
+The JaCoCo agent and CLI version follow the runner JDK (0.8.14 on JDK 22+, including
+JDK 25), even when production classes were compiled with `--release 17`.
+
+The new policy execution path deliberately uses only `pass`, `fail`, `absent`,
+and `compile-fail`. Any non-successful observed JUnit result is `fail`; missing
+observations are `absent`. There is no fail/error classification, flaky rerun,
+or environment-error retry. Non-pass methods retain their failure message,
+truncated to 4,000 characters. JUnit messages use `Throwable.toString()` with the
+exception class name first, preserving the information needed for later
+Assertion-family versus other-exception classification. This PR does not perform
+that classification. Compilation failures retain compiler diagnostics.
+
+If the batch test JVM exits unsuccessfully or times out, the worker reruns that
+index through the existing per-file survival path, with both retry mechanisms
+disabled. It records survival, marks coverage missing, and continues. The
+per-policy `coverage-missing.csv` lists affected indices/groups, including failures
+at indices with no changed executable scope lines. Completed fallback records are
+reused; resuming does not repeatedly retry missing coverage.
 
 Segment 1 imports baseline raw evidence. At a regeneration commit the old segment
 is evaluated first, then a second `regenerate` row opens the new segment. Reset
@@ -96,17 +134,33 @@ content. Identical snapshots stored at different paths share runs, while changed
 helpers or resources cannot overwrite a carried snapshot. A run contains the
 union of methods needed from that snapshot across all policies; policy
 rows select from that record. Baseline source records are also imported for
-carried tests. Skips and build failures preserve the current alive set. Coverage
-uses the union of alive policy tests after each commit's transitions, and counts
+carried tests. Skips and build failures preserve the current alive set. The cover step performs no Java execution. It computes the union of alive policy tests after each commit's transitions, and counts
 covered changed executable scope lines using the baseline executable universe.
 Totals sum line/commit pairs, rather than deduplicating a line across history.
 Container teardown probes are reset separately and excluded from per-test hits,
 so one class's cleanup cannot contribute coverage to the next class's tests.
-The `none` policy imports baseline survival and coverage unchanged.
+The `none` policy imports baseline survival and coverage unchanged. Imported
+baseline raw and pool screening observations are reused without execution. When
+such evidence has no per-test line hits, coverage of a regenerated composition
+that needs those hits is unavailable, and is listed in `coverage-missing.csv`;
+missing hits are never treated as zero. Before a group's first regeneration,
+its complete baseline coverage is used directly. Totals retain `executable` and
+`groups` and add `group_executable` denominators for available observations,
+`reference_groups`, and `missing_indices`. The report uses those denominators
+so partially measured coverage is not presented as a complete total.
 
 `state/policy-*.json` records configuration fingerprints and completion for pools,
 shared runs, coverage jobs, and stages. Changed inputs require `--force`; completed
-work is otherwise reused. Force archives policy artifacts under
+work is otherwise reused. `regenerate_developer` is excluded from the digest;
+changing it filters saved plans without invalidating any pool or measured-source
+identity. Aggregate survival/coverage/report steps track their execution revision
+separately. Coverage schema version 2 records the isolated snapshot compilation
+semantics; version 1 cross-root measurements must be upgraded as well. Completed
+measured run records without the current coverage schema are
+recomputed automatically, without `--force`, in every experiment. Import and
+skip/build-failure records remain reusable; no pool is regenerated for this
+upgrade. New completed records (including explicit coverage-missing fallbacks)
+are reused on subsequent resumes. Force archives policy artifacts under
 `work/policy-history/` before rebuilding. Foreground and background policy runs
 share the experiment's exclusive lock and run lifecycle with ordinary stages.
 `survival stop <exp>` stops the coordinator and its nested pool workers/containers,
@@ -142,3 +196,36 @@ and [ta4j plan](../examples/regen-policies/ta4j/plan.md) were generated without
 running pools or policy measurements. JSV thresholds are 10/10/4, releases 98/156;
 ta4j thresholds are 21/21, releases 153→155 and 426. All five original JSV scope
 classes are absent at index 156, so the fixed-scope pools there are empty.
+
+## Selection-only developer groups in the baseline
+
+Set `frozen: false` on the project-wide developer group:
+
+```yaml
+dev:
+  groups:
+    - {name: dev, denominator: project, frozen: false}
+    - {name: dev-scope, denominator: coverage-scoped, derive_from: dev}
+```
+
+The default is `true`. Selection-only groups still drive Maven baseline and
+per-method scope selection at t. This setting leaves prepare, scope, generate,
+and screen hashes unchanged. Later stages filter old frozen-denominator artifacts
+at read time, so screen need not run again. A scoped child of a selection-only
+parent executes its selected methods directly in control, survive, and cover.
+The whole frozen developer test tree is still compiled, including helpers loaded
+only by reflection, method-provider strings, or service loading. A sourcepath
+alone would not compile those helpers. It keeps its existing
+selection and denominator, and no longer needs parent raw records. Control,
+survival, coverage, and report outputs omit the selection-only group. Imported
+developer observations use their recorded raw/raw-derived provenance even after
+the parent becomes selection-only. New imports record the effective destination
+folder. Measurement stages exclude selection-only imports before validating or
+reading raw evidence, while scope selection retains access to imported baseline
+and denominator data.
+
+The four local experiment configuration edits for this rollout are recorded in
+[resume-configs.patch](../examples/regen-policies/resume-configs.patch). These
+external experiments are not part of this repository. The patch records only the
+new options; their survive and cover worker limits remain 4. No experiments were
+run to validate this change.

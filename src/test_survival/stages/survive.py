@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..adapters.java_maven import JavaMavenAdapter
-from ..config import group_names
+from ..config import group_names, derived_source
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
 from ..runner import measurement_session
@@ -15,11 +15,22 @@ def skipped_commits(exp,config,commits):
     return {int(row['index']):reason for row in commits if (reason:=skip_reason(paths[str(row['index'])],config['project']['module'],config['range']['skip_untouched']))}
 
 
-def raw_folder(group,config):
-    return 'raw-derived' if any(g['name']==group and g.get('derive_from') for g in config['dev']['groups']) else 'raw'
+def raw_folder(group,config,provenance=None):
+    imported = (provenance or {}).get('groups', {}).get(group)
+    if imported:
+        if imported.get('raw_folder'):
+            return imported['raw_folder']
+        folders = {p.split('/')[1] for p in imported['files'] if p.startswith(('results/raw/', 'results/raw-derived/'))}
+        if len(folders) == 1:
+            return folders.pop()
+        if len(folders) > 1:
+            raise RuntimeError('Ambiguous imported survival paths for '+group+'; reimport developer results')
+    return 'raw-derived' if derived_source(config, group) else 'raw'
 
 
 def aggregate(exp,config):
+    from ..dev_results import load_provenance
+    provenance = load_provenance(exp)
     commits=read_csv(exp/'results/commits.csv');anchor=read_json(exp/'results/anchor.json')
     groups=group_names(config);skipped=skipped_commits(exp,config,commits)
     frozen=read_json(exp/'results/frozen-denominators.json')
@@ -35,7 +46,7 @@ def aggregate(exp,config):
         for g in groups:
             lost=[]
             if i and build_ok:
-                raw=read_json(exp/f'results/{raw_folder(g,config)}/{i}-{g}.json')
+                raw=read_json(exp/f'results/{raw_folder(g,config,provenance)}/{i}-{g}.json')
                 if raw is None:
                     missing.append(dict(index=i,group=g));continue
                 if i in skipped:
@@ -53,10 +64,10 @@ def aggregate(exp,config):
     write_csv(exp/'results/survival.csv',curves,['index','sha','date','subject','evaluated']+[g+s for g in groups for s in ['_alive','_lost']])
     write_csv(exp/'results/first-failures.csv',failures,['index','sha','group','id','class','method','kind','flaky'])
     write_json(exp/'results/alive-entering.json',entering)
-    counts={folder:sum((exp/f'results/{folder}/{r["index"]}-{g}.json').exists() for g in groups if raw_folder(g,config)==folder for r in commits if int(r['index']) not in failed) for folder in ['raw','raw-derived']}
+    counts={folder:sum((exp/f'results/{folder}/{r["index"]}-{g}.json').exists() for g in groups if raw_folder(g,config,provenance)==folder for r in commits if int(r['index']) not in failed) for folder in ['raw','raw-derived']}
     n=len(commits)-len(failed)
-    expected=sum(raw_folder(g,config)=='raw' for g in groups)*n
-    derived_expected=sum(raw_folder(g,config)=='raw-derived' for g in groups)*n
+    expected=sum(raw_folder(g,config,provenance)=='raw' for g in groups)*n
+    derived_expected=sum(raw_folder(g,config,provenance)=='raw-derived' for g in groups)*n
     consistency=dict(nonincreasing=all(all(a[g+'_alive']>=b[g+'_alive'] for a,b in zip(curves,curves[1:])) for g in groups),index_zero_equals_denominators=all(curves[0][g+'_alive']==len(frozen[g]) for g in groups),raw_records=counts['raw'],expected_raw_records=expected,raw_count_matches=counts['raw']==expected and counts['raw-derived']==derived_expected,missing_records=[],build_fail_indices=failed,
                      measured_raw_records=counts['raw'],derived_raw_records=counts['raw-derived'],expected_measured_raw_records=expected,expected_derived_raw_records=derived_expected,skipped_indices=sorted(skipped))
     write_json(exp/'results/survival-consistency.json',consistency)
@@ -75,14 +86,14 @@ def run(exp,config):
         if int(row['index']) not in skipped:continue
         for group in groups:
             if group in imported:
-                imported_record(exp, f'results/{raw_folder(group,config)}/{row["index"]}-{group}.json', sha=row['sha'], provenance=provenance)
+                imported_record(exp, f'results/{raw_folder(group,config,provenance)}/{row["index"]}-{group}.json', sha=row['sha'], provenance=provenance)
                 continue
-            write_json(exp/f'results/{raw_folder(group,config)}/{row["index"]}-{group}.json',dict(index=int(row['index']),sha=row['sha'],group=group,phase='A',status='skipped-untouched'))
+            write_json(exp/f'results/{raw_folder(group,config,provenance)}/{row["index"]}-{group}.json',dict(index=int(row['index']),sha=row['sha'],group=group,phase='A',status='skipped-untouched'))
     evaluated=[r for r in commits if int(r['index']) not in skipped and read_json(exp/f'results/builds/{r["index"]}.json')['build']=='ok']
     for row in evaluated:
         for g in imported:
-            imported_record(exp, f'results/{raw_folder(g,config)}/{row["index"]}-{g}.json', sha=row['sha'], method_ids=[m['id'] for m in frozen[g]], provenance=provenance)
-    measured=[g for g in groups if raw_folder(g,config)=='raw' and g not in imported]
+            imported_record(exp, f'results/{raw_folder(g,config,provenance)}/{row["index"]}-{g}.json', sha=row['sha'], method_ids=[m['id'] for m in frozen[g]], provenance=provenance)
+    measured=[g for g in groups if raw_folder(g,config,provenance)=='raw' and g not in imported]
     def job(row,g):
         i=int(row['index']);record=adapter.run_group(i,g,frozen[g])
         if any(run.get('exit_code') in [-9,137] for f in record['files'] for run in [f['compile'],*f['runs']]):
@@ -92,14 +103,14 @@ def run(exp,config):
     with measurement_session(adapter, 'survive', bool(measured and evaluated)), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
         jobs=[pool.submit(job,row,g) for row in evaluated for g in measured]
         for future in as_completed(jobs):future.result()
-    pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g.get('derive_from') and g['name'] not in imported}
+    pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g['name'] in groups and derived_source(config, g['name']) and g['name'] not in imported}
     while pending:
         ready=[g for g,source in pending.items() if source not in pending]
         if not ready:raise RuntimeError('Derived group cycle')
         for g in ready:
             source=pending.pop(g)
             for row in evaluated:
-                raw=read_json(exp/f'results/{raw_folder(source,config)}/{row["index"]}-{source}.json')
+                raw=read_json(exp/f'results/{raw_folder(source,config,provenance)}/{row["index"]}-{source}.json')
                 write_json(exp/f'results/raw-derived/{row["index"]}-{g}.json',derive_record(raw,g,frozen[g]))
     curves=aggregate(exp,config)
     return 'Final survivors: '+', '.join(f'{g}={curves[-1][g+"_alive"]}' for g in groups)

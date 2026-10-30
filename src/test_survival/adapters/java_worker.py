@@ -141,9 +141,14 @@ def selectors(rows,runtime,folder):
 
 
 def jacoco_version(classes):
+    # The launcher/test compiler use the runner JDK, even with --release main classes.
+    version = subprocess.run(['java', '-version'], capture_output=True, text=True, check=True)
+    match = re.search(r'version "(?:1\.)?(\d+)', version.stderr + version.stdout)
+    if match and int(match.group(1)) >= 22:
+        return '0.8.14'
     for path in classes.rglob('*.class'):
         with path.open('rb') as stream:header=stream.read(8)
-        if header[:4]==b'\xca\xfe\xba\xbe' and int.from_bytes(header[6:8],'big')>66:
+        if header[:4]==b'\xca\xfe\xba\xbe' and int.from_bytes(header[6:8],'big')>=66:
             return '0.8.14'
     return '0.8.12'
 
@@ -410,7 +415,8 @@ def main():
                                             TIMEOUTS['build'],execute,force=job['force'])
         write_json(EXP/job['output'],{'attempts':attempts})
     elif job['action']=='setup':setup()
-    elif job['action']=='policy-cover':
+    elif job['action'] in ('policy-cover', 'policy-survive'):
+        job['survival'] = job['action'] == 'policy-survive'
         try:
             from . import policy_coverage
         except ImportError:

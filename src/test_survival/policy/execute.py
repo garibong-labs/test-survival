@@ -1,9 +1,12 @@
 """Commit execution deduplicated across policies by source hash and index."""
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv
 from .artifacts import snapshot
+from .config import COVERAGE_VERSION, active_plan, reusable_run
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
 
 
@@ -13,64 +16,113 @@ class Runs:
         self.step = step
         self.adapter = JavaMavenAdapter(baseline.exp, baseline.execution_config)
         self.ready = False
+        self.lock = threading.Lock()
         self.needed = set()
         self.catalog = defaultdict(dict)
         self.baseline_catalog = {}
         self.pool_catalog = defaultdict(dict)
+        self.excluded = set()
+        self.missing = {}
 
     def initialize(self):
-        if self.ready:
-            return
-        write_json(self.b.exp/'results/anchor.json', self.b.anchor)
-        if self.adapter.build(0, self.b.anchor['sha'])['build'] != 'ok':
-            raise RuntimeError('Policy anchor build failed')
-        self.adapter.setup_runner()
-        self.ready = True
+        with self.lock:
+            if self.ready:
+                return
+            write_json(self.b.exp/'results/anchor.json', self.b.anchor)
+            if self.adapter.build(0, self.b.anchor['sha'])['build'] != 'ok':
+                raise RuntimeError('Policy anchor build failed')
+            self.adapter.setup_runner()
+            self.ready = True
 
     def register(self, tests):
         for t in tests:
             self.catalog[execution_id(t)][identity(t)] = t
 
-    def get(self, index, digest):
-        self.needed.add((digest,index))
-        path = self.b.exp/f'results/policy/runs/{digest}/{index}.json'
-        methods = list(self.catalog[digest].values())
-        # A physical source is compiled once even when policies reference different copies.
-        source = methods[0]
-        methods = [{**t, 'file':source['file'], **{k:source[k] for k in ('source_root','resource_root') if k in source}} for t in methods]
-        def execute():
-            imported = {}
-            for group, baseline_tests in self.baseline_catalog.items():
-                candidates = [t for t in baseline_tests if execution_id(t) == digest]
-                if candidates:
-                    raw = {r['id']:r for r in self.b.raw(index,group)['methods']}
-                    imported.update({identity(t):raw[t['origin_id']] for t in candidates})
-            imported.update(self.pool_catalog.get((index,digest), {}))
-            if set(imported) >= {identity(t) for t in methods}:
-                write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated', imported=True,
-                                      methods=[imported[identity(t)] for t in methods]))
-                return
+    def path(self, index, digest):
+        return self.b.exp/f'results/policy/runs/{digest}/{index}.json'
+
+    def imports(self, index, digest):
+        imported = {}
+        for group, baseline_tests in self.baseline_catalog.items():
+            candidates = [t for t in baseline_tests if execution_id(t) == digest]
+            if candidates:
+                raw = {r['id']:r for r in self.b.raw(index,group)['methods']}
+                imported.update({identity(t):{**t, **raw[t['origin_id']],
+                                               'file_hash':t['file_hash'], 'execution_hash':execution_id(t)} for t in candidates})
+        imported.update(self.pool_catalog.get((index,digest), {}))
+        return imported
+
+    def run_index(self, index, digests):
+        digests = sorted(digests)
+        imported = {h:self.imports(index,h) for h in digests}
+        collected = []
+        for h in digests:
+            prior = read_json(self.path(index,h), {})
+            state = read_json(self.b.exp/f'state/policy-run-{h}-{index}.json', {})
+            if state.get('status') == 'completed' and reusable_run(prior):
+                continue
+            collected.extend(t for ident,t in self.catalog[h].items() if ident not in imported[h])
+        batch = None
+        def measure():
+            nonlocal batch
+            if batch is not None:
+                return batch
             self.initialize()
             sha = self.b.by_index[index]['sha']
-            build = self.adapter.build(index, sha)
-            if build['build'] != 'ok':
+            if self.adapter.build(index, sha)['build'] != 'ok':
                 raise RuntimeError('Build differs from baseline at evaluable index '+str(index))
-            # Source roots carry developer helper sources without treating the entire frozen suite as a new job.
-            result = self.adapter.run_group(index, 'policy-'+digest, methods)
-            if any(r.get('exit_code') in (-9,137) for f in result['files'] for r in [f['compile'],*f['runs']]):
-                raise RuntimeError('Policy worker killed; run is incomplete')
-            write_json(path, result)
-        self.step(f'run-{digest}-{index}', execute, outputs=[path])
-        result = read_json(path)
-        if {identity(t) for t in methods} != {identity(t) for t in result['methods']}:
+            batch = self.adapter.worker(dict(action='policy-survive', index=index, sha=sha, group='policy-survival',
+                                            methods=collected, scope_files=[c['file'] for c in self.b.scope['classes']],
+                                            excluded_files=sorted(self.excluded),
+                                            output=f'results/policy/batches/{index}.json', work=f'work/policy-survive/{index}'))
+            return batch
+        for digest in digests:
+            self.needed.add((digest,index))
+            methods = list(self.catalog[digest].values())
+            path = self.path(index,digest)
+            def execute():
+                observations = dict(imported[digest])
+                missing = set(self.catalog[digest]) - observations.keys()
+                raw = measure() if missing else {}
+                observations.update({identity(t):t for t in raw.get('methods', []) if execution_id(t) == digest and identity(t) in missing})
+                if set(observations) < set(self.catalog[digest]):
+                    raise ValueError('Incomplete policy batch inventory')
+                observed = [observations[identity(t)] for t in methods]
+                scope = {c['file'] for c in self.b.scope['classes']}
+                observed = [{**t, 'message':t.get('message', '')[:4000], **({'lines':[line for line in t['lines'] if line[0] in scope]} if 'lines' in t else {})}
+                            for t in observed]
+                complete = all('lines' in t for t in observed)
+                write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
+                                      imported=not missing, coverage_version=COVERAGE_VERSION,
+                                      coverage_status='complete' if complete else 'missing',
+                                      coverage_reason='' if complete else raw.get('coverage_reason', 'imported evidence has no per-test coverage'),
+                                      methods=observed))
+            self.step(f'run-{digest}-{index}', execute, outputs=[path])
+            saved = read_json(path)
+            if saved.get('coverage_reason') == 'batch JVM failed or timed out':
+                self.missing[index, digest] = saved['coverage_reason']
+
+    def get(self, index, digest):
+        self.run_index(index, [digest])
+        result = read_json(self.path(index,digest))
+        if set(self.catalog[digest]) != {identity(t) for t in result['methods']}:
             raise ValueError('Shared run method inventory changed; use --force')
         return result
 
+    def prefetch(self, indices, digests):
+        if not digests:
+            return
+        with ThreadPoolExecutor(max_workers=self.b.execution_config['runner']['workers']['survive']) as pool:
+            jobs = [pool.submit(self.run_index, i, digests) for i in indices if self.b.evaluable(i)]
+            for future in as_completed(jobs):
+                future.result()
+
     def carry(self, index, digest):
         self.needed.add((digest,index))
-        path = self.b.exp/f'results/policy/runs/{digest}/{index}.json'
+        path = self.path(index,digest)
         status = 'skipped-untouched' if index in self.b.skipped else 'build-fail'
-        self.step(f'run-{digest}-{index}', lambda:write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status=status, methods=[])), outputs=[path])
+        self.step(f'run-{digest}-{index}', lambda:write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'],
+                  status=status, coverage_version=COVERAGE_VERSION, coverage_status='not-evaluated', methods=[])), outputs=[path])
 
 
 def baseline_tests(b):
@@ -83,9 +135,13 @@ def baseline_tests(b):
 
 
 def survive(b, plan, pools, step):
+    plan = active_plan(b, plan)
+    pools = {k:v for k,v in pools.items() if any(p['group'] == k[0] and p['index'] == k[1] for p in plan['pools'])}
     frozen = baseline_tests(b)
     runs = Runs(b, step)
     runs.baseline_catalog = frozen
+    runs.excluded = screening_exclusions(b.exp, pools)
+
     for (_,index), tests in pools.items():
         for t in tests:
             runs.pool_catalog[index,execution_id(t)][identity(t)] = dict(t,state='pass',flaky=False)
@@ -103,7 +159,15 @@ def survive(b, plan, pools, step):
         for g in b.groups:
             row.update({g+'_'+k:v for k,v in stats[g].items()})
         curves[p].append(row)
+    boundaries = sorted({i for ps in points.values() for _,i in ps})
+    prefetched_until = -1
     for commit in b.curves:
+        index = int(commit['index'])
+        if index > prefetched_until:
+            end = next((i for i in boundaries if i >= index), int(b.curves[-1]['index']))
+            digests = {execution_id(t) for gs in current.values() for s in gs.values() if s['segment'] > 1 for t in s['tests']}
+            runs.prefetch([int(c['index']) for c in b.curves if index <= int(c['index']) <= end], digests)
+            prefetched_until = end
         index = int(commit['index']); evaluable = index > 0 and b.evaluable(index)
         for p, policy in policies.items():
             stats = {}
@@ -151,4 +215,27 @@ def survive(b, plan, pools, step):
         write_json(directory/'alive.json', alive_at[p])
         write_csv(directory/'survival.csv',curves[p],list(curves[p][0]))
         write_csv(directory/'first-failures.csv',failures[p],['index','sha','group','segment','id','kind','flaky'])
+        missing = []
+        for index in sorted({i for i,h in runs.missing}):
+            for g, gs in segments[p].items():
+                active = [s for s in gs if s['start'] <= index][-1]
+                reasons = {runs.missing[index,execution_id(t)] for t in active['tests'] if (index,execution_id(t)) in runs.missing}
+                if reasons:
+                    missing.append(dict(index=index,sha=b.by_index[index]['sha'],group=g,reason='; '.join(sorted(reasons))))
+        write_csv(directory/'coverage-missing.csv',missing,['index','sha','group','reason'])
     write_json(b.exp/'results/policy/needed-runs.json',[dict(execution_hash=h,index=i) for h,i in sorted(runs.needed)])
+
+
+def screening_exclusions(exp, pools):
+    """Exclude rejected test candidates, retaining successfully compiled helpers."""
+    excluded = set()
+    for (group, index), tests in pools.items():
+        root = exp/f'results/policy/pools/{group}/{index}'
+        kept = {(exp/t['file']).resolve() for t in tests}
+        for path in (root/'generated').glob('*/round*/validation/*.json'):
+            record = read_json(path)
+            candidate = record.get('file')
+            helper = not record.get('methods') and (record.get('compile') or {}).get('exit_code') == 0
+            if candidate and not helper and (root/candidate).resolve() not in kept:
+                excluded.add(str((root/candidate).relative_to(exp)))
+    return excluded

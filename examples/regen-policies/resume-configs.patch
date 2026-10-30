@@ -1,0 +1,40 @@
+--- a/dnsjava/experiments/commit-survival/experiment.yaml
++++ b/dnsjava/experiments/commit-survival/experiment.yaml
+@@ -34,6 +34,7 @@
+   groups:
+     - name: dev
+       denominator: project
++      frozen: false
+     - name: dev-scope
+       display: "Dev (scope)"
+       denominator: coverage-scoped
+--- a/dnsjava/experiments/regen-policies/experiment.yaml
++++ b/dnsjava/experiments/regen-policies/experiment.yaml
+@@ -110,6 +110,7 @@
+   cache: {classpath: pom-sha256, node_modules: lockfile-sha256}
+ 
+ policies:
++  regenerate_developer: false
+   baseline: experiments/commit-survival       # "no regeneration" run of this week (read-only)
+   baseline_config: null
+   groups:
+--- a/json-schema-validator/experiments/regen-policies/experiment.yaml
++++ b/json-schema-validator/experiments/regen-policies/experiment.yaml
+@@ -162,6 +162,7 @@
+     classpath: pom-sha256
+     node_modules: lockfile-sha256
+ policies:
++  regenerate_developer: false
+   baseline: experiments/commit-survival-run2
+   baseline_config: experiments/commit-survival-replay-followup/experiment.yaml
+   groups:
+--- a/ta4j/experiments/regen-policies/experiment.yaml
++++ b/ta4j/experiments/regen-policies/experiment.yaml
+@@ -133,6 +133,7 @@
+     classpath: pom-sha256
+     node_modules: lockfile-sha256
+ policies:
++  regenerate_developer: false
+   baseline: experiments/commit-survival
+   baseline_config: null
+   groups:

@@ -174,7 +174,7 @@ DOCKER = {
 DEV_GROUP = {
     'name': Field(str), 'display': Field(str, None, nullable=True),
     'denominator': enum('project', 'project', 'scope-targeted', 'coverage-scoped'),
-    'derive_from': Field(str, None, nullable=True),
+    'derive_from': Field(str, None, nullable=True), 'frozen': Field(bool, True),
 }
 
 
@@ -345,7 +345,7 @@ def developer_groups(config):
 
 
 def group_names(config):
-    return [g['name'] for g in [*developer_groups(config),*config['generators']]]
+    return [g['name'] for g in [*developer_groups(config),*config['generators']] if g.get('frozen', True)]
 
 
 def group_labels(config):
@@ -502,6 +502,9 @@ def result_inputs(config):
     """Hash result-affecting settings, excluding scheduling and host wiring."""
     c = as_written(config)
     c.pop('policies', None)
+    for g in c.get('dev', {}).get('groups', []):
+        if g.get('frozen', True):
+            g.pop('frozen', None)
     if 'runner' in c:
         c['runner'] = runner_inputs(c['runner'])
         if not c['runner']:
@@ -523,6 +526,9 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
         raise ConfigError(f'stage: allowed values: {", ".join(STAGES)}')
     index = STAGES.index(stage)
     c = as_written(c) if legacy else result_inputs(c)
+    for g in c.get('dev', {}).get('groups', []):
+        if index <= 3 or g.get('frozen', True):
+            g.pop('frozen', None)
     data = {k: c[k] for k in ('project', 'anchor', 'range', 'runner') if k in c}
     baseline = {k: c['dev'][k] for k in ('stable_runs', 'unmapped') if k in c.get('dev', {})}
     if baseline:
@@ -559,3 +565,15 @@ def stage_hash(c, stage, group=None):
 def legacy_stage_hash(c, stage, group=None):
     """Recognize pre-migration state without silently blessing changed results."""
     return canonical_hash(stage_inputs(c, stage, group, legacy=True))
+
+
+def execution_groups(config, frozen):
+    """Filter old screen artifacts without changing their selection evidence."""
+    excluded = {g['name'] for g in config['dev']['groups'] if not g.get('frozen', True)}
+    return {g: rows for g, rows in frozen.items() if g not in excluded}
+
+
+def derived_source(config, group):
+    groups = {g['name']: g for g in config['dev']['groups']}
+    source = groups.get(group, {}).get('derive_from')
+    return source if source and groups[source].get('frozen', True) else None

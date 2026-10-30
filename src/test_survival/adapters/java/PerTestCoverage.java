@@ -15,6 +15,7 @@ import org.jacoco.cli.internal.core.tools.ExecFileLoader;
 public final class PerTestCoverage implements TestExecutionListener {
     private final Path output;
     private final Path production;
+    private final Set<String> scope;
     private TestPlan plan;
     private int serial;
     private Throwable failure;
@@ -24,6 +25,8 @@ public final class PerTestCoverage implements TestExecutionListener {
     PerTestCoverage(Path output, Path production) throws Exception {
         this.output = output;
         this.production = production;
+        String scopeFile = System.getProperty("survival.coverage.scope");
+        scope = scopeFile == null ? null : new HashSet<>(Files.readAllLines(Paths.get(scopeFile)));
         Class<?> rt = ClassLoader.getSystemClassLoader().loadClass("org.jacoco.agent.rt.RT");
         agent = rt.getMethod("getAgent").invoke(null);
         dump = ClassLoader.getSystemClassLoader().loadClass("org.jacoco.agent.rt.IAgent").getMethod("getExecutionData", boolean.class);
@@ -53,7 +56,7 @@ public final class PerTestCoverage implements TestExecutionListener {
             MethodSource source = method(id);
             if (source == null) throw new IllegalStateException("Unmapped test: " + id.getUniqueId());
             String name = Integer.toString(serial++);
-            Files.write(output.resolve(name + ".exec"), bytes);
+            if (scope == null) Files.write(output.resolve(name + ".exec"), bytes);
             ExecFileLoader data = new ExecFileLoader();
             data.load(new ByteArrayInputStream(bytes));
             CoverageBuilder coverage = new CoverageBuilder();
@@ -61,6 +64,7 @@ public final class PerTestCoverage implements TestExecutionListener {
             try (BufferedWriter writer = Files.newBufferedWriter(output.resolve(name + ".tsv"))) {
                 for (ISourceFileCoverage file : coverage.getSourceFiles()) {
                     String path = "src/main/java/" + (file.getPackageName().isEmpty() ? "" : file.getPackageName() + "/") + file.getName();
+                    if (scope != null && !scope.contains(path)) continue;
                     for (int line = file.getFirstLine(); line <= file.getLastLine(); line++) {
                         if (file.getLine(line).getInstructionCounter().getTotalCount() > 0)
                             writer.write(path + "\t" + line + "\t" + (file.getLine(line).getInstructionCounter().getCoveredCount() > 0) + "\n");
@@ -94,10 +98,34 @@ public final class PerTestCoverage implements TestExecutionListener {
         if (listener.failure != null) throw new IllegalStateException("Per-test coverage failed", listener.failure);
     }
 
+    private static void resources(Path source) throws IOException {
+        // Each isolated loader also gets its snapshot's filesystem resources.
+        // Only scratch src/test/{resources,suite} beneath the worker cwd is touched.
+        for (String name : new String[]{"resources", "suite"}) {
+            Path target = Paths.get("src/test", name);
+            if (Files.exists(target)) {
+                try (var paths = Files.walk(target)) {
+                    for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+                }
+            }
+            Path root = source.resolve(name);
+            if (Files.exists(root)) {
+                try (var paths = Files.walk(root)) {
+                    for (Path path : paths.toList()) {
+                        Path destination = target.resolve(root.relativize(path));
+                        if (Files.isDirectory(path)) Files.createDirectories(destination);
+                        else Files.copy(path, destination);
+                    }
+                }
+            }
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         // Each line: output, production classes, selector file, isolated runtime classpath.
         for (String line : Files.readAllLines(Paths.get(args[0]))) {
             String[] p = line.split("\t", -1);
+            if (p.length > 4) resources(Paths.get(p[4]));
             URL[] urls = Arrays.stream(p[3].split(File.pathSeparator)).map(s -> {
                 try { return Paths.get(s).toUri().toURL(); } catch (Exception e) { throw new IllegalArgumentException(e); }
             }).toArray(URL[]::new);

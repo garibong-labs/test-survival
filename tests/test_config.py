@@ -37,7 +37,7 @@ def minimal():
 
 def test_defaults_and_acceptance_example(minimal):
     c = validate(minimal)
-    assert c['dev']['groups']==[{'name':'dev','display':'Dev','denominator':'project','derive_from':None}]
+    assert c['dev']['groups']==[{'name':'dev','display':'Dev','denominator':'project','derive_from':None,'frozen':True}]
     assert c['dev']['stable_runs']==3
     assert c['dev']['unmapped']=='error'
     assert c['runner']['workers'] == {'build': 4, 'survive': 4, 'cover': 4}

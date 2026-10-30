@@ -10,6 +10,7 @@ from ..display import UTC_DISPLAY
 from ..io import atomic_text, now, read_json, write_json
 from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
+from .config import COVERAGE_VERSION, digest_options, active_plan, reusable_run
 from . import plan as planning
 from .progress import LiveProgress, description
 
@@ -20,7 +21,7 @@ class Steps:
     def __init__(self, baseline, plan, progress=None):
         self.b = baseline
         self.progress = progress
-        self.digest = canonical_hash(dict(evidence_version=3, config=result_inputs(baseline.execution_config), policies=baseline.options, plan=plan,
+        self.digest = canonical_hash(dict(evidence_version=3, config=result_inputs(baseline.execution_config), policies=digest_options(baseline.options), plan=plan,
                                           frozen=baseline.frozen, survival=baseline.curves))
 
     def __call__(self, name, action, *, outputs=()):
@@ -28,7 +29,13 @@ class Steps:
         prior = read_json(path, {})
         if prior and prior.get('config_hash') != self.digest:
             raise ConfigError('Policy inputs changed; use --force to rebuild policy evidence')
-        if prior.get('status') == 'completed':
+        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True))
+        fresh = True
+        if name.startswith('run-'):
+            fresh = all(reusable_run(read_json(p, {})) for p in outputs)
+        elif name in ('survive', 'cover', 'report'):
+            fresh = prior.get('revision') == revision
+        if prior.get('status') == 'completed' and fresh:
             if not all(p.exists() for p in outputs):
                 raise PipelineError('Completed policy evidence is missing; restore it or use --force: '+name)
             if self.progress:
@@ -36,7 +43,7 @@ class Steps:
             return
         error_path = self.b.guard(self.b.exp/f'state/policy-{name}-error.txt')
         error_path.unlink(missing_ok=True)
-        record = dict(status='running', config_hash=self.digest, started=now(), pid=os.getpid(),
+        record = dict(status='running', revision=revision, config_hash=self.digest, started=now(), pid=os.getpid(),
                       outputs=[str(p.relative_to(self.b.exp)) for p in outputs])
         write_json(path, record)
         if self.progress:
@@ -77,14 +84,19 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
         step = Steps(b,plan,progress)
         from . import pools, execute, cover, report
         built = {}
+        effective = active_plan(b, plan)
+        pool_outputs = [b.exp/f'results/policy/pools/{p["group"]}/{p["index"]}/pool.json' for p in effective['pools']]
+        write_json(b.exp/'results/policy/active-plan.json', effective)
+        pool_action_ran = False
         def build():
+            nonlocal pool_action_ran
+            pool_action_ran = True
             built.update(pools.run(b,plan,step))
-        pool_outputs = [b.exp/f'results/policy/pools/{p["group"]}/{p["index"]}/pool.json' for p in plan['pools']]
         step('pools',build,outputs=pool_outputs)
+        if not pool_action_ran:
+            built = pools.run(b,plan,step)  # Emit each completed active pool's skip event.
         if until == 'pools':
             return
-        if not built:
-            built = {(p['group'],p['index']):read_json(b.exp/f'results/policy/pools/{p["group"]}/{p["index"]}/pool.json') for p in plan['pools']}
         names = [p['name'] for p in b.options['set']]
         step('survive',lambda:execute.survive(b,plan,built,step),outputs=[b.exp/f'results/policy/{p}/survival.csv' for p in names])
         if until == 'survive':
