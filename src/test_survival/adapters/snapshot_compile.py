@@ -30,31 +30,21 @@ def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full
     if whole['exit_code'] == 0 or full_suite:
         return classes, {**whole, 'snapshot_full_suite':True}
     inventory = part/'inventory.tsv'
-    # Lenient: a source that does not parse is reported as a "D" row (source,
-    # line, message) and skipped; it can never be a helper. Pool roots are
-    # filtered of unscreened sources before this point, so this is a safety net.
-    parsed = w.execute(['java', '-Xmx'+w.JVM['javac'], str(w.HELPERS/'SourceInventory.java'), str(root), 'auto', 'lenient'],
+    parsed = w.execute(['java', '-Xmx'+w.JVM['javac'], str(w.HELPERS/'SourceInventory.java'), str(root), 'auto'],
                        folder, inventory, w.TIMEOUTS['compile'])
     if parsed['exit_code']:
         raise RuntimeError('Cannot inventory snapshot helpers; see '+str(inventory))
-    class_files = {}; test_classes = set(); unparsable = set()
+    class_files = {}; test_classes = set()
     for line in inventory.read_text().splitlines():
         fields = line.split('\t')
         if fields[0] == 'C':
             class_files[fields[1]] = Path(fields[5])
         elif fields[0] == 'M' and fields[3]:
             test_classes.add(fields[1])
-        elif fields[0] == 'D':
-            unparsable.add(Path(fields[1]).resolve())
     test_files = {class_files[c] for c in test_classes}
-    # javac reports absolute paths; compare resolved paths and only relativise
-    # sources known to be under root.
-    skipped = [p for p in sources if p.resolve() in unparsable]
-    helpers = [p for p in sources if p not in test_files and p not in skipped]
+    helpers = [p for p in sources if p not in test_files]
     classes, result = compile_sources(sorted(set([*helpers, *selected])), 'selected-and-helpers')
-    return classes, {**result, 'snapshot_full_suite':False, 'whole_snapshot_compile':whole,
-                     'helper_sources':[str(p.relative_to(root)) for p in helpers],
-                     'unparsable_sources':[str(p.relative_to(root)) for p in skipped]}
+    return classes, {**result, 'snapshot_full_suite':False, 'whole_snapshot_compile':whole, 'helper_sources':[str(p.relative_to(root)) for p in helpers]}
 
 
 def filtered_roots(exp, methods, work, excluded=()):

@@ -93,17 +93,15 @@ errors or access to another snapshot's helpers. If a root batch fails, its files
 fall back to separate compilation with their helpers; the failed whole-root
 attempt is reused rather than repeated for each file. Screening
 validation records exclude rejected test files before snapshot inventory or
-compilation, and so do pool sources that screening never saw: a generator can
-leave intermediates beside its kept tests (KTester writes hundreds of
-`temp/*.java` repair attempts, some unparsable), and the pool snapshot copies
-every sibling. Only kept tests and sources with a screening record (compiled
-helpers included) enter a policy job; `results/policy/excluded-sources.json`
-counts kept, rejected and unscreened sources per pool. As a safety net the
-helper inventory of a snapshot root runs `SourceInventory` in lenient mode: a
-unit that does not parse is reported as a `D` row (source, line, message, the
-shape `DependencyInventory2` uses), listed in the job's `unparsable_sources`,
-and left out of the helper compilation; any other error still fails the
-inventory. Scratch copies leave pool sources and stored execution hashes intact.
+compilation, and so do generator scratch subtrees beneath a kept test's source
+root (`temp/`: KTester keeps every repair attempt under `<test_classes>/temp/`,
+hundreds of files per pool, some unparsable). The pool snapshot copies every
+sibling of a kept test, so without this exclusion the whole-root compile fails
+at every index and an unparsable attempt can abort the per-file helper
+inventory. Other unscreened siblings (helpers, providers, package
+subdirectories) remain available to javac and `SourceInventory` as before.
+`results/policy/excluded-sources.json` counts kept, rejected and scratch sources
+per pool. Scratch copies leave pool sources and stored execution hashes intact.
 
 All compiled methods execute in one JVM through `PerTestCoverage`, with isolated
 class loaders for distinct snapshots. Each snapshot supplies its classpath and

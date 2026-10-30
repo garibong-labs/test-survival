@@ -226,36 +226,41 @@ def survive(b, plan, pools, step):
     write_json(b.exp/'results/policy/needed-runs.json',[dict(execution_hash=h,index=i) for h,i in sorted(runs.needed)])
 
 
-def screening_exclusions(exp, pools):
-    """Exclude pool sources that screening rejected or never saw.
+# Subdirectories a generator writes beside its kept tests that are never
+# helper sources. KTester's repair loop keeps every attempt under
+# `<test_classes>/temp/` (KTester code/procedure/post_process.py), hundreds of
+# files per pool, some of them unparsable.
+GENERATOR_SCRATCH_DIRS = ('temp',)
 
-    Only kept tests and sources with a screening record (rejected candidates
-    excepted; successfully compiled helpers retained) take part in a policy job.
-    A generator can leave intermediates beside its kept tests (KTester writes
-    hundreds of `temp/*.java` repair attempts, some of them unparsable); the pool
-    snapshot copies every sibling, so without this filter the whole-root compile
-    fails at every index and the helper inventory can abort. The pool artifacts
-    on disk and their stored hashes are not modified. A summary is written to
-    results/policy/excluded-sources.json.
+
+def screening_exclusions(exp, pools):
+    """Exclude rejected test candidates and generator scratch files from policy jobs.
+
+    Successfully compiled helpers and other unscreened siblings stay available
+    to javac and the helper inventory, as before. Scratch subtrees are excluded
+    because the pool snapshot copies every sibling of a kept test: without this
+    the whole-root compile fails at every index and an unparsable attempt can
+    abort the per-file fallback. Pool artifacts on disk and their stored hashes
+    are not modified; a per-pool summary goes to results/policy/excluded-sources.json.
     """
     excluded = set(); summary = {}
     for (group, index), tests in pools.items():
         root = exp/f'results/policy/pools/{group}/{index}'
         kept = {(exp/t['file']).resolve() for t in tests}
-        screened = set(); rejected = set()
+        rejected = set()
         for path in (root/'generated').glob('*/round*/validation/*.json'):
             record = read_json(path)
             candidate = record.get('file')
-            if not candidate:
-                continue
-            resolved = (root/candidate).resolve()
-            screened.add(resolved)
             helper = not record.get('methods') and (record.get('compile') or {}).get('exit_code') == 0
-            if not helper and resolved not in kept:
-                rejected.add(resolved)
-        unscreened = {p.resolve() for p in (root/'generated').rglob('*.java')} - screened - kept
-        for p in rejected | unscreened:
+            if candidate and not helper and (root/candidate).resolve() not in kept:
+                rejected.add((root/candidate).resolve())
+        scratch = set()
+        for source_root in {(exp/t['source_root']).resolve() for t in tests if t.get('source_root')}:
+            for name in GENERATOR_SCRATCH_DIRS:
+                scratch.update(p.resolve() for p in (source_root/name).rglob('*.java'))
+        scratch -= kept
+        for p in rejected | scratch:
             excluded.add(str(p.relative_to(exp.resolve())))
-        summary[f'{group}/{index}'] = dict(kept=len(kept), rejected=len(rejected), unscreened=len(unscreened))
+        summary[f'{group}/{index}'] = dict(kept=len(kept), rejected=len(rejected), scratch=len(scratch))
     write_json(exp/'results/policy/excluded-sources.json', summary)
     return excluded
