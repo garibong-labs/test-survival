@@ -325,3 +325,34 @@ def test_baseline_skip_change_revalidates_cached_dead_methods(tmp_path, monkeypa
     assert read_csv(tmp_path/'results/first-failures.csv')==[]
     if cached_state=='pass':
         assert path.read_bytes()==original  # Fully executed legacy observations stay reusable.
+
+
+def test_policy_dead_propagation_tolerates_imported_rows_without_hashes(baseline, monkeypatch):
+    """Records imported from the baseline carry raw rows without file_hash; the
+    completion callback must resolve them through the catalog instead of key(row)."""
+    from test_survival.policy import execute
+    exp,config,_=baseline; b=Baseline(exp,config)
+    b.execution_config['runner']['workers']['survive']=1
+    b.options['set']=[dict(name='reset', trigger='release', action='reset')]
+    plan=dict(points=[dict(group='dev-scope', index=1, trigger='release')], pools=[dict(group='dev-scope', index=1)])
+    tests=[dict(test_test(n), execution_hash='shared') for n in 'ab']
+    monkeypatch.setattr(execute, 'baseline_tests', lambda _: {'dev-scope':[]})
+    monkeypatch.setattr(b, 'raw', lambda *a: {'methods':[]})
+    monkeypatch.setattr(JavaMavenAdapter, 'build', lambda *a: {'build':'ok'})
+    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda *a: None)
+    calls=[]
+    def worker(self, job):
+        calls.append(deepcopy(job))
+        return dict(methods=[dict(t, state='pass', lines=[]) for t in job['methods']])
+    monkeypatch.setattr(JavaMavenAdapter, 'worker', worker)
+    step=Steps(b,plan)
+    # A completed imported record at index 2, shaped like the importer writes it:
+    # baseline raw rows (identity and state only), no execution or file hashes.
+    write_json(exp/'results/policy/runs/shared/2.json', dict(index=2, sha=b.by_index[2]['sha'], status='evaluated', imported=True,
+               coverage_version=3, methods=[dict(id=t['id'], **{'class':t['class']}, method=t['method'],
+                                                 state='fail' if t['id']=='a' else 'pass') for t in tests]))
+    write_json(exp/'state/policy-run-shared-2.json', dict(status='completed', config_hash=step.digest))
+    execute.survive(b,plan,{('dev-scope',1):tests},step)
+    # The failure at index 2 is propagated: only b is requested at index 3.
+    assert [(j['index'],[t['id'] for t in j['methods']]) for j in calls]==[(3,['b'])]
+    assert read_csv(exp/'results/policy/reset/survival.csv')[-1]['dev-scope_alive']=='1'

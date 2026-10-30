@@ -158,10 +158,17 @@ class Runs:
                     cached = False
             return context,job(index,context) if cached else None
         def completed(index, records):
-            for record in records:
+            # Record rows imported from the baseline (and dead markers) carry no
+            # file_hash; resolve each row to its catalog test by identity for the key.
+            for h, record in zip(sorted(digests), records):
+                tests = self.catalog[h]
                 for t in record.get('methods', []):
-                    if key(t) in alive and t['state'] in FAILURES:
-                        known[key(t)] = min(index,known.get(key(t),index))
+                    ref = tests.get(identity(t))
+                    if ref is None:
+                        continue
+                    k = key(ref)
+                    if k in alive and t['state'] in FAILURES:
+                        known[k] = min(index,known.get(k,index))
         dispatch(indices,self.b.execution_config['runner']['workers']['survive'],prepare,job,completed)
 
     def get(self, index, digest):
