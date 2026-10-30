@@ -308,6 +308,10 @@ class JavaMavenAdapter:
         compatible = (survival_provenance_matches(old.get('runner_sha256'), provenance) if phase=='A'
                       else old.get('runner_sha256')==provenance)
         complete = dead_at is None or {m['id'] for m in old.get('methods', [])} == {m['id'] for m in methods}
+        # A changed skip policy can make an earlier failure unevaluated without
+        # changing the full-list fingerprint. Omitted tests then need execution.
+        omitted = {m['id'] for m in old.get('methods', []) if m.get('state') == 'dead'}
+        complete = complete and omitted <= (dead_at or {}).keys()
         if old.get('input_sha256') in (fingerprint,legacy) and compatible and complete and old.get('sha')==commit['sha']:
             return old
         dead_at = dead_at or {}

@@ -202,3 +202,80 @@ def test_partial_pool_executes_only_alive_selected_members(baseline, monkeypatch
     assert len(jobs)==1 and [t['id'] for t in jobs[0]['methods']]==['alive']
     assert {t['id']:t['state'] for t in result['methods']}=={'alive':'pass','died':'dead','unused':'not-selected'}
     assert result['coverage_status']=='complete'
+
+
+@pytest.mark.parametrize('action', ['reset', 'fill'])
+@pytest.mark.parametrize('cached_marker', [False, True])
+def test_policy_remeasures_revived_baseline_dead_method(baseline, monkeypatch, action, cached_marker):
+    from test_survival.policy import execute
+    exp,config,_=baseline; b=Baseline(exp,config)
+    b.options['set']=[dict(name='revive', trigger='release', action=action)]
+    t=dict(test_test('shared'), execution_hash='same-source', origin_id='baseline-id')
+    plan=dict(points=[dict(group='dev-scope',index=2,trigger='release')],
+              pools=[dict(group='dev-scope',index=2)])
+    monkeypatch.setattr(execute,'baseline_tests',lambda _: {'dev-scope':[t]})
+    def raw(index, group):
+        observed=dict(t,id=t['origin_id'],state='fail',flaky=False,lines=[])
+        return {'methods':[observed if index==1 else dead_method(observed,1)]}
+    monkeypatch.setattr(b,'raw',raw)
+    monkeypatch.setattr(JavaMavenAdapter,'build',lambda *a: {'build':'ok'})
+    monkeypatch.setattr(JavaMavenAdapter,'setup_runner',lambda *a: None)
+    jobs=[]
+    def worker(self,job):
+        jobs.append(job)
+        return dict(methods=[dict(m,state='pass',lines=[]) for m in job['methods']])
+    monkeypatch.setattr(JavaMavenAdapter,'worker',worker)
+    step=Steps(b,plan)
+    if cached_marker:
+        # The old importer can have written a completed run before advance()
+        # rejected its dead marker. Resume must repair that cached import too.
+        write_json(exp/'results/policy/runs/same-source/3.json',
+                   dict(coverage_version=3,coverage_status='complete',imported=True,methods=[dead_method(t,1)]))
+        write_json(exp/'state/policy-run-same-source-3.json',dict(status='completed',config_hash=step.digest))
+    execute.survive(b,plan,{('dev-scope',2):[t]},step)
+    assert [(job['index'],[m['id'] for m in job['methods']]) for job in jobs]==[(3,['shared'])]
+    assert read_csv(exp/'results/policy/revive/survival.csv')[-1]['dev-scope_alive']=='1'
+    result=read_json(exp/'results/policy/runs/same-source/3.json')
+    assert not result['imported'] and result['methods'][0]['state']=='pass'
+    execute.survive(b,plan,{('dev-scope',2):[t]},step)
+    assert len(jobs)==1
+
+
+@pytest.mark.parametrize('cached_state', ['dead', 'pass'])
+def test_baseline_skip_change_revalidates_cached_dead_methods(tmp_path, monkeypatch, cached_state):
+    config=validate(dict(name='skip-change',anchor='t',project={'repo':str(tmp_path)},
+                         range={'skip_untouched':'none'},dev={'groups':[{'name':'dev'}]}))
+    t=dict(id='a',file='T.java',execution_hash='source',**{'class':'T'},method='a')
+    write_json(tmp_path/'results/frozen-denominators.json',{'dev':[t]})
+    write_json(tmp_path/'results/anchor.json',dict(sha='anchor',date='date'))
+    commits=[dict(index=i,sha=str(i),date='date',subject='change') for i in (1,2)]
+    write_csv(tmp_path/'results/commits.csv',commits,list(commits[0]))
+    write_json(tmp_path/'results/commit-paths.json',{'1':['README.md'],'2':['src/main/java/A.java']})
+    adapter=JavaMavenAdapter(tmp_path,config); fingerprint=adapter.run_fingerprint([t])
+    for i in (1,2):
+        write_json(tmp_path/f'results/builds/{i}.json',dict(sha=str(i),build='ok'))
+        method=(dead_method(t,1) if cached_state=='dead' else dict(t,state='pass',flaky=False)) if i==2 else dict(t,state='fail',flaky=False)
+        write_json(tmp_path/f'results/raw/{i}-dev.json',dict(index=i,sha=str(i),group='dev',status='evaluated',
+                   methods=[method],files=[],input_sha256=fingerprint,runner_sha256=adapter.provenance()))
+    calls=[]
+    monkeypatch.setattr(survive,'measurement_session',lambda *a: nullcontext())
+    def worker(self,job):
+        calls.append(job)
+        record=dict(index=job['index'],sha=job['sha'],group='dev',status='evaluated',files=[],
+                    methods=[dict(m,state='pass',flaky=False) for m in job['methods']]+job['dead_methods'],
+                    input_sha256=job['input_sha256'],runner_sha256=job['runner_sha256'])
+        write_json(self.exp/job['output'],record)
+        return record
+    monkeypatch.setattr(JavaMavenAdapter,'worker',worker)
+    path=tmp_path/'results/raw/2-dev.json'; original=path.read_bytes()
+    survive.run(tmp_path,config)
+    assert not calls and path.read_bytes()==original  # Still dead: reuse unchanged.
+    config['range']['skip_untouched']='main-sources'
+    assert JavaMavenAdapter(tmp_path,config).run_fingerprint([t])==fingerprint
+    survive.run(tmp_path,config)
+    assert [(j['index'],[m['id'] for m in j['methods']]) for j in calls]==([(2,['a'])] if cached_state=='dead' else [])
+    assert read_csv(tmp_path/'results/survival.csv')[-1]['dev_alive']=='1'
+    assert read_json(tmp_path/'results/alive-entering.json')['2']['dev']==['a']
+    assert read_csv(tmp_path/'results/first-failures.csv')==[]
+    if cached_state=='pass':
+        assert path.read_bytes()==original  # Fully executed legacy observations stay reusable.

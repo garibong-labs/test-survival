@@ -60,6 +60,10 @@ def active_plan(b, plan):
 
 
 def reusable_run(record):
+    # Repair imports saved by the old importer before advance() rejected an
+    # unexecuted marker for a revived method. Actual imported observations stay reusable.
+    if record.get('imported') is True and any(t.get('state') in ('dead', 'not-selected') for t in record.get('methods', [])):
+        return False
     # Imports and carry records contain no new execution to upgrade. In
     # particular, the interrupted JSV run has only imports at its pool index.
     return (record.get('coverage_version') == COVERAGE_VERSION

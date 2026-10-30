@@ -47,8 +47,11 @@ class Runs:
             candidates = [t for t in baseline_tests if execution_id(t) == digest]
             if candidates:
                 raw = {r['id']:r for r in self.b.raw(index,group)['methods']}
+                # Baseline survival may have stopped running this method even
+                # though a later policy pool revives the same physical source.
                 imported.update({identity(t):{**t, **raw[t['origin_id']],
-                                               'file_hash':t['file_hash'], 'execution_hash':execution_id(t)} for t in candidates})
+                                               'file_hash':t['file_hash'], 'execution_hash':execution_id(t)} for t in candidates
+                                 if raw[t['origin_id']]['state'] not in ('dead', 'not-selected')})
         imported.update(self.pool_catalog.get((index,digest), {}))
         return imported
 
