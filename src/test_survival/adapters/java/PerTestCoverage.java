@@ -60,7 +60,13 @@ public final class PerTestCoverage implements TestExecutionListener {
             ExecFileLoader data = new ExecFileLoader();
             data.load(new ByteArrayInputStream(bytes));
             CoverageBuilder coverage = new CoverageBuilder();
-            new Analyzer(data.getExecutionDataStore(), coverage).analyzeAll(production.toFile());
+            // Skip META-INF/versions/<n> copies of a multi-release build: the analyzer
+            // rejects a second class with the same name.
+            Analyzer analyzer = new Analyzer(data.getExecutionDataStore(), coverage);
+            List<Path> roots;
+            try (java.util.stream.Stream<Path> stream = Files.list(production)) { roots = stream.sorted().collect(java.util.stream.Collectors.toList()); }
+            for (Path root : roots)
+                if (!root.getFileName().toString().equals("META-INF")) analyzer.analyzeAll(root.toFile());
             try (BufferedWriter writer = Files.newBufferedWriter(output.resolve(name + ".tsv"))) {
                 for (ISourceFileCoverage file : coverage.getSourceFiles()) {
                     String path = "src/main/java/" + (file.getPackageName().isEmpty() ? "" : file.getPackageName() + "/") + file.getName();

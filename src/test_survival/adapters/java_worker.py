@@ -140,6 +140,17 @@ def selectors(rows,runtime,folder):
     return selected
 
 
+def production_class_dirs(classes):
+    """Class roots to analyze: every entry of target/classes except META-INF.
+
+    A multi-release build keeps a second copy of some classes under
+    META-INF/versions/<n>/; JaCoCo's analyzer rejects a duplicate class name
+    ("Can't add different class with same name"), so those copies are skipped.
+    """
+    dirs=sorted(p for p in classes.iterdir() if p.name!='META-INF') if classes.is_dir() else []
+    return dirs or [classes]
+
+
 def jacoco_version(classes):
     # The launcher/test compiler use the runner JDK, even with --release main classes.
     version = subprocess.run(['java', '-version'], capture_output=True, text=True, check=True)
@@ -322,7 +333,7 @@ def _run_group(job, session):
     if suite_compile is not None:result['whole_frozen_suite_compile']=suite_compile
     if coverage:
         folder,_=classpath(index);xml=EXP/job.get('coverage_xml',f'results/coverage/{index}-{group}.xml');xml.parent.mkdir(parents=True,exist_ok=True)
-        result['coverage_report']=execute(['java','-Xmx'+JVM['jacoco'],'-jar',str(EXP/f'work/libs/org.jacoco.cli-{jacoco_version(folder/"target/classes")}-nodeps.jar'),'report',*([str(execfile)] if execfile.exists() else []),'--classfiles',str(folder/'target/classes'),'--sourcefiles',str(folder/'src/main/java'),'--xml',str(xml)],folder,work/'coverage-report.txt',TIMEOUTS['compile'])
+        result['coverage_report']=execute(['java','-Xmx'+JVM['jacoco'],'-jar',str(EXP/f'work/libs/org.jacoco.cli-{jacoco_version(folder/"target/classes")}-nodeps.jar'),'report',*([str(execfile)] if execfile.exists() else []),*[a for d in production_class_dirs(folder/'target/classes') for a in ('--classfiles',str(d))],'--sourcefiles',str(folder/'src/main/java'),'--xml',str(xml)],folder,work/'coverage-report.txt',TIMEOUTS['compile'])
         if result['coverage_report']['exit_code']==0:
             with xml.with_name(xml.stem+'-lines.csv').open('w',newline='') as stream:
                 writer=csv.DictWriter(stream,fieldnames=['file','line','covered'],lineterminator='\n');writer.writeheader()

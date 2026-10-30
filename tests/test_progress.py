@@ -206,6 +206,14 @@ def test_coverage_progress_validates_alive_entering_methods(tmp_path, config):
     assert '0/1 indices' in describe(tmp_path, 'cover', config, at=AT)
     record(path, dict(status='evaluated', sha='anchor', input_sha256=adapter.run_fingerprint([]), runner_sha256=adapter.provenance()))
     assert '1/1 indices' in describe(tmp_path, 'cover', config, at=AT)
+    # Progress follows run_group(): a record from a supported historical
+    # provenance counts as done; a coverage-fail record never does.
+    from test_survival.adapters.run_reuse import PRE_MULTI_RELEASE
+    historical = {**adapter.provenance(), **PRE_MULTI_RELEASE}
+    record(path, dict(status='evaluated', sha='anchor', input_sha256=adapter.run_fingerprint([]), runner_sha256=historical))
+    assert '1/1 indices' in describe(tmp_path, 'cover', config, at=AT)
+    record(path, dict(status='coverage-fail', sha='anchor', input_sha256=adapter.run_fingerprint([]), runner_sha256=adapter.provenance()))
+    assert '0/1 indices' in describe(tmp_path, 'cover', config, at=AT)
 
 
 @pytest.mark.parametrize('change', ['runner', 'module', 'range', 'classes'])

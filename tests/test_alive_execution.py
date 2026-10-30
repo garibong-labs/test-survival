@@ -356,3 +356,45 @@ def test_policy_dead_propagation_tolerates_imported_rows_without_hashes(baseline
     # The failure at index 2 is propagated: only b is requested at index 3.
     assert [(j['index'],[t['id'] for t in j['methods']]) for j in calls]==[(3,['b'])]
     assert read_csv(exp/'results/policy/reset/survival.csv')[-1]['dev-scope_alive']=='1'
+
+
+def test_historical_provenances_match_real_records(tmp_path):
+    """Previous records are rebuilt from the live provenance plus each era's
+    recorded hashes, so a file this branch changed but the era map omits would
+    fail the comparison (the defect reported on PR #25)."""
+    from test_survival.adapters.run_reuse import HISTORICAL, PRE_MULTI_RELEASE
+    from test_survival.adapters.java_worker import production_class_dirs
+    config=validate({'name':'x','project':{'repo':str(tmp_path)},'anchor':'t','generators':[]})
+    current=JavaMavenAdapter(tmp_path, config).provenance()
+    for era in HISTORICAL:
+        assert set(era) <= set(current)
+        previous={**current, **era}
+        assert previous != current
+        assert survival_provenance_matches(previous, current)
+        changed=[k for k in current if previous[k] != current[k]]
+        assert set(changed) == set(era), 'every file that differs must be listed in the era map'
+        assert not survival_provenance_matches({**previous, 'MethodLauncher.java':'other'}, current)
+    assert not survival_provenance_matches({**current, 'java_maven.py':PRE_MULTI_RELEASE['java_maven.py']}, current)
+    classes=tmp_path/'classes'
+    for d in ('org/xbill', 'com', 'META-INF/versions/11/org/xbill'):
+        (classes/d).mkdir(parents=True)
+    assert [p.name for p in production_class_dirs(classes)]==['com','org']
+    assert production_class_dirs(tmp_path/'missing')==[tmp_path/'missing']
+
+
+def test_run_group_never_reuses_failed_coverage_records(tmp_path, monkeypatch):
+    config=validate({'name':'x','project':{'repo':str(tmp_path)},'anchor':'t','generators':[]})
+    adapter=JavaMavenAdapter(tmp_path, config)
+    methods=[dict(id='A#a', **{'class':'A'}, method='a', file='dev/src-test-t/java/A.java')]
+    (tmp_path/'dev/src-test-t/java').mkdir(parents=True); (tmp_path/'dev/src-test-t/java/A.java').write_text('class A {}')
+    write_json(tmp_path/'results/builds/3.json', dict(sha='sha3', build='ok'))
+    fingerprint=adapter.run_fingerprints(methods)[0]
+    failed=dict(status='coverage-fail', sha='sha3', input_sha256=fingerprint, runner_sha256=adapter.provenance(), methods=[dict(m, state='pass') for m in methods], files=[])
+    write_json(tmp_path/'results/raw-coverage/3-dev.json', failed)
+    calls=[]
+    monkeypatch.setattr(JavaMavenAdapter, 'worker', lambda self, job: calls.append(job) or dict(status='evaluated', methods=[]))
+    adapter.run_group(3, 'dev', methods, 'B')
+    assert len(calls)==1, 'a coverage-fail record must be re-measured, not reused'
+    good=dict(failed, status='evaluated')
+    write_json(tmp_path/'results/raw-coverage/3-dev.json', good)
+    assert adapter.run_group(3, 'dev', methods, 'B')==good and len(calls)==1
