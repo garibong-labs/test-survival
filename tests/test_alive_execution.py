@@ -358,12 +358,23 @@ def test_policy_dead_propagation_tolerates_imported_rows_without_hashes(baseline
     assert read_csv(exp/'results/policy/reset/survival.csv')[-1]['dev-scope_alive']=='1'
 
 
-def test_multi_release_provenance_compatibility_and_class_roots(tmp_path):
-    from test_survival.adapters.run_reuse import PRE_MULTI_RELEASE
+def test_historical_provenances_match_real_records(tmp_path):
+    """Previous records are rebuilt from the live provenance plus each era's
+    recorded hashes, so a file this branch changed but the era map omits would
+    fail the comparison (the defect reported on PR #25)."""
+    from test_survival.adapters.run_reuse import HISTORICAL, PRE_MULTI_RELEASE
     from test_survival.adapters.java_worker import production_class_dirs
-    current={**dict.fromkeys(PRE_BOUNDED_COVERAGE, 'new'), **dict.fromkeys(PRE_MULTI_RELEASE, 'fixed'), 'MethodLauncher.java':'same'}
-    assert survival_provenance_matches({**current, **PRE_MULTI_RELEASE}, current)
-    assert not survival_provenance_matches({**current, **PRE_MULTI_RELEASE, 'MethodLauncher.java':'other'}, current)
+    config=validate({'name':'x','project':{'repo':str(tmp_path)},'anchor':'t','generators':[]})
+    current=JavaMavenAdapter(tmp_path, config).provenance()
+    for era in HISTORICAL:
+        assert set(era) <= set(current)
+        previous={**current, **era}
+        assert previous != current
+        assert survival_provenance_matches(previous, current)
+        changed=[k for k in current if previous[k] != current[k]]
+        assert set(changed) == set(era), 'every file that differs must be listed in the era map'
+        assert not survival_provenance_matches({**previous, 'MethodLauncher.java':'other'}, current)
+    assert not survival_provenance_matches({**current, 'java_maven.py':PRE_MULTI_RELEASE['java_maven.py']}, current)
     classes=tmp_path/'classes'
     for d in ('org/xbill', 'com', 'META-INF/versions/11/org/xbill'):
         (classes/d).mkdir(parents=True)
