@@ -25,9 +25,10 @@ in both Jupiter and Vintage.
 They do not run ta4j, Maven project builds, or any model calls.
 
 Missing image/library variables fail when `SURVIVAL_REQUIRE_JAVA_TESTS=1`; an absent
-or empty library directory always fails. The final JUnit XML check requires all eight named
-fixtures to pass with no skips/errors/failures, so missing prerequisites cannot produce
-a green integration job. Fast tests deselect the marked Java tests explicitly.
+or empty library directory always fails. The final JUnit XML check requires every named
+fixture in `ci/java_fixture.py` to pass with no skips/errors/failures, so missing
+prerequisites cannot produce a green integration job. Fast tests deselect the
+marked Java tests explicitly.
 
 Both workflows use read-only repository permissions, disable persisted checkout
 credentials, cancel superseded runs, and set timeouts (10/15 minutes). They never use
@@ -44,7 +45,7 @@ python ci/java_fixture.py libraries /tmp/survival-java-libs
 SURVIVAL_JAVA_TEST_IMAGE=survival-java-ci:fixture \
 SURVIVAL_JAVA_TEST_LIBS=/tmp/survival-java-libs \
 SURVIVAL_REQUIRE_JAVA_TESTS=1 \
-python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py --junitxml=java-results.xml
+python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py --junitxml=java-results.xml
 python ci/java_fixture.py report java-results.xml
 ```
 

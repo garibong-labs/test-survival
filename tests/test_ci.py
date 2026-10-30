@@ -2,8 +2,12 @@ from fnmatch import fnmatchcase
 import hashlib
 import importlib.util
 import io
+import os
 from pathlib import Path
 import re
+import shlex
+import subprocess
+import sys
 
 import pytest
 import yaml
@@ -46,13 +50,17 @@ def test_fixture_checksum_mismatch_does_not_publish(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
-@pytest.mark.parametrize('problem', ['skipped', 'failure', 'error', 'missing', 'duplicate', None])
+@pytest.mark.parametrize('problem', ['skipped', 'failure', 'error', 'missing', 'duplicate', 'extra', 'unexpected', None])
 def test_integration_report_requires_all_successful_fixtures(tmp_path, problem):
     names = sorted(fixture.FIXTURES)
     if problem == 'missing':
         names.pop()
     elif problem == 'duplicate':
         names[1] = names[0]
+    elif problem == 'extra':
+        names.append('test_unexpected_fixture')
+    elif problem == 'unexpected':
+        names[0] = 'test_unexpected_fixture'
     cases = ''.join(f'<testcase name="{name}">'+(f'<{problem}/>' if problem in ['skipped', 'failure', 'error'] else '')
                     +'</testcase>' for name in names)
     report = tmp_path/'report.xml'
@@ -62,6 +70,32 @@ def test_integration_report_requires_all_successful_fixtures(tmp_path, problem):
             fixture.verify_report(report)
     else:
         fixture.verify_report(report)
+
+
+def test_report_guard_matches_workflow_fixture_collection():
+    workflow = yaml.load((ROOT/'.github/workflows/java-integration.yml').read_text(), Loader=yaml.BaseLoader)
+    command = next(step['run'] for step in workflow['jobs']['java']['steps']
+                   if step.get('name') == 'Run real Java fixtures')
+    args = shlex.split(command)
+    assert args[:3] == ['python', '-m', 'pytest']
+    assert args.count('--junitxml=java-results.xml') == 1
+    documented = [shlex.split(line) for line in (ROOT/'ci/README.md').read_text().splitlines()
+                  if line.startswith('python -m pytest ') and '-m java_integration' in line]
+    assert documented == [args], 'Documented Java command must match the workflow selection and report'
+    # Use the workflow's actual paths/marker selection and parametrized node IDs.
+    # Collection does not set up fixtures or start Docker/Java. Do not write a report.
+    args.remove('--junitxml=java-results.xml')
+    collected = subprocess.run([sys.executable, *args[1:], '--collect-only'], cwd=ROOT,
+                               env={**os.environ, 'PYTEST_ADDOPTS': ''},
+                               capture_output=True, text=True, timeout=30)
+    assert collected.returncode == 0, collected.stdout + collected.stderr
+    names = [line.rsplit('::', 1)[-1] for line in collected.stdout.splitlines()
+             if line.startswith('tests/') and '::' in line]
+    assert len(names) == len(set(names)), 'Fixture report names must be unique'
+    assert set(names) == fixture.FIXTURES, (
+        f'Workflow fixtures missing from report guard: {sorted(set(names) - fixture.FIXTURES)}; '
+        f'Report guard fixtures absent from workflow: {sorted(fixture.FIXTURES - set(names))}'
+    )
 
 
 def test_required_java_environment_fails_instead_of_skipping(monkeypatch):
