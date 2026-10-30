@@ -40,12 +40,16 @@ Both `dev-baseline` and `dev-results` imports include `dev/dev-unmapped-excluded
 
 `results/raw/<index>-<group>.json`: `index`, `sha`, `group`, `phase` (`A`), `status`, `input_sha256`, `runner_sha256` (object of file name to sha of the runner components used), `files` (list of `{file, compile: {command, cwd, exit_code, timeout, seconds, log}, runs: [same shape], methods: [...]}`), `methods` (flat list of `{class, method, kind, file, id, state, message, flaky, initial_state, selector, baseline_states}`), `requested_ids`, `whole_frozen_suite_compile` (Dev only; `{command, cwd, exit_code, timeout, seconds, log, source_count, diagnostics}`), `seconds`. A skipped commit's record is `{index, sha, group, phase: "A", status: "skipped-untouched"}` only.
 
-New survival jobs request only methods alive entering the index. `methods` still
+Parallel survival jobs request a superset of methods alive entering the index,
+omitting only deaths confirmed by earlier completed jobs at dispatch time. `methods` still
 contains the full frozen denominator, with previously lost methods recorded as
 `state: "dead"`, `message: "not executed; failed at index N"`, and `flaky: false`.
 These entries have no compile/run evidence; `requested_ids` lists only requested
 methods. `input_sha256` continues to hash the full frozen list. Cumulative
-aggregation ignores dead entries, so they create no new first-failure rows.
+aggregation ignores dead entries and extra executions outside the exact
+alive-entry set, so they create no new first-failure rows. `N` is the earliest
+failure known at dispatch; `first-failures.csv` retains the exact chronological
+first failure even when jobs finish out of order.
 
 `results/survival.csv`: `index,sha,date,subject,evaluated,` then for every group in column order (Dev groups in `dev.groups` order, then generators in configuration order): `<group>_alive,<group>_lost`. The same column order applies to every table. Row 0 is `t` with subject `t = <anchor>`. `evaluated` is `yes`, or `no` for build-failed and skipped commits (which carry the previous row's counts).
 

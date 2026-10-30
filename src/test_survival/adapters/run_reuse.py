@@ -1,4 +1,5 @@
 """Compatibility for measured survival records preceding execution-only changes."""
+from ..io import read_json
 
 # PR #21 (0871fbb): these three modules change only launch orchestration and
 # dead-method bookkeeping for phase A. All other provenance must still match.
@@ -11,3 +12,21 @@ PRE_BOUNDED_COVERAGE = {
 
 def survival_provenance_matches(previous, current):
     return previous == current or previous == {**current, **PRE_BOUNDED_COVERAGE}
+
+
+def cached_survival_record(adapter, exp, index, group, methods):
+    """Read a compatible full-denominator cache; caller validates dead omissions.
+
+    Keeping omission validation separate lets dispatch await an earlier result
+    instead of needlessly replacing a valid sequential cache with extra tests.
+    """
+    record = read_json(exp/f'results/raw/{index}-{group}.json', {})
+    if record.get('status') != 'evaluated' or not record.get('input_sha256') or not record.get('runner_sha256'):
+        return None
+    commit = read_json(exp/f'results/builds/{index}.json', {})
+    if (record.get('sha') != commit.get('sha')
+            or {t['id'] for t in record.get('methods', [])} != {t['id'] for t in methods}
+            or record['input_sha256'] not in adapter.run_fingerprints(methods)
+            or not survival_provenance_matches(record['runner_sha256'], adapter.provenance())):
+        return None
+    return record

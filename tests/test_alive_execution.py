@@ -24,6 +24,7 @@ def test_baseline_alive_jobs_preserve_aggregate_bytes_and_reuse_prefix(tmp_path,
     config = validate(dict(name='alive', anchor='t', project={'repo':str(tmp_path)},
                            range={'skip_untouched':'main-sources'},
                            dev={'groups':[{'name':'dev'}, {'name':'scope', 'derive_from':'dev'}]}))
+    config['runner']['workers']['survive']=1
     methods = [dict(id=n, file='T.java', execution_hash='source', **{'class':'T'}, method=n, kind='plain') for n in 'abc']
     frozen = {'dev':methods, 'scope':methods[1:]}
     write_json(tmp_path/'results/frozen-denominators.json', frozen)
@@ -119,6 +120,7 @@ def test_complete_v2_policy_record_is_reused_byte_for_byte(baseline, monkeypatch
 def test_policy_alive_jobs_preserve_curves_failures_and_alive_bytes(baseline, monkeypatch):
     from test_survival.policy import execute
     exp,config,_=baseline; b=Baseline(exp,config)
+    b.execution_config['runner']['workers']['survive']=1
     b.options['set']=[dict(name='reset', trigger='release', action='reset')]
     b.curves.append({**b.curves[-1], 'index':'4', 'sha':'sha4'})
     b.by_index[4]=b.curves[-1]

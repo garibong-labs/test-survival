@@ -1,11 +1,11 @@
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from ..adapters.java_maven import JavaMavenAdapter
+from ..adapters.run_reuse import cached_survival_record
 from ..config import group_names, derived_source
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
 from ..runner import measurement_session
-from ..rules.survival import advance
+from ..runner.dispatch import dispatch
+from ..rules.survival import FAILURES, advance
 from ..rules.commits import skip_reason
 from ..rules.dev_denominator import derive_record,validate_derived_subsets
 
@@ -94,23 +94,35 @@ def run(exp,config):
         for g in imported:
             imported_record(exp, f'results/{raw_folder(g,config,provenance)}/{row["index"]}-{g}.json', sha=row['sha'], method_ids=[m['id'] for m in frozen[g]], provenance=provenance)
     measured=[g for g in groups if raw_folder(g,config,provenance)=='raw' and g not in imported]
-    def job(g):
-        alive={m['id'] for m in frozen[g]};dead_at={}
-        # Parallelize groups, never dependent indices within a group. Cached
-        # earlier records reconstruct entry sets before any later dispatch.
-        for row in evaluated:
-            i=int(row['index']);record=adapter.run_group(i,g,frozen[g],dead_at=dead_at)
-            if any(run.get('exit_code') in [-9,137] for f in record['files'] for run in [f['compile'],*f['runs']]):
-                source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);source.replace(dest)
-                raise RuntimeError('Worker killed; quarantined raw record')
-            if {m['id'] for m in record['methods']} != {m['id'] for m in frozen[g]}:
-                raise RuntimeError('Raw methods differ from the frozen denominator')
-            alive,lost=advance(alive,record['methods'])
-            dead_at.update({m['id']:i for m in lost})
-            log(exp,f'survive: {i} {g} recorded',config)
-    with measurement_session(adapter, 'survive', bool(measured and evaluated)), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
-        jobs=[pool.submit(job,g) for g in measured]
-        for future in as_completed(jobs):future.result()
+    known={g:{} for g in measured}
+    def prepare(item,pending):
+        row,g=item; i=int(row['index']); dead_at=dict(known[g])
+        cached=cached_survival_record(adapter,exp,i,g,frozen[g])
+        if cached is not None:
+            omitted={t['id'] for t in cached['methods'] if t['state']=='dead'}
+            if not omitted <= dead_at.keys():
+                # Only reject omissions after earlier work establishes the
+                # exact dead set. Fully executed legacy records need no wait.
+                if any(other_g==g for _,other_g in pending):
+                    return None
+                cached=None
+        return dead_at,cached
+    def job(item,dead_at):
+        row,g=item
+        return adapter.run_group(int(row['index']),g,frozen[g],dead_at=dead_at)
+    def completed(item,record):
+        row,g=item; i=int(row['index'])
+        if any(run.get('exit_code') in [-9,137] for f in record['files'] for run in [f['compile'],*f['runs']]):
+            source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);source.replace(dest)
+            raise RuntimeError('Worker killed; quarantined raw record')
+        if {m['id'] for m in record['methods']} != {m['id'] for m in frozen[g]}:
+            raise RuntimeError('Raw methods differ from the frozen denominator')
+        for m in record['methods']:
+            if m['state'] in FAILURES:
+                known[g][m['id']]=min(i,known[g].get(m['id'],i))
+        log(exp,f'survive: {i} {g} recorded',config)
+    with measurement_session(adapter, 'survive', bool(measured and evaluated)):
+        dispatch([(row,g) for row in evaluated for g in measured],config['runner']['workers']['survive'],prepare,job,completed)
     pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g['name'] in groups and derived_source(config, g['name']) and g['name'] not in imported}
     while pending:
         ready=[g for g,source in pending.items() if source not in pending]
