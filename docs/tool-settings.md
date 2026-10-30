@@ -76,3 +76,39 @@ Display settings do not enter the experiment configuration, fingerprints,
 compiler environment, result provenance or resume decision. Changing the display
 zone requires no rehash, migration, cache clearing or experiment rerun. Existing
 records are read as stored and are never rewritten to change their timezone.
+
+## Policy coverage JVM heap
+
+`SURVIVAL_JVM_JACOCO` overrides `runner.jvm.jacoco` for policy coverage JVM
+launches (`policy-survive` and pool `policy-cover`) without editing experiment
+configuration. Use a Java heap size such as `3g`:
+
+```sh
+export SURVIVAL_JVM_JACOCO=3g
+cd /Users/donggi/_projects/experiment-projects/json-schema-validator && survival policy run experiments/regen-policies
+```
+
+The host forwards the value to the container worker, which reads it when
+launching coverage. Unset or empty values use the configured heap. The original
+`jvm` settings and optional `coverage_environment` are saved in the worker's
+`*-job.json`; `coverage-jvm.json` and the batch result record the configured and
+effective heap and environment override. Each chunk's command, manifest and log
+are recorded in the batch result's `runs` list, with logs under
+`work/policy-survive/<index>/chunks/<chunk>/console.txt`.
+
+The override never enters stage hashes, build fingerprints or the policy digest.
+It does not affect compilation, fallback test launchers or baseline coverage.
+Policy survival instrumentation is restricted to packages from the saved scope;
+each JVM processes at most eight snapshot groups, sequentially. Failed chunks
+fall back independently, preserving successful chunks' coverage.
+
+Coverage version 3 recomputes older executed policy run records on resume,
+including both missing and complete coverage, without `--force`. Completed pools,
+imported run records and carry records remain reusable. Survival, coverage and
+reports refresh through the existing version check.
+
+New policy processes inherit the environment of the shell that starts them.
+For a dnsjava baseline command chained into `survival policy plan` and
+`survival policy run`, those new processes use the merged code and the variable
+if it is already exported in their launching shell. Exporting it in a different
+shell does not change an already-running process's environment.

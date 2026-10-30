@@ -2,6 +2,7 @@
 import collections
 import hashlib
 import io
+import os
 from pathlib import Path
 import re
 import shutil
@@ -225,6 +226,12 @@ class JavaMavenAdapter:
         path = self.exp/job.get('work','work/runner-setup')/'job.json'
         # The worker clears its work directory; keep its input outside that directory.
         path = path.parent.with_name(path.parent.name+'-job.json')
+        command = ['python3', str(Path(__file__).with_name('java_worker.py')), str(path)]
+        if job['action'] in ('policy-cover', 'policy-survive') and os.environ.get('SURVIVAL_JVM_JACOCO'):
+            # Operational launch evidence only: never mutate runner.jvm or any
+            # result/hash inputs. env also works inside a reused Docker session.
+            job['coverage_environment'] = {'SURVIVAL_JVM_JACOCO': os.environ['SURVIVAL_JVM_JACOCO']}
+            command = ['env', 'SURVIVAL_JVM_JACOCO='+os.environ['SURVIVAL_JVM_JACOCO'], *command]
         write_json(path, job)
         # A stale classpath can require both dependency goals, each offline then online.
         dependency_timeout = resolution_timeout(self.config['runner']['timeouts']['build'])
@@ -232,7 +239,7 @@ class JavaMavenAdapter:
         if job['action'] == 'setup':
             # Allow every sequential jar its configured attempt timeout and backoffs.
             timeout = len(read_json(self.helpers/'classpath-artifacts.json')) * ((RUNNER_JAR_RETRIES+1)*self.config['runner']['timeouts']['build'] + RUNNER_JAR_RETRIES*RUNNER_JAR_BACKOFF_SECONDS) + dependency_timeout + 600
-        result = self.runner.execute(['python3', str(Path(__file__).with_name('java_worker.py')), str(path)], self.folder(0), path.with_suffix('.log'), timeout)
+        result = self.runner.execute(command, self.folder(0), path.with_suffix('.log'), timeout)
         if result['exit_code']:
             raise RuntimeError('Java worker failed; see '+str(path.with_suffix('.log')))
         return read_json(self.exp/job['output']) if job.get('output') else result

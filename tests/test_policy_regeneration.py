@@ -73,7 +73,7 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
                       TIMEOUTS={'compile':30,'test_class':10}, classpath=lambda _: (tmp_path,''),
                       jacoco_version=lambda _: '0.8.14', execute=execute, run_file=run_file, write_json=write_json)
     job=dict(index=1,sha='sha',methods=tests,survival=True,work='work/job',output='result.json',
-             excluded_files=['pool/sources/Rejected.java'],scope_files=['src/main/java/A.java'])
+             excluded_files=['pool/sources/Rejected.java'],scope_files=['src/main/java/A.java'],scope_classes=['A'])
     policy_coverage.run(w,job)
     result=read_json(tmp_path/'result.json')
     assert len([c for c in calls if 'PerTestCoverage' in c]) == 1
@@ -92,14 +92,17 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
             assert all(t['message'].startswith('java.lang.IllegalStateException: ') and len(t['message'])==4000 for t in result['methods'])
 
 
-@pytest.mark.parametrize('version', [None, 1])
-def test_old_runs_recompute_together_and_pool_bytes_are_untouched(baseline, monkeypatch, version):
+@pytest.mark.parametrize('version', [None, 1, 2])
+@pytest.mark.parametrize('coverage_status', ['missing', 'complete'])
+def test_old_runs_recompute_together_and_pool_bytes_are_untouched(baseline, monkeypatch, version, coverage_status):
     exp,config,_=baseline;b=Baseline(exp,config);p=build_plan(b);steps=Steps(b,p)
     pool=exp/'state/policy-pool-llm-2.json';write_json(pool,dict(status='completed',config_hash=steps.digest))
     pool_before=(pool.read_bytes(),pool.stat().st_mtime_ns)
     runs=Runs(b,steps);tests=[test_test('a'),test_test('b')];runs.register(tests);runs.ready=True
     for t in tests:
-        path=runs.path(1,execution_id(t));write_json(path,dict(coverage_version=version,methods=[dict(t,state='pass')]))
+        path=runs.path(1,execution_id(t));write_json(path,dict(coverage_version=version,coverage_status=coverage_status,
+            coverage_reason='batch JVM failed or timed out' if coverage_status=='missing' else '',
+            methods=[dict(t,state='pass',**({'lines':[]} if coverage_status=='complete' else {}))]))
         write_json(exp/f'state/policy-run-{execution_id(t)}-1.json',dict(status='completed',config_hash=steps.digest))
     jobs=[]
     monkeypatch.setattr(runs.adapter,'build',lambda *_:dict(build='ok'))

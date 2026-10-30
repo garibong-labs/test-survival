@@ -73,6 +73,7 @@ class Runs:
                 raise RuntimeError('Build differs from baseline at evaluable index '+str(index))
             batch = self.adapter.worker(dict(action='policy-survive', index=index, sha=sha, group='policy-survival',
                                             methods=collected, scope_files=[c['file'] for c in self.b.scope['classes']],
+                                            scope_classes=[c['class'] for c in self.b.scope['classes']],
                                             excluded_files=sorted(self.excluded),
                                             output=f'results/policy/batches/{index}.json', work=f'work/policy-survive/{index}'))
             return batch

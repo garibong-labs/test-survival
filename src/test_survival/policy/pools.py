@@ -20,7 +20,7 @@ from .config import active_plan, regenerates
 
 def coverage(adapter, index, tests, name, full_suite=False):
     # Filesystem-relative resources require separate suite runs for source snapshots.
-    # Every run still launches all of its tests in one JVM, never one JVM per method.
+    # The worker bounds each JVM to a fixed number of snapshot groups.
     contexts = defaultdict(list)
     for t in tests:
         contexts[t.get('resource_root', 'dev/src-test-t')].append(t)
