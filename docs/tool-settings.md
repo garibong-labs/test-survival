@@ -108,11 +108,14 @@ run records and carry records remain reusable. Survival, coverage and reports
 refresh through the existing version check. Older pre-version-2 executions are
 still upgraded.
 
-Baseline survival evaluates commits in order within each group (groups may run
-in parallel). Policy survival also waits for each index's outcomes before
-requesting the next index. Only methods alive on entry are requested; a physical
-method shared by policies is requested if any policy still needs it. Later
-records retain dead methods as `state: dead`, with
+Baseline and policy survival dispatch up to `runner.workers.survive` indices/jobs
+concurrently. Each dispatch uses the failures confirmed by already-completed
+earlier jobs for that group or policy union. A lagging snapshot may request extra
+methods that an earlier in-flight index will later mark dead. Ordered aggregation
+ignores those extra observations and retains exact alive-entry sets and first
+failures. Policy dispatch stops at regeneration boundaries so reset/fill uses
+the exact prior outcomes; a physical method shared by policies is requested if
+any policy may still need it. Records retain omitted methods as `state: dead`, with
 `message: not executed; failed at index N`, keeping the full denominator.
 Unselected members of a partially selected policy pool are recorded as
 `not-selected`. Neither marker is a new first failure.
@@ -121,6 +124,10 @@ Baseline `input_sha256` still uses the full frozen method list. Existing PR #21
 survival records retain compatibility through an exact provenance check for the
 orchestration files changed here; other runner provenance must still match.
 Cached records are read unchanged and reconstruct alive-entry sets on resume.
+A record may have executed more methods than the current exact alive-entry set;
+it remains reusable if every method it omitted is still dead (or unselected).
+If an omission needs an earlier in-flight result to establish this, dispatch
+waits for that result instead of needlessly recomputing a valid cache.
 
 New policy processes inherit the environment of the shell that starts them.
 For a dnsjava baseline command chained into `survival policy plan` and

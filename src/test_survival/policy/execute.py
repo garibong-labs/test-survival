@@ -4,7 +4,8 @@ import threading
 
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv
-from ..rules.survival import dead_method
+from ..rules.survival import FAILURES, dead_method
+from ..runner.dispatch import dispatch
 from .artifacts import snapshot
 from .config import COVERAGE_VERSION, active_plan, reusable_run
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
@@ -124,7 +125,44 @@ class Runs:
             self.step(f'run-{digest}-{index}', execute, outputs=[path], required_methods=required[digest])
             saved = read_json(path)
             if saved.get('coverage_reason') == 'batch JVM failed or timed out':
-                self.missing[index, digest] = saved['coverage_reason']
+                for t in saved['methods']:
+                    if 'lines' not in t:
+                        self.missing[index, key(t)] = saved['coverage_reason']
+
+    def prefetch(self, indices, digests, *, alive, dead_at):
+        """Dispatch a fixed-composition window using completed observations.
+
+        A regeneration boundary ends the window: fill/reset needs exact prior
+        outcomes before its next composition (and hence live union) is known.
+        """
+        if not digests:
+            return
+        known = {k:v for k,v in dead_at.items() if k not in alive}
+        def job(index, context):
+            self.run_index(index, digests, **context)
+            return [read_json(self.path(index,h), {}) for h in sorted(digests)]
+        def prepare(index, pending):
+            context = dict(alive=alive-known.keys(), dead_at=dict(known))
+            cached = True
+            for h in digests:
+                prior = read_json(self.path(index,h), {})
+                state = read_json(self.b.exp/f'state/policy-run-{h}-{index}.json', {})
+                if state.get('status') != 'completed' or not reusable_run(prior):
+                    cached = False
+                    continue
+                required = {ident for ident,t in self.catalog[h].items() if key(t) in context['alive']}
+                required |= self.pool_catalog.get((index,h), {}).keys()
+                if not reusable_run(prior, required_methods=required):
+                    if pending:
+                        return None  # Earlier results may validate these omissions.
+                    cached = False
+            return context,job(index,context) if cached else None
+        def completed(index, records):
+            for record in records:
+                for t in record.get('methods', []):
+                    if key(t) in alive and t['state'] in FAILURES:
+                        known[key(t)] = min(index,known.get(key(t),index))
+        dispatch(indices,self.b.execution_config['runner']['workers']['survive'],prepare,job,completed)
 
     def get(self, index, digest):
         # Re-reading a measured batch must retain its entry demand; otherwise
@@ -171,6 +209,7 @@ def survive(b, plan, pools, step):
     alive = {p:{g:{key(t) for t in s['tests']} for g,s in gs.items()} for p,gs in current.items()}
     points = {p:{(x['group'],x['index']) for x in plan['points'] if x['trigger']==policy['trigger'] and x['index'] is not None} for p,policy in policies.items()}
     curves = {p:[] for p in policies}; failures = {p:[] for p in policies}; alive_at = {p:{} for p in policies}
+    entering_at = {p:{} for p in policies}
     def row_for(commit, p, event, stats):
         row = {k:commit[k] for k in ('index','sha','date','subject','evaluated')}
         row['event'] = event
@@ -178,15 +217,19 @@ def survive(b, plan, pools, step):
             row.update({g+'_'+k:v for k,v in stats[g].items()})
         curves[p].append(row)
     dead_at = {}
+    boundaries = sorted({i for ps in points.values() for _,i in ps})
+    prefetched_until = -1
     for commit in b.curves:
         index = int(commit['index']); evaluable = index > 0 and b.evaluable(index)
-        if evaluable:
-            # A shared physical method is needed if ANY policy still has it
-            # alive. Future indices cannot be prefetched before these losses.
+        if index > prefetched_until:
+            end = next((i for i in boundaries if i >= index),int(b.curves[-1]['index']))
             digests = {execution_id(t) for gs in current.values() for s in gs.values() if s['segment'] > 1 for t in s['tests']}
             entering = {ident for groups in alive.values() for ids in groups.values() for ident in ids}
-            runs.run_index(index, digests, alive=entering, dead_at=dead_at)
+            runs.prefetch([int(c['index']) for c in b.curves if index <= int(c['index']) <= end and b.evaluable(int(c['index']))],
+                          digests,alive=entering,dead_at=dead_at)
+            prefetched_until = end
         for p, policy in policies.items():
+            entering_at[p][index] = {g:set(ids) for g,ids in alive[p].items()}
             stats = {}
             for g in b.groups:
                 s = current[p][g]; observations = []
@@ -211,6 +254,7 @@ def survive(b, plan, pools, step):
                     for digest in sorted({execution_id(t) for t in s['tests']}):
                         runs.get(index,digest)
                     current[p][g] = s; segments[p][g].append(s); alive[p][g] = {key(t) for t in s['tests']}
+                    entering_at[p][index][g].update(alive[p][g])
                     _, _, stats[g] = evaluate(s,alive[p][g],[],evaluated=False)
                 # Non-triggered groups do not lose tests a second time on the regeneration row.
                 for g in b.groups:
@@ -237,7 +281,8 @@ def survive(b, plan, pools, step):
         for index in sorted({i for i,h in runs.missing}):
             for g, gs in segments[p].items():
                 active = [s for s in gs if s['start'] <= index][-1]
-                reasons = {runs.missing[index,execution_id(t)] for t in active['tests'] if (index,execution_id(t)) in runs.missing}
+                reasons = {runs.missing[index,key(t)] for t in active['tests']
+                           if key(t) in entering_at[p][index][g] and (index,key(t)) in runs.missing}
                 if reasons:
                     missing.append(dict(index=index,sha=b.by_index[index]['sha'],group=g,reason='; '.join(sorted(reasons))))
         write_csv(directory/'coverage-missing.csv',missing,['index','sha','group','reason'])
