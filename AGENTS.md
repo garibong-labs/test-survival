@@ -12,7 +12,9 @@ Co-authored-by: Codex <noreply@openai.com>
 
 ## PR comment and review attribution
 
-Start every PR comment, review submission body, inline review comment, and review-thread reply you post with the following marker as the very first line, followed by a blank line:
+This rule applies only when you are Codex (OpenAI). Other agents (for example Claude Code) must not use this marker; they follow their own attribution rules instead.
+
+If you are Codex, start every PR comment, review submission body, inline review comment, and review-thread reply you post with the following marker as the very first line, followed by a blank line:
 
 ```markdown
 > 🤖 **Codex (OpenAI)**
