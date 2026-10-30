@@ -56,6 +56,7 @@ class Baseline:
         settings['dev'].pop('denominator', None)
         settings['generators'] = [merge(g, self.options['generator_overrides'].get(g['name'], {})) for g in settings['generators']]
         self.execution_config = validate(settings)
+        self.execution_config['runner']['workers'] = dict(config['runner']['workers'])
         # Internal execution constraint, propagated through generator config copies.
         self.execution_config['runner']['policy_read_only'] = [str(self.path)]
         skip_file = self.path/'results/skipped-commits.csv'
@@ -63,7 +64,7 @@ class Baseline:
             self.skipped = {int(r['index']): r['reason'] for r in read_csv(skip_file)}
         else:
             # Missing metadata is only safe when the complete raw grid is present.
-            missing = [(r['index'], g) for r in self.commits for g in self.frozen if not self.raw_path(int(r['index']), g).exists()]
+            missing = [(r['index'], g) for r in self.commits for g in self.groups if not self.raw_path(int(r['index']), g).exists()]
             if missing:
                 raise ConfigError(f'Baseline lacks skip metadata and raw records: {missing[:5]}')
             self.skipped = {}

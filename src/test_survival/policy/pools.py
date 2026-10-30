@@ -15,6 +15,7 @@ from ..stages.generate import run as generate
 from ..stages.screen import screen_round
 from ..importer import rounds
 from .artifacts import snapshot
+from .config import active_plan, regenerates
 
 
 def coverage(adapter, index, tests, name, full_suite=False):
@@ -119,6 +120,8 @@ def build_pool(b, point, dev_target):
 def matching_target(b, plan, group, index, pools):
     devs = [name for name in b.groups if name in b.dev and b.dev[name]['denominator'] in ('scope-targeted','coverage-scoped')]
     dev = devs[0] if devs else next((name for name in b.dev if b.dev[name]['denominator'] in ('scope-targeted','coverage-scoped')), next(iter(b.dev)))
+    if not regenerates(b, dev):
+        return len(b.frozen[dev])
     if (dev,index) in pools:
         return len(pools[dev,index])
     targets = []
@@ -151,6 +154,14 @@ def matching_target(b, plan, group, index, pools):
 
 
 def run(b, plan, step):
+    progress = getattr(step, 'progress', None)
+    if progress:
+        for point in plan['pools']:
+            if not regenerates(b, point['group']):
+                name = f'pool-{point["group"]}-{point["index"]}'
+                if read_json(b.exp/f'state/policy-{name}.json', {}).get('status') == 'completed':
+                    progress.event(name, 'already completed; skipped (developer regeneration disabled)')
+    plan = active_plan(b, plan)
     # Only submit work for available slots: executor queues and semaphore waiters
     # would otherwise keep starting expensive pools after an earlier failure.
     limits = {'dev_selection': b.options['concurrency'].get('dev_selection', 1),

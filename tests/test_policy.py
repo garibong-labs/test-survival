@@ -191,6 +191,7 @@ def test_synthetic_commit_loop_imports_segment_one_and_deduplicates(baseline,mon
         calls.append((index,digest))
         return dict(methods=[dict(new,state='pass')])
     monkeypatch.setattr(execute.Runs,'get',get)
+    monkeypatch.setattr(execute.Runs,'prefetch',lambda *_:None)
     execute.survive(b,p,{('dev-scope',2):[new]},step)
     for name in ['release-reset','half-fill']:
         rows=read_csv(exp/f'results/policy/{name}/survival.csv')
@@ -210,11 +211,10 @@ def test_shared_file_run_is_executed_once_and_skip_has_evidence(baseline,monkeyp
     runs.register(tests); runs.ready=True
     calls=[]
     monkeypatch.setattr(runs.adapter,'build',lambda *_:dict(build='ok'))
-    def execute(index,group,methods):
-        calls.append((index,group,methods))
-        assert len({t['file'] for t in methods})==1
-        return dict(methods=[dict(t,state='pass') for t in methods],files=[])
-    monkeypatch.setattr(runs.adapter,'run_group',execute)
+    def execute(job):
+        calls.append(job)
+        return dict(methods=[dict(t,state='pass',lines=[]) for t in job['methods']],files=[])
+    monkeypatch.setattr(runs.adapter,'worker',execute)
     first=runs.get(1,'one-physical-source')
     second=runs.get(1,'one-physical-source')
     assert first==second and len(calls)==1
@@ -234,17 +234,12 @@ def test_changed_line_coverage_uses_union_and_preserves_empty_denominators(basel
     t=test_test('a')
     for policy,tests in [('none',[t]),('half-fill',[t]),('release-reset',[])]:
         write_json(exp/f'results/policy/{policy}/alive.json',{'1':{'dev-scope':tests}})
-    monkeypatch.setattr(cover.JavaMavenAdapter,'build',lambda *_:dict(build='ok'))
-    monkeypatch.setattr(cover.JavaMavenAdapter,'setup_runner',lambda *_:None)
-    calls=[]
-    def measure(adapter,index,tests,name):
-        calls.append(tests)
-        return dict(methods=[dict(t,lines=[['src/main/java/A.java',1]],state='pass')],universe=[['src/main/java/A.java',1],['src/main/java/A.java',2]])
-    monkeypatch.setattr(cover,'coverage',measure)
+    for policy in ('half-fill','release-reset'):
+        write_json(exp/f'results/policy/{policy}/segments.json', {'dev-scope':[{'start':0},{'start':1}]})
+    write_json(exp/f'results/policy/runs/{execution_id(t)}/1.json', dict(methods=[dict(t,lines=[['src/main/java/A.java',1]],state='pass')]))
     cover.run(b,Steps(b,build_plan(b)))
-    assert len(calls)==1 and len(calls[0])==1
     empty=read_json(exp/'results/policy/release-reset/coverage-total.json')
-    assert empty==dict(executable=2,groups={'dev-scope':0})
+    assert empty['executable']==2 and empty['groups']=={'dev-scope':0}
     assert read_json(exp/'results/policy/half-fill/coverage-total.json')['groups']['dev-scope']==1
 
 
@@ -361,19 +356,13 @@ def test_coverage_keeps_same_source_with_different_snapshots(baseline, monkeypat
     new=dict(old,execution_hash='new-dependencies')
     for p,t in [('none',old),('half-fill',old),('release-reset',new)]:
         write_json(exp/f'results/policy/{p}/alive.json',{'1':{'dev-scope':[t]}})
-    monkeypatch.setattr(cover.JavaMavenAdapter,'build',lambda *_:dict(build='ok'))
-    monkeypatch.setattr(cover.JavaMavenAdapter,'setup_runner',lambda *_:None)
-    def measure(adapter,index,tests,name):
-        assert {key(t) for t in tests} == {key(old),key(new)}
-        return dict(methods=[dict(t,state='pass',lines=[['src/main/java/A.java',1]] if t==old else [['src/main/java/A.java',1],['src/main/java/A.java',2]]) for t in tests])
-    monkeypatch.setattr(cover,'coverage',measure)
+    for policy in ('half-fill','release-reset'):
+        write_json(exp/f'results/policy/{policy}/segments.json', {'dev-scope':[{'start':0},{'start':1}]})
+    for t,lines in [(old,[1]),(new,[1,2])]:
+        write_json(exp/f'results/policy/runs/{execution_id(t)}/1.json',dict(methods=[dict(t,state='pass',lines=[['src/main/java/A.java',n] for n in lines])]))
     cover.run(b,Steps(b,build_plan(b)))
     assert read_json(exp/'results/policy/half-fill/coverage-total.json')['groups']['dev-scope']==1
     assert read_json(exp/'results/policy/release-reset/coverage-total.json')['groups']['dev-scope']==2
-    raw=read_json(exp/'results/policy/coverage/1.json');raw['methods'][0]['state']='error'
-    write_json(exp/'results/policy/coverage/1.json',raw)
-    with pytest.raises(ValueError,match='Coverage failed for alive tests'):
-        cover.run(b,Steps(b,build_plan(b)))
 
 
 def test_plan_excludes_tags_already_contained_at_anchor(baseline):

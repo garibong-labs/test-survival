@@ -1,3 +1,4 @@
+from ..config import execution_groups
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, atomic_text
 
@@ -6,7 +7,7 @@ def run(exp,config):
     from ..dev_results import imported_for, imported_record
     provenance, imported = imported_for(exp, config, 'control')
     adapter=JavaMavenAdapter(exp,config)
-    frozen=read_json(exp/'results/frozen-denominators.json')
+    frozen=execution_groups(config, read_json(exp/'results/frozen-denominators.json'))
     if set(frozen) - imported.keys():
         adapter.setup_runner()
     records={}

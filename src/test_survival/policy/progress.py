@@ -17,7 +17,9 @@ def description(exp, name, state, *, at=None):
     elapsed = max(0, ((finish or at)-start).total_seconds()) if start else 0
     fresh = 0
     if name == 'pools':
-        plan = read_json(exp/'results/policy/plan.json', {})
+        plan = read_json(exp/'results/policy/active-plan.json', None)
+        if plan is None:
+            plan = read_json(exp/'results/policy/plan.json', {})
         total = len(plan['pools']) if 'pools' in plan else None
         done = 0
         for point in plan.get('pools', []):

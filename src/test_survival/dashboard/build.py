@@ -23,6 +23,7 @@ def coverage(path,groups):
 
 def unified(path):
     rows=read_csv(path/'results/survival.csv');denoms=read_json(path/'results/denominators.json')
+    denoms={g:n for g,n in denoms.items() if rows and g+'_alive' in rows[0]}
     groups={g:[{'x':int(r['index']),'alive':int(r[g+'_alive'])} for r in rows] for g in denoms}
     config=yaml.safe_load((path/'experiment.yaml').read_text()) if (path/'experiment.yaml').exists() else {}
     anchor=read_json(path/'results/anchor.json',{})

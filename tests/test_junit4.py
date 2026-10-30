@@ -294,6 +294,16 @@ worker.ENVIRONMENT_ERRORS={'patterns':[],'max_reruns':0,'backoff_seconds':0}
 for t in methods:
  record=worker.run_file(0,'policy',t['file'],[t],Path('/out')/('survive-'+t['id']),retry=False)
  assert record['methods'][0]['state']=='pass',record
+# The policy survival batch falls back from duplicate classes across snapshots;
+# rejected generated syntax never reaches the helper inventory.
+Path('/out/two/Rejected.java').write_text('???;')
+policy_coverage.run(worker,dict(index=0,sha='fixture',methods=methods,survival=True,
+    excluded_files=['two/Rejected.java'],scope_files=['src/main/java/fixture/Production.java'],
+    work='combined',output='combined-result.json'))
+combined=json.loads(Path('/out/combined-result.json').read_text())
+assert combined['coverage_status']=='complete' and all(t['state']=='pass' for t in combined['methods']),combined
+assert all(f=='src/main/java/fixture/Production.java' for t in combined['methods'] for f,n in t['lines'])
+assert Path('/out/two/Rejected.java').read_text()=='???;'
 '''
     jars=runner_test_jars(json.loads((root/'src/test_survival/adapters/java/classpath-artifacts.json').read_text()))
     result=subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro',

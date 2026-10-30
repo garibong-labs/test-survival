@@ -218,6 +218,10 @@ class JavaMavenAdapter:
 
     def worker(self, job):
         developer=job.get('group') in {g['name'] for g in self.config['dev']['groups']}
+        groups = {g['name']:g for g in self.config['dev']['groups']}
+        source = groups.get(job.get('group'), {}).get('derive_from')
+        if source and not groups[source].get('frozen', True):
+            job['developer_suite'] = False
         framework = self.config['project']['test_framework'] if job.get('action') == 'setup' else self.test_framework() if developer else 'auto'
         job.update(experiment=self.runner.path(self.exp), module=self.config['project']['module'],
                    javac_mode=self.config['runner']['javac_mode'],

@@ -34,10 +34,12 @@ def show(exp, stage):
         if stage == 'control':
             headers.append('Passed at anchor')
             extra = {g:r['passed'] for g,r in read_json(exp/'results/control-at-t.json', {}).items()}
+            counts = {g:n for g,n in counts.items() if g in extra}
         elif stage in ['survive', 'report'] and (exp/'results/survival.csv').exists():
             curve = read_csv(exp/'results/survival.csv')
             if curve:
                 headers.append('Alive at index '+curve[-1]['index'])
+                counts = {g:n for g,n in counts.items() if g+'_alive' in curve[-1]}
                 extra = {g:curve[-1][g+'_alive'] for g in counts}
         rows = [(g, n, extra.get(g, 'pending')) if len(headers)==3 else (g, n) for g,n in counts.items()]
     elif stage == 'cover':

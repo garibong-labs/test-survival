@@ -317,6 +317,8 @@ def status(exp, config, *, display=None):
         rows.append(f'Process {bg["pid"]}: alive')
     denominators = read_json(exp / 'results/denominators.json')
     if denominators is not None:
+        from .config import execution_groups
+        denominators = execution_groups(config, denominators)
         rows.append('Denominators: ' + ', '.join(f'{g}={n}' for g, n in denominators.items()))
     survival = exp / 'results/survival.csv'
     if survival.exists():

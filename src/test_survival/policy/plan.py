@@ -3,8 +3,9 @@ import subprocess
 from pathlib import PurePosixPath
 
 from ..config import ConfigError, canonical_hash
-from ..io import atomic_text, write_json, write_csv
+from ..io import atomic_text, read_json, write_json, write_csv
 from .baseline import Baseline
+from .config import digest_options, regenerates
 
 
 def release_index(commits, tag_sha, contains, *, anchor_sha=None):
@@ -48,6 +49,8 @@ def build_plan(baseline):
     prefix = '' if prefix == '.' else prefix+'/'
     files_at = {}
     for group in b.groups:
+        if not regenerates(b, group):
+            continue
         thresholds = threshold_indices(b.curves, group, len(b.frozen[group]), b.options['threshold'], b.options['max_threshold_triggers'])
         for trigger, candidates in [('release', releases), ('threshold', [dict(requested_index=i) for i in thresholds])]:
             for candidate in candidates:
@@ -91,11 +94,19 @@ def markdown(plan):
 
 def run(exp, config):
     b = Baseline(exp, config)
+    saved = read_json(b.exp/'results/policy/plan.json')
+    prior = read_json(b.exp/'state/policy-plan.json', {})
+    if prior.get('status') == 'completed' and saved is not None:
+        digest = canonical_hash(dict(options=digest_options(b.options), plan=saved))
+        if prior.get('config_hash') != digest:
+            raise ConfigError('Policy inputs changed; use --force to rebuild policy evidence')
+        print('policy-plan: already completed; skipped', flush=True)
+        return saved
     plan = build_plan(b)
     output = b.guard(b.exp/'results/policy')
     write_json(output/'plan.json', plan)
     atomic_text(output/'plan.md', markdown(plan))
     write_json(b.exp/'results/commit-paths.json', b.commit_paths())
     write_csv(b.exp/'results/skipped-commits.csv', [dict(index=i, sha=b.by_index[i]['sha'], reason=reason) for i, reason in b.skipped.items()], ['index', 'sha', 'reason'])
-    write_json(b.exp/'state/policy-plan.json', dict(status='completed', config_hash=canonical_hash(dict(options=b.options, plan=plan))))
+    write_json(b.exp/'state/policy-plan.json', dict(status='completed', config_hash=canonical_hash(dict(options=digest_options(b.options), plan=plan))))
     return plan

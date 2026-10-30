@@ -6,7 +6,7 @@ from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
 from ..runner import measurement_session
-from ..config import group_names
+from ..config import group_names, execution_groups
 from .survive import skipped_commits
 
 
@@ -101,7 +101,7 @@ def run(exp,config):
     indices-=set(skipped)
     write_json(exp/'results/coverage-index-aliases.json',aliases)
     write_csv(exp/'results/coverage-commits.csv',[dict(index=i) for i in sorted(indices)],['index'])
-    alive=read_json(exp/'results/alive-entering.json');frozen=read_json(exp/'results/frozen-denominators.json')
+    alive=read_json(exp/'results/alive-entering.json');frozen=execution_groups(config, read_json(exp/'results/frozen-denominators.json'))
     def job(i,g):
         selected=set(alive[str(i)][g]);methods=[r for r in frozen[g] if r['id'] in selected]
         raw=adapter.coverage(i,[],methods,group=g)
@@ -127,7 +127,7 @@ def run(exp,config):
         change=read_json(path)
         for key,image_index in [('pre_image',i-1),('post_image',i)]:
             image_index=aliases.get(str(image_index),image_index)
-            first_dev=config['dev']['groups'][0]['name']
+            first_dev=group_names(config)[0]
             universe_path=exp/f'results/coverage/{image_index}-{first_dev}-lines.csv'
             if universe_path.exists():
                 universe={(r['file'],int(r['line'])) for r in read_csv(universe_path)}

@@ -43,3 +43,30 @@ def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full
     helpers = [p for p in sources if p not in test_files]
     classes, result = compile_sources(sorted(set([*helpers, *selected])), 'selected-and-helpers')
     return classes, {**result, 'snapshot_full_suite':False, 'whole_snapshot_compile':whole, 'helper_sources':[str(p.relative_to(root)) for p in helpers]}
+
+
+def filtered_roots(exp, methods, work, excluded=()):
+    """Copy source roots to scratch, excluding screened-out tests before parsing.
+
+    Pool manifests and their source hashes stay untouched. Unscreened sources
+    (helper classes/providers) remain available to javac and SourceInventory.
+    """
+    import shutil
+    excluded = {(exp/p).resolve() for p in excluded}
+    roots = {}
+    result = []
+    for test in methods:
+        root = exp/test.get('source_root', str(Path(test['file']).parent))
+        if root not in roots:
+            target = work/str(len(roots))
+            target.mkdir(parents=True, exist_ok=True)
+            for source in root.rglob('*.java'):
+                if source.resolve() not in excluded:
+                    dest = target/source.relative_to(root)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, dest)
+            roots[root] = target
+        target = roots[root]
+        result.append({**test, 'file':str((target/(exp/test['file']).relative_to(root)).relative_to(exp)),
+                       'source_root':str(target.relative_to(exp))})
+    return result

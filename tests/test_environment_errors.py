@@ -44,6 +44,7 @@ def test_single_method_coverage_retries_only_environment_failures(tmp_path,monke
                        'ENVIRONMENT_ERRORS':{**SETTINGS,'backoff_seconds':0}}.items():
         monkeypatch.setattr(java_worker,name,value,raising=False)
     row={'id':'one','class':'Fixture','method':'one'}
+    monkeypatch.setattr(java_worker,'jacoco_version',lambda _: '0.8.12')
     monkeypatch.setattr(java_worker,'classpath',lambda _: (tmp_path,''))
     monkeypatch.setattr(java_worker,'selectors',lambda *_: {'one':['Fixture#one']})
     calls=[]

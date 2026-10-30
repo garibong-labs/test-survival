@@ -6,7 +6,7 @@ from ..config import ConfigError, Field, _validate, _strings, enum, integer
 
 SCHEMA = {
     'baseline': Field(str), 'baseline_config': Field(str, None, nullable=True),
-    'groups': Field(list), 'releases': Field(list, []),
+    'regenerate_developer': Field(bool, True), 'groups': Field(list), 'releases': Field(list, []),
     'threshold': Field(float, .5, minimum=0), 'max_threshold_triggers': integer(1, 0),
     'generator_overrides': Field(dict, {}), 'concurrency': Field(dict, {}),
     'fill_seed': integer(20261029, 0), 'set': Field(list),
@@ -42,3 +42,24 @@ def merge(base, override):
     for key, value in override.items():
         result[key] = merge(result[key], value) if isinstance(value, dict) and isinstance(result.get(key), dict) else deepcopy(value)
     return result
+
+
+def digest_options(options):
+    # Execution/reporting filter: retain fingerprints of expensive existing pools.
+    return {k:v for k,v in options.items() if k != 'regenerate_developer'}
+
+
+def regenerates(b, group):
+    return b.options.get('regenerate_developer', True) or group not in b.dev
+
+
+def active_plan(b, plan):
+    return {**plan, **{k:[p for p in plan.get(k, []) if regenerates(b, p['group'])]
+                       for k in ('points', 'pools')}}
+
+
+def reusable_run(record):
+    # Imports and carry records contain no new execution to upgrade. In
+    # particular, the interrupted JSV run has only imports at its pool index.
+    return (record.get('coverage_version') == 1 or record.get('imported') is True
+            or record.get('status') in ('skipped-untouched', 'build-fail'))

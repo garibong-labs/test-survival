@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ..adapters.java_maven import JavaMavenAdapter
-from ..config import group_names
+from ..config import group_names, derived_source
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
 from ..runner import measurement_session
@@ -16,7 +16,7 @@ def skipped_commits(exp,config,commits):
 
 
 def raw_folder(group,config):
-    return 'raw-derived' if any(g['name']==group and g.get('derive_from') for g in config['dev']['groups']) else 'raw'
+    return 'raw-derived' if derived_source(config, group) else 'raw'
 
 
 def aggregate(exp,config):
@@ -92,7 +92,7 @@ def run(exp,config):
     with measurement_session(adapter, 'survive', bool(measured and evaluated)), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
         jobs=[pool.submit(job,row,g) for row in evaluated for g in measured]
         for future in as_completed(jobs):future.result()
-    pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g.get('derive_from') and g['name'] not in imported}
+    pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g['name'] in groups and derived_source(config, g['name']) and g['name'] not in imported}
     while pending:
         ready=[g for g,source in pending.items() if source not in pending]
         if not ready:raise RuntimeError('Derived group cycle')

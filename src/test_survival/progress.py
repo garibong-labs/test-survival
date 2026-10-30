@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import range_fingerprint
+from .config import range_fingerprint, execution_groups, derived_source
 from .display import UTC_DISPLAY
 from .io import read_csv, read_json
 
@@ -117,13 +117,13 @@ def items(exp, stage, config, state):
         provenance = adapter.provenance()
         filename = 'commits.csv' if stage == 'survive' else 'coverage-commits.csv'
         rows = csv_rows(exp/'results'/filename)
-        frozen = read_json(exp/'results/frozen-denominators.json', {})
+        frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json', {}))
         groups = list(frozen)
         alive = read_json(exp/'results/alive-entering.json', {})
         changes = read_json(exp/'results/commit-paths.json', {})
         fingerprints = {}
         if stage == 'survive':
-            derived = {g['name'] for g in config['dev']['groups'] if g.get('derive_from')}
+            derived = {g['name'] for g in config['dev']['groups'] if derived_source(config, g['name'])}
             groups = [g for g in groups if g not in derived]
         for row in rows:
             index = row['index']
@@ -307,6 +307,8 @@ def panel_items(exp, stage, config, state):
         from .adapters.java_maven import JavaMavenAdapter
         adapter = JavaMavenAdapter(exp, config)
         frozen = read_json(exp/'results/frozen-denominators.json')
+        if frozen is not None:
+            frozen = execution_groups(config, frozen)
         completed = []
         provenance = adapter.provenance()
         anchor = read_json(exp/'results/anchor.json', {}).get('sha')
