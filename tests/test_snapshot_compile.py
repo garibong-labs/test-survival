@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from test_survival.adapters.snapshot_compile import compile_snapshot
 
 
-def fake_worker(tmp_path, inventory_rows, javac_exit):
+def fake_worker(inventory_rows, javac_exit):
     """A worker whose `java` call writes the inventory and whose `javac` reports a fixed exit code."""
     calls = []
 
@@ -31,9 +31,9 @@ def test_unparsable_leftover_is_skipped_and_excluded_from_helpers(tmp_path):
     rows = [('C', 'KeptTest', 'CLASS', 'true', '', str(kept)),
             ('M', 'KeptTest', 't', 'plain', 'true', 't()', '', 1, 'h'),
             ('C', 'Helper', 'CLASS', 'true', '', str(helper)),
-            ('X', str(broken), 'temp/Broken_0.java:1: error: illegal text block open delimiter sequence')]
+            ('D', str(broken), 1, 'illegal text block open delimiter sequence, missing line terminator')]
     # The whole-root attempt fails (an unrelated test broke); the fallback must succeed.
-    w, calls = fake_worker(tmp_path, rows, lambda cmd: 1 if 'whole-snapshot' in str(cmd) else 0)
+    w, calls = fake_worker(rows, lambda cmd: 1 if 'whole-snapshot' in str(cmd) else 0)
     classes, result = compile_snapshot(w, root, [kept], tmp_path/'part', 'cp', tmp_path)
     inventory_call = next(c for c in calls if c[0] == 'java')
     assert inventory_call[-1] == 'lenient'

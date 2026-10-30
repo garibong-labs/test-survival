@@ -18,9 +18,6 @@ def items(exp, stage, config, state):
     A commit/index is done only when all measured groups have records. Empty
     lists represent build failures that require no work in this stage.
     """
-    # Imported at function scope: a conditional import would make the name a
-    # local that later branches (survive, cover) reference before assignment.
-    from .stages.survive import raw_folder
     completed = []
     if stage == 'prepare':
         from .adapters.java_maven import JavaMavenAdapter
@@ -117,6 +114,7 @@ def items(exp, stage, config, state):
         imported_files = imports.get('files', {})
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
+        from .stages.survive import raw_folder
         adapter = JavaMavenAdapter(exp, config)
         provenance = adapter.provenance()
         filename = 'commits.csv' if stage == 'survive' else 'coverage-commits.csv'

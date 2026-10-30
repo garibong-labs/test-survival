@@ -34,12 +34,17 @@ class SourceInventory {
     JavacTask task=(JavacTask)compiler.getTask(null,manager,diagnostics,List.of("-proc:none"),null,manager.getJavaFileObjectsFromPaths(paths));
     Iterable<? extends CompilationUnitTree> units=task.parse();
     SourcePositions positions=Trees.instance(task).getSourcePositions();
-    Map<String,String> broken=new LinkedHashMap<>();
+    Map<String,Diagnostic<? extends JavaFileObject>> broken=new LinkedHashMap<>();
     for(Diagnostic<? extends JavaFileObject> d:diagnostics.getDiagnostics())
-      if(d.getKind()==Diagnostic.Kind.ERROR && d.getSource()!=null) broken.putIfAbsent(d.getSource().toUri().getPath(),d.toString());
+      if(d.getKind()==Diagnostic.Kind.ERROR && d.getSource()!=null) broken.putIfAbsent(d.getSource().toUri().getPath(),d);
+    Set<String> reported=new HashSet<>();
     for(CompilationUnitTree unit:units) {
       String path=unit.getSourceFile().toUri().getPath();
-      if(lenient && broken.containsKey(path)) { row("X",path,broken.get(path)); continue; }
+      if(lenient && broken.containsKey(path)) {
+        // Same row shape as DependencyInventory2 parse errors: D, source, line, message.
+        Diagnostic<? extends JavaFileObject> d=broken.get(path);
+        row("D",path,d.getLineNumber(),d.getMessage(Locale.ROOT)); reported.add(path); continue;
+      }
       String pkg=value(unit.getPackageName());
       String original=unit.getSourceFile().getCharContent(true).toString();
       new TreeScanner<Void, String>() {
@@ -77,8 +82,10 @@ class SourceInventory {
         }
       }.scan(unit,null);
     }
-    for(Diagnostic<?> d:diagnostics.getDiagnostics())
-      if(d.getKind()==Diagnostic.Kind.ERROR && !(lenient && d.getSource()!=null)) throw new IllegalStateException(d.toString());
+    // Lenient mode forgives only errors in units reported as D rows above; any
+    // other error (no source, or a source javac produced no unit for) still fails.
+    for(Diagnostic<? extends JavaFileObject> d:diagnostics.getDiagnostics())
+      if(d.getKind()==Diagnostic.Kind.ERROR && !(lenient && d.getSource()!=null && reported.contains(d.getSource().toUri().getPath()))) throw new IllegalStateException(d.toString());
     manager.close();
   }
 }

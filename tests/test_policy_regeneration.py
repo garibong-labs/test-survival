@@ -264,11 +264,16 @@ def test_screening_exclusions_keep_helpers_without_modifying_pool(tmp_path):
         path=root/f'generated/ktester/round1/test_classes/{name}.java';path.parent.mkdir(parents=True,exist_ok=True)
         path.write_text('???;' if name=='Rejected' else f'class {name} {{}}')
         write_json(root/f'generated/ktester/round1/validation/{n}.json',dict(file=str(path.relative_to(root)),methods=methods,compile=compile))
+    # A generator intermediate that screening never saw (KTester temp/ repair attempt).
+    temp=root/'generated/ktester/round1/test_classes/temp/Kept_0.java';temp.parent.mkdir(parents=True)
+    temp.write_text('class Kept_0 { String s = """x"""; }')
     tests=[dict(file=str((root/'generated/ktester/round1/test_classes/Kept.java').relative_to(tmp_path)))]
     before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
     excluded=screening_exclusions(tmp_path,{('ktester',10):tests})
-    assert {Path(p).name for p in excluded}=={'Rejected.java','Failed.java'}
+    assert {Path(p).name for p in excluded}=={'Rejected.java','Failed.java','Kept_0.java'}
     assert before=={p:p.read_bytes() for p in before}
+    summary=read_json(tmp_path/'results/policy/excluded-sources.json')
+    assert summary=={'ktester/10':dict(kept=1,rejected=2,unscreened=1)}
 
 
 def test_legacy_imported_run_is_reused_byte_for_byte(baseline,monkeypatch):

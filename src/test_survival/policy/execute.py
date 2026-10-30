@@ -227,15 +227,35 @@ def survive(b, plan, pools, step):
 
 
 def screening_exclusions(exp, pools):
-    """Exclude rejected test candidates, retaining successfully compiled helpers."""
-    excluded = set()
+    """Exclude pool sources that screening rejected or never saw.
+
+    Only kept tests and sources with a screening record (rejected candidates
+    excepted; successfully compiled helpers retained) take part in a policy job.
+    A generator can leave intermediates beside its kept tests (KTester writes
+    hundreds of `temp/*.java` repair attempts, some of them unparsable); the pool
+    snapshot copies every sibling, so without this filter the whole-root compile
+    fails at every index and the helper inventory can abort. The pool artifacts
+    on disk and their stored hashes are not modified. A summary is written to
+    results/policy/excluded-sources.json.
+    """
+    excluded = set(); summary = {}
     for (group, index), tests in pools.items():
         root = exp/f'results/policy/pools/{group}/{index}'
         kept = {(exp/t['file']).resolve() for t in tests}
+        screened = set(); rejected = set()
         for path in (root/'generated').glob('*/round*/validation/*.json'):
             record = read_json(path)
             candidate = record.get('file')
+            if not candidate:
+                continue
+            resolved = (root/candidate).resolve()
+            screened.add(resolved)
             helper = not record.get('methods') and (record.get('compile') or {}).get('exit_code') == 0
-            if candidate and not helper and (root/candidate).resolve() not in kept:
-                excluded.add(str((root/candidate).relative_to(exp)))
+            if not helper and resolved not in kept:
+                rejected.add(resolved)
+        unscreened = {p.resolve() for p in (root/'generated').rglob('*.java')} - screened - kept
+        for p in rejected | unscreened:
+            excluded.add(str(p.relative_to(exp.resolve())))
+        summary[f'{group}/{index}'] = dict(kept=len(kept), rejected=len(rejected), unscreened=len(unscreened))
+    write_json(exp/'results/policy/excluded-sources.json', summary)
     return excluded
