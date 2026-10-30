@@ -57,7 +57,7 @@ def experiments(tmp_path, monkeypatch):
             calls.append(('setup',))
         def session(self, stage):
             return nullcontext()
-        def run_group(self, index, group, rows, phase='A'):
+        def run_group(self, index, group, rows, phase='A', *, dead_at=None):
             calls.append((phase, index, group))
             methods = deepcopy(rows)
             for row in methods:

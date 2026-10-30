@@ -16,6 +16,8 @@ from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
 from .java_worker import RUNNER_JAR_RETRIES, RUNNER_JAR_BACKOFF_SECONDS, project_jars, runner_test_jars
 from .maven_dependencies import resolution_timeout
+from .run_reuse import survival_provenance_matches
+from ..rules.survival import dead_method
 
 
 class JavaMavenAdapter:
@@ -296,16 +298,22 @@ class JavaMavenAdapter:
     def run_fingerprint(self, methods, repeats=1):
         return self.run_fingerprints(methods, repeats)[0]
 
-    def run_group(self,index,group,methods,phase='A',repeats=1):
+    def run_group(self,index,group,methods,phase='A',repeats=1,*,dead_at=None):
         fingerprint,legacy=self.run_fingerprints(methods,repeats)
         provenance=self.provenance()
         folder='raw' if phase=='A' else 'raw-coverage' if phase=='B' else phase
         output=f'results/{folder}/{index}-{group}.json'
         old=read_json(self.exp/output,{})
         commit=read_json(self.exp/'results/anchor.json') if index==0 else read_json(self.exp/f'results/builds/{index}.json')
-        if old.get('input_sha256') in (fingerprint,legacy) and old.get('runner_sha256')==provenance and old.get('sha')==commit['sha']:
+        compatible = (survival_provenance_matches(old.get('runner_sha256'), provenance) if phase=='A'
+                      else old.get('runner_sha256')==provenance)
+        complete = dead_at is None or {m['id'] for m in old.get('methods', [])} == {m['id'] for m in methods}
+        if old.get('input_sha256') in (fingerprint,legacy) and compatible and complete and old.get('sha')==commit['sha']:
             return old
-        return self.worker(dict(action='run',index=index,sha=commit['sha'],group=group,phase=phase,methods=methods,repeats=repeats,
+        dead_at = dead_at or {}
+        selected = [m for m in methods if m['id'] not in dead_at]
+        return self.worker(dict(action='run',index=index,sha=commit['sha'],group=group,phase=phase,methods=selected,repeats=repeats,
+                                dead_methods=[dead_method(m, dead_at[m['id']]) for m in methods if m['id'] in dead_at],
                                 input_sha256=fingerprint,runner_sha256=provenance,output=output,work=f'work/phase-{phase}/{index}/{group}'))
 
     def method_coverage(self, method):

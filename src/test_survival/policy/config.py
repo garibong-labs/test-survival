@@ -62,5 +62,7 @@ def active_plan(b, plan):
 def reusable_run(record):
     # Imports and carry records contain no new execution to upgrade. In
     # particular, the interrupted JSV run has only imports at its pool index.
-    return (record.get('coverage_version') == COVERAGE_VERSION or record.get('imported') is True
+    return (record.get('coverage_version') == COVERAGE_VERSION
+            or (record.get('coverage_version') == 2 and record.get('coverage_status') == 'complete')
+            or record.get('imported') is True
             or record.get('status') in ('skipped-untouched', 'build-fail'))

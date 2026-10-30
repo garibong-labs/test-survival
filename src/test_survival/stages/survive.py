@@ -94,14 +94,22 @@ def run(exp,config):
         for g in imported:
             imported_record(exp, f'results/{raw_folder(g,config,provenance)}/{row["index"]}-{g}.json', sha=row['sha'], method_ids=[m['id'] for m in frozen[g]], provenance=provenance)
     measured=[g for g in groups if raw_folder(g,config,provenance)=='raw' and g not in imported]
-    def job(row,g):
-        i=int(row['index']);record=adapter.run_group(i,g,frozen[g])
-        if any(run.get('exit_code') in [-9,137] for f in record['files'] for run in [f['compile'],*f['runs']]):
-            source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);source.replace(dest)
-            raise RuntimeError('Worker killed; quarantined raw record')
-        log(exp,f'survive: {i} {g} recorded',config)
+    def job(g):
+        alive={m['id'] for m in frozen[g]};dead_at={}
+        # Parallelize groups, never dependent indices within a group. Cached
+        # earlier records reconstruct entry sets before any later dispatch.
+        for row in evaluated:
+            i=int(row['index']);record=adapter.run_group(i,g,frozen[g],dead_at=dead_at)
+            if any(run.get('exit_code') in [-9,137] for f in record['files'] for run in [f['compile'],*f['runs']]):
+                source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);source.replace(dest)
+                raise RuntimeError('Worker killed; quarantined raw record')
+            if {m['id'] for m in record['methods']} != {m['id'] for m in frozen[g]}:
+                raise RuntimeError('Raw methods differ from the frozen denominator')
+            alive,lost=advance(alive,record['methods'])
+            dead_at.update({m['id']:i for m in lost})
+            log(exp,f'survive: {i} {g} recorded',config)
     with measurement_session(adapter, 'survive', bool(measured and evaluated)), ThreadPoolExecutor(max_workers=config['runner']['workers']['survive']) as pool:
-        jobs=[pool.submit(job,row,g) for row in evaluated for g in measured]
+        jobs=[pool.submit(job,g) for g in measured]
         for future in as_completed(jobs):future.result()
     pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g['name'] in groups and derived_source(config, g['name']) and g['name'] not in imported}
     while pending:

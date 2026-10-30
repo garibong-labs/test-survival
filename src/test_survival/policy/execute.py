@@ -1,10 +1,10 @@
 """Commit execution deduplicated across policies by source hash and index."""
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv
+from ..rules.survival import dead_method
 from .artifacts import snapshot
 from .config import COVERAGE_VERSION, active_plan, reusable_run
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
@@ -52,16 +52,29 @@ class Runs:
         imported.update(self.pool_catalog.get((index,digest), {}))
         return imported
 
-    def run_index(self, index, digests):
+    def run_index(self, index, digests, *, alive=None, dead_at=None):
         digests = sorted(digests)
         imported = {h:self.imports(index,h) for h in digests}
+        inactive = {}
+        if alive is not None:
+            for h in digests:
+                inactive[h] = {}
+                for ident, t in self.catalog[h].items():
+                    if key(t) in alive or ident in imported[h]:
+                        continue
+                    if key(t) in (dead_at or {}):
+                        inactive[h][ident] = dead_method(t, dead_at[key(t)])
+                    else:
+                        # A fill policy can select only part of a pool/file.
+                        # Keep its full inventory without executing unused tests.
+                        inactive[h][ident] = dict(t, state='not-selected', message='not executed; outside active segments', flaky=False, lines=[])
         collected = []
         for h in digests:
             prior = read_json(self.path(index,h), {})
             state = read_json(self.b.exp/f'state/policy-run-{h}-{index}.json', {})
             if state.get('status') == 'completed' and reusable_run(prior):
                 continue
-            collected.extend(t for ident,t in self.catalog[h].items() if ident not in imported[h])
+            collected.extend(t for ident,t in self.catalog[h].items() if ident not in imported[h] and ident not in inactive.get(h, {}))
         batch = None
         def measure():
             nonlocal batch
@@ -82,7 +95,7 @@ class Runs:
             methods = list(self.catalog[digest].values())
             path = self.path(index,digest)
             def execute():
-                observations = dict(imported[digest])
+                observations = {**imported[digest], **inactive.get(digest, {})}
                 missing = set(self.catalog[digest]) - observations.keys()
                 raw = measure() if missing else {}
                 observations.update({identity(t):t for t in raw.get('methods', []) if execution_id(t) == digest and identity(t) in missing})
@@ -94,7 +107,7 @@ class Runs:
                             for t in observed]
                 complete = all('lines' in t for t in observed)
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
-                                      imported=not missing, coverage_version=COVERAGE_VERSION,
+                                      imported=not missing and not inactive.get(digest), coverage_version=COVERAGE_VERSION,
                                       coverage_status='complete' if complete else 'missing',
                                       coverage_reason='' if complete else raw.get('coverage_reason', 'imported evidence has no per-test coverage'),
                                       methods=observed))
@@ -109,14 +122,6 @@ class Runs:
         if set(self.catalog[digest]) != {identity(t) for t in result['methods']}:
             raise ValueError('Shared run method inventory changed; use --force')
         return result
-
-    def prefetch(self, indices, digests):
-        if not digests:
-            return
-        with ThreadPoolExecutor(max_workers=self.b.execution_config['runner']['workers']['survive']) as pool:
-            jobs = [pool.submit(self.run_index, i, digests) for i in indices if self.b.evaluable(i)]
-            for future in as_completed(jobs):
-                future.result()
 
     def carry(self, index, digest):
         self.needed.add((digest,index))
@@ -160,16 +165,15 @@ def survive(b, plan, pools, step):
         for g in b.groups:
             row.update({g+'_'+k:v for k,v in stats[g].items()})
         curves[p].append(row)
-    boundaries = sorted({i for ps in points.values() for _,i in ps})
-    prefetched_until = -1
+    dead_at = {}
     for commit in b.curves:
-        index = int(commit['index'])
-        if index > prefetched_until:
-            end = next((i for i in boundaries if i >= index), int(b.curves[-1]['index']))
-            digests = {execution_id(t) for gs in current.values() for s in gs.values() if s['segment'] > 1 for t in s['tests']}
-            runs.prefetch([int(c['index']) for c in b.curves if index <= int(c['index']) <= end], digests)
-            prefetched_until = end
         index = int(commit['index']); evaluable = index > 0 and b.evaluable(index)
+        if evaluable:
+            # A shared physical method is needed if ANY policy still has it
+            # alive. Future indices cannot be prefetched before these losses.
+            digests = {execution_id(t) for gs in current.values() for s in gs.values() if s['segment'] > 1 for t in s['tests']}
+            entering = {ident for groups in alive.values() for ids in groups.values() for ident in ids}
+            runs.run_index(index, digests, alive=entering, dead_at=dead_at)
         for p, policy in policies.items():
             stats = {}
             for g in b.groups:
@@ -185,6 +189,7 @@ def survive(b, plan, pools, step):
                     for digest in {execution_id(t) for t in s['tests']}:
                         runs.carry(index,digest)
                 alive[p][g], lost, stats[g] = evaluate(s, alive[p][g], observations, evaluated=evaluable)
+                dead_at.update({t['id']:index for t in lost})
                 failures[p].extend(dict(index=index,sha=commit['sha'],group=g,segment=s['segment'],id=t['id'],kind=t['state'],flaky=t.get('flaky',False)) for t in lost)
             row_for(commit,p,'evaluate',stats)
             triggered = [g for g in b.groups if (g,index) in points[p]]

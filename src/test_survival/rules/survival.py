@@ -3,6 +3,10 @@
 FAILURES={'compile-fail','fail','error','timeout','absent'}
 
 
+def dead_method(method, index):
+    return dict(method, state='dead', message=f'not executed; failed at index {index}', flaky=False, lines=[])
+
+
 def advance(alive, methods, *, evaluated=True):
     remaining=set(alive)
     lost=[]

@@ -102,13 +102,30 @@ Policy survival instrumentation is restricted to packages from the saved scope;
 each JVM processes at most eight snapshot groups, sequentially. Failed chunks
 fall back independently, preserving successful chunks' coverage.
 
-Coverage version 3 recomputes older executed policy run records on resume,
-including both missing and complete coverage, without `--force`. Completed pools,
-imported run records and carry records remain reusable. Survival, coverage and
-reports refresh through the existing version check.
+Coverage version 3 recomputes version-2 policy records with missing coverage on
+resume without `--force`. Version-2 complete coverage, completed pools, imported
+run records and carry records remain reusable. Survival, coverage and reports
+refresh through the existing version check. Older pre-version-2 executions are
+still upgraded.
+
+Baseline survival evaluates commits in order within each group (groups may run
+in parallel). Policy survival also waits for each index's outcomes before
+requesting the next index. Only methods alive on entry are requested; a physical
+method shared by policies is requested if any policy still needs it. Later
+records retain dead methods as `state: dead`, with
+`message: not executed; failed at index N`, keeping the full denominator.
+Unselected members of a partially selected policy pool are recorded as
+`not-selected`. Neither marker is a new first failure.
+
+Baseline `input_sha256` still uses the full frozen method list. Existing PR #21
+survival records retain compatibility through an exact provenance check for the
+orchestration files changed here; other runner provenance must still match.
+Cached records are read unchanged and reconstruct alive-entry sets on resume.
 
 New policy processes inherit the environment of the shell that starts them.
 For a dnsjava baseline command chained into `survival policy plan` and
 `survival policy run`, those new processes use the merged code and the variable
 if it is already exported in their launching shell. Exporting it in a different
 shell does not change an already-running process's environment.
+An already-running baseline coordinator also keeps its loaded orchestration
+code; alive-entry dispatch applies when survival starts in a new process.
