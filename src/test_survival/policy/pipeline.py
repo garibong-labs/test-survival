@@ -24,7 +24,7 @@ class Steps:
         self.digest = canonical_hash(dict(evidence_version=3, config=result_inputs(baseline.execution_config), policies=digest_options(baseline.options), plan=plan,
                                           frozen=baseline.frozen, survival=baseline.curves))
 
-    def __call__(self, name, action, *, outputs=()):
+    def __call__(self, name, action, *, outputs=(), required_methods=None):
         path = self.b.guard(self.b.exp/f'state/policy-{name}.json')
         prior = read_json(path, {})
         if prior and prior.get('config_hash') != self.digest:
@@ -32,7 +32,7 @@ class Steps:
         revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True))
         fresh = True
         if name.startswith('run-'):
-            fresh = all(reusable_run(read_json(p, {})) for p in outputs)
+            fresh = all(reusable_run(read_json(p, {}), required_methods=required_methods) for p in outputs)
         elif name in ('survive', 'cover', 'report'):
             fresh = prior.get('revision') == revision
         if prior.get('status') == 'completed' and fresh:

@@ -205,12 +205,14 @@ def test_partial_pool_executes_only_alive_selected_members(baseline, monkeypatch
 
 
 @pytest.mark.parametrize('action', ['reset', 'fill'])
-@pytest.mark.parametrize('cached_marker', [False, True])
+@pytest.mark.parametrize('cached_marker', [False, True, 'mixed'])
 def test_policy_remeasures_revived_baseline_dead_method(baseline, monkeypatch, action, cached_marker):
     from test_survival.policy import execute
     exp,config,_=baseline; b=Baseline(exp,config)
     b.options['set']=[dict(name='revive', trigger='release', action=action)]
     t=dict(test_test('shared'), execution_hash='same-source', origin_id='baseline-id')
+    extra=dict(test_test('extra'), execution_hash='same-source')
+    pool=[t,extra] if cached_marker=='mixed' else [t]
     plan=dict(points=[dict(group='dev-scope',index=2,trigger='release')],
               pools=[dict(group='dev-scope',index=2)])
     monkeypatch.setattr(execute,'baseline_tests',lambda _: {'dev-scope':[t]})
@@ -230,14 +232,56 @@ def test_policy_remeasures_revived_baseline_dead_method(baseline, monkeypatch, a
         # The old importer can have written a completed run before advance()
         # rejected its dead marker. Resume must repair that cached import too.
         write_json(exp/'results/policy/runs/same-source/3.json',
-                   dict(coverage_version=3,coverage_status='complete',imported=True,methods=[dead_method(t,1)]))
+                   dict(coverage_version=3,coverage_status='complete',imported=cached_marker!='mixed',
+                        methods=[dead_method(t,1)]+([dict(extra,state='pass',lines=[])] if cached_marker=='mixed' else [])))
         write_json(exp/'state/policy-run-same-source-3.json',dict(status='completed',config_hash=step.digest))
-    execute.survive(b,plan,{('dev-scope',2):[t]},step)
-    assert [(job['index'],[m['id'] for m in job['methods']]) for job in jobs]==[(3,['shared'])]
-    assert read_csv(exp/'results/policy/revive/survival.csv')[-1]['dev-scope_alive']=='1'
+    execute.survive(b,plan,{('dev-scope',2):pool},step)
+    assert [(job['index'],[m['id'] for m in job['methods']]) for job in jobs]==[(3,[m['id'] for m in pool])]
+    assert read_csv(exp/'results/policy/revive/survival.csv')[-1]['dev-scope_alive']==str(len(pool))
     result=read_json(exp/'results/policy/runs/same-source/3.json')
     assert not result['imported'] and result['methods'][0]['state']=='pass'
-    execute.survive(b,plan,{('dev-scope',2):[t]},step)
+    execute.survive(b,plan,{('dev-scope',2):pool},step)
+    assert len(jobs)==1
+
+
+@pytest.mark.parametrize('imported', [False, True])
+@pytest.mark.parametrize('revived', ['died', 'unused'])
+def test_policy_cache_markers_follow_current_demand(baseline, monkeypatch, imported, revived):
+    from test_survival.policy.execute import Runs
+    exp,config,_=baseline; b=Baseline(exp,config); step=Steps(b,build_plan(b))
+    tests={n:dict(test_test(n),execution_hash='shared') for n in ('alive','died','unused')}
+    path=exp/'results/policy/runs/shared/2.json'
+    state=exp/'state/policy-run-shared-2.json'
+    write_json(path,dict(coverage_version=3,coverage_status='complete',imported=imported,
+                        methods=[dict(tests['alive'],state='pass',lines=[]),dead_method(tests['died'],1),
+                                 dict(tests['unused'],state='not-selected',lines=[])]))
+    write_json(state,dict(status='completed',config_hash=step.digest))
+    before={p:p.read_bytes() for p in (path,state)}
+    jobs=[]
+    monkeypatch.setattr(JavaMavenAdapter,'build',lambda *a: {'build':'ok'})
+    def worker(self,job):
+        jobs.append(job)
+        return dict(methods=[dict(t,state='pass',lines=[]) for t in job['methods']])
+    monkeypatch.setattr(JavaMavenAdapter,'worker',worker)
+    def run(alive):
+        runs=Runs(b,step); runs.ready=True; runs.register(tests.values())
+        runs.run_index(2,{'shared'},alive={key(tests[n]) for n in alive},dead_at={key(tests['died']):1})
+        return runs.get(2,'shared')
+    run({'alive'})
+    assert not jobs and before=={p:p.read_bytes() for p in before}
+    # Available baseline observations for inactive methods do not constitute
+    # live policy demand, and must not invalidate legitimate cached markers.
+    runs=Runs(b,step); runs.register(tests.values())
+    monkeypatch.setattr(runs,'imports',lambda *a: {f'A#{n}':dict(t,state='pass',lines=[]) for n,t in tests.items()})
+    runs.run_index(2,{'shared'},alive={key(tests['alive'])},dead_at={key(tests['died']):1})
+    runs.get(2,'shared')
+    assert not jobs and before=={p:p.read_bytes() for p in before}
+    result=run({'alive',revived})
+    assert len(jobs)==1 and {t['id'] for t in jobs[0]['methods']}=={'alive',revived}
+    assert {t['id'] for t in result['methods'] if t['state']=='pass'}=={'alive',revived}
+    remaining='unused' if revived=='died' else 'died'
+    assert next(t for t in result['methods'] if t['id']==remaining)['state']==('not-selected' if remaining=='unused' else 'dead')
+    run({'alive',revived})
     assert len(jobs)==1
 
 

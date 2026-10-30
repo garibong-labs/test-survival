@@ -23,6 +23,7 @@ class Runs:
         self.pool_catalog = defaultdict(dict)
         self.excluded = set()
         self.missing = {}
+        self.entry_context = {}
 
     def initialize(self):
         with self.lock:
@@ -56,6 +57,8 @@ class Runs:
         return imported
 
     def run_index(self, index, digests, *, alive=None, dead_at=None):
+        if alive is not None:
+            self.entry_context[index] = dict(alive=set(alive), dead_at=dict(dead_at or {}))
         digests = sorted(digests)
         imported = {h:self.imports(index,h) for h in digests}
         inactive = {}
@@ -71,11 +74,15 @@ class Runs:
                         # A fill policy can select only part of a pool/file.
                         # Keep its full inventory without executing unused tests.
                         inactive[h][ident] = dict(t, state='not-selected', message='not executed; outside active segments', flaky=False, lines=[])
+        # Pools can introduce new live demand later at this same index. Other
+        # available imports do not make an inactive method required.
+        required = {h:{ident for ident,t in self.catalog[h].items() if alive is None or key(t) in alive}
+                    | self.pool_catalog.get((index,h), {}).keys() for h in digests}
         collected = []
         for h in digests:
             prior = read_json(self.path(index,h), {})
             state = read_json(self.b.exp/f'state/policy-run-{h}-{index}.json', {})
-            if state.get('status') == 'completed' and reusable_run(prior):
+            if state.get('status') == 'completed' and reusable_run(prior, required_methods=required[h]):
                 continue
             collected.extend(t for ident,t in self.catalog[h].items() if ident not in imported[h] and ident not in inactive.get(h, {}))
         batch = None
@@ -114,13 +121,15 @@ class Runs:
                                       coverage_status='complete' if complete else 'missing',
                                       coverage_reason='' if complete else raw.get('coverage_reason', 'imported evidence has no per-test coverage'),
                                       methods=observed))
-            self.step(f'run-{digest}-{index}', execute, outputs=[path])
+            self.step(f'run-{digest}-{index}', execute, outputs=[path], required_methods=required[digest])
             saved = read_json(path)
             if saved.get('coverage_reason') == 'batch JVM failed or timed out':
                 self.missing[index, digest] = saved['coverage_reason']
 
     def get(self, index, digest):
-        self.run_index(index, [digest])
+        # Re-reading a measured batch must retain its entry demand; otherwise
+        # legitimate inactive markers would look like missing observations.
+        self.run_index(index, [digest], **self.entry_context.get(index, {}))
         result = read_json(self.path(index,digest))
         if set(self.catalog[digest]) != {identity(t) for t in result['methods']}:
             raise ValueError('Shared run method inventory changed; use --force')

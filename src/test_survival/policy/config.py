@@ -4,6 +4,7 @@ import re
 
 from ..adapters.policy_coverage import COVERAGE_VERSION
 from ..config import ConfigError, Field, _validate, _strings, enum, integer
+from .segments import identity
 
 SCHEMA = {
     'baseline': Field(str), 'baseline_config': Field(str, None, nullable=True),
@@ -59,10 +60,11 @@ def active_plan(b, plan):
                        for k in ('points', 'pools')}}
 
 
-def reusable_run(record):
-    # Repair imports saved by the old importer before advance() rejected an
-    # unexecuted marker for a revived method. Actual imported observations stay reusable.
-    if record.get('imported') is True and any(t.get('state') in ('dead', 'not-selected') for t in record.get('methods', [])):
+def reusable_run(record, *, required_methods=None):
+    # A record may mix imported markers and real observations. Its imported
+    # flag cannot establish whether it contains execution for current demand.
+    if required_methods is not None and any(t.get('state') in ('dead', 'not-selected') and identity(t) in required_methods
+                                            for t in record.get('methods', [])):
         return False
     # Imports and carry records contain no new execution to upgrade. In
     # particular, the interrupted JSV run has only imports at its pool index.
