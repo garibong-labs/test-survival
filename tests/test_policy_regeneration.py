@@ -42,7 +42,7 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
             failed = scenario == 'compile-failure' and any(p.name == 'Bad.java' for p in sources)
             log.write_text('Bad compile' if failed else '')
         elif 'SourceInventory.java' in ' '.join(command):
-            source = Path(command[-2])
+            source = Path(command[next(i for i, a in enumerate(command) if str(a).endswith('SourceInventory.java'))+1])
             assert not (source/'Rejected.java').exists()
             log.write_text('\n'.join(f'C\t{p.stem}\tclass\ttrue\t{p.stem}\t{p}\n'+
                                       (f'M\t{p.stem}\tworks\tplain' if p.stem != 'Helper' else '') for p in source.glob('*.java')))

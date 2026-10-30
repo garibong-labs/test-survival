@@ -30,21 +30,27 @@ def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full
     if whole['exit_code'] == 0 or full_suite:
         return classes, {**whole, 'snapshot_full_suite':True}
     inventory = part/'inventory.tsv'
-    parsed = w.execute(['java', '-Xmx'+w.JVM['javac'], str(w.HELPERS/'SourceInventory.java'), str(root), 'auto'],
+    # Lenient: a source that does not parse (for example a generator's leftover
+    # temp file) is reported as an "X" row and skipped; it can never be a helper.
+    parsed = w.execute(['java', '-Xmx'+w.JVM['javac'], str(w.HELPERS/'SourceInventory.java'), str(root), 'auto', 'lenient'],
                        folder, inventory, w.TIMEOUTS['compile'])
     if parsed['exit_code']:
         raise RuntimeError('Cannot inventory snapshot helpers; see '+str(inventory))
-    class_files = {}; test_classes = set()
+    class_files = {}; test_classes = set(); unparsable = set()
     for line in inventory.read_text().splitlines():
         fields = line.split('\t')
         if fields[0] == 'C':
             class_files[fields[1]] = Path(fields[5])
         elif fields[0] == 'M' and fields[3]:
             test_classes.add(fields[1])
+        elif fields[0] == 'X':
+            unparsable.add(Path(fields[1]))
     test_files = {class_files[c] for c in test_classes}
-    helpers = [p for p in sources if p not in test_files]
+    helpers = [p for p in sources if p not in test_files and p not in unparsable]
     classes, result = compile_sources(sorted(set([*helpers, *selected])), 'selected-and-helpers')
-    return classes, {**result, 'snapshot_full_suite':False, 'whole_snapshot_compile':whole, 'helper_sources':[str(p.relative_to(root)) for p in helpers]}
+    return classes, {**result, 'snapshot_full_suite':False, 'whole_snapshot_compile':whole,
+                     'helper_sources':[str(p.relative_to(root)) for p in helpers],
+                     'unparsable_sources':[str(p.relative_to(root)) for p in sorted(unparsable)]}
 
 
 def filtered_roots(exp, methods, work, excluded=()):

@@ -93,7 +93,12 @@ errors or access to another snapshot's helpers. If a root batch fails, its files
 fall back to separate compilation with their helpers; the failed whole-root
 attempt is reused rather than repeated for each file. Screening
 validation records exclude rejected test files before snapshot inventory or
-compilation. Scratch copies leave pool sources and stored execution hashes intact.
+compilation. The helper inventory of a snapshot root runs `SourceInventory` in
+lenient mode: a source that does not parse (for example a generator's leftover
+`temp/` file that screening never saw) is reported as an `X` row, listed in the
+job's `unparsable_sources`, and left out of the helper compilation instead of
+failing the inventory. Scratch copies leave pool sources and stored execution
+hashes intact.
 
 All compiled methods execute in one JVM through `PerTestCoverage`, with isolated
 class loaders for distinct snapshots. Each snapshot supplies its classpath and

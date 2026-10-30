@@ -23,6 +23,9 @@ class SourceInventory {
   }
   public static void main(String[] args) throws Exception {
     boolean junit4=args.length>1 && args[1].equals("junit4");
+    // Lenient mode (snapshot helper inventory): a unit that does not parse is
+    // reported as an "X" row and skipped instead of failing the whole inventory.
+    boolean lenient=args.length>2 && args[2].equals("lenient");
     JavaCompiler compiler=ToolProvider.getSystemJavaCompiler();
     StandardJavaFileManager manager=compiler.getStandardFileManager(null,null,null);
     List<Path> paths;
@@ -31,7 +34,12 @@ class SourceInventory {
     JavacTask task=(JavacTask)compiler.getTask(null,manager,diagnostics,List.of("-proc:none"),null,manager.getJavaFileObjectsFromPaths(paths));
     Iterable<? extends CompilationUnitTree> units=task.parse();
     SourcePositions positions=Trees.instance(task).getSourcePositions();
+    Map<String,String> broken=new LinkedHashMap<>();
+    for(Diagnostic<? extends JavaFileObject> d:diagnostics.getDiagnostics())
+      if(d.getKind()==Diagnostic.Kind.ERROR && d.getSource()!=null) broken.putIfAbsent(d.getSource().toUri().getPath(),d.toString());
     for(CompilationUnitTree unit:units) {
+      String path=unit.getSourceFile().toUri().getPath();
+      if(lenient && broken.containsKey(path)) { row("X",path,broken.get(path)); continue; }
       String pkg=value(unit.getPackageName());
       String original=unit.getSourceFile().getCharContent(true).toString();
       new TreeScanner<Void, String>() {
@@ -69,7 +77,8 @@ class SourceInventory {
         }
       }.scan(unit,null);
     }
-    for(Diagnostic<?> d:diagnostics.getDiagnostics()) if(d.getKind()==Diagnostic.Kind.ERROR) throw new IllegalStateException(d.toString());
+    for(Diagnostic<?> d:diagnostics.getDiagnostics())
+      if(d.getKind()==Diagnostic.Kind.ERROR && !(lenient && d.getSource()!=null)) throw new IllegalStateException(d.toString());
     manager.close();
   }
 }
