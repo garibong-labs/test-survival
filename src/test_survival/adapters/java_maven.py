@@ -305,8 +305,7 @@ class JavaMavenAdapter:
         output=f'results/{folder}/{index}-{group}.json'
         old=read_json(self.exp/output,{})
         commit=read_json(self.exp/'results/anchor.json') if index==0 else read_json(self.exp/f'results/builds/{index}.json')
-        compatible = (survival_provenance_matches(old.get('runner_sha256'), provenance) if phase=='A'
-                      else old.get('runner_sha256')==provenance)
+        compatible = survival_provenance_matches(old.get('runner_sha256'), provenance) and old.get('status')!='coverage-fail'
         complete = dead_at is None or {m['id'] for m in old.get('methods', [])} == {m['id'] for m in methods}
         # A changed skip policy can make an earlier failure unevaluated without
         # changing the full-list fingerprint. Omitted tests then need execution.

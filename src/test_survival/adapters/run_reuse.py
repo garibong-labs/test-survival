@@ -10,8 +10,19 @@ PRE_BOUNDED_COVERAGE = {
 }
 
 
+# Before the multi-release class-root fix: the JaCoCo report and PerTestCoverage
+# analyzed target/classes as one root. Records that succeeded are unchanged by
+# the fix (no META-INF/versions copies existed for them); failed ones are never
+# reused (see run_group).
+PRE_MULTI_RELEASE = {
+    'java_worker.py': '18050d4c02aae2db2df912ee8ee7e685abb27f511467a9e658855092635df103',
+    'PerTestCoverage.java': '38f5b9f652d094df030322549fda9f40a3dad1f388086f3f24b1ac4676049c83',
+}
+
+
 def survival_provenance_matches(previous, current):
-    return previous == current or previous == {**current, **PRE_BOUNDED_COVERAGE}
+    return (previous == current or previous == {**current, **PRE_BOUNDED_COVERAGE}
+            or previous == {**current, **PRE_MULTI_RELEASE})
 
 
 def cached_survival_record(adapter, exp, index, group, methods):
