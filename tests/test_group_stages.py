@@ -23,7 +23,7 @@ def test_skipping_and_derived_survival_with_coverage_predecessor_alias(tmp_path,
         def __init__(self,*args):self.runner=self
         def setup_runner(self):pass
         def session(self,stage):return nullcontext()
-        def run_group(self,index,group,rows):
+        def run_group(self,index,group,rows,*,dead_at=None):
             calls.append((index,group));rows=deepcopy(rows)
             for row in rows:row.update(state='fail' if index==3 and row['id']=='b' else 'pass',flaky=False,message='assertion')
             raw={'index':index,'sha':str(index),'group':group,'status':'evaluated','phase':'A','methods':rows,'requested_ids':[r['id'] for r in rows],'files':[{'file':'T.java','methods':rows,'compile':{'exit_code':0},'runs':[]}]}

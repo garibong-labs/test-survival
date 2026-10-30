@@ -2,7 +2,6 @@
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
-import threading
 
 import pytest
 
@@ -73,7 +72,7 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
                       TIMEOUTS={'compile':30,'test_class':10}, classpath=lambda _: (tmp_path,''),
                       jacoco_version=lambda _: '0.8.14', execute=execute, run_file=run_file, write_json=write_json)
     job=dict(index=1,sha='sha',methods=tests,survival=True,work='work/job',output='result.json',
-             excluded_files=['pool/sources/Rejected.java'],scope_files=['src/main/java/A.java'])
+             excluded_files=['pool/sources/Rejected.java'],scope_files=['src/main/java/A.java'],scope_classes=['A'])
     policy_coverage.run(w,job)
     result=read_json(tmp_path/'result.json')
     assert len([c for c in calls if 'PerTestCoverage' in c]) == 1
@@ -92,14 +91,16 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
             assert all(t['message'].startswith('java.lang.IllegalStateException: ') and len(t['message'])==4000 for t in result['methods'])
 
 
-@pytest.mark.parametrize('version', [None, 1])
-def test_old_runs_recompute_together_and_pool_bytes_are_untouched(baseline, monkeypatch, version):
+@pytest.mark.parametrize('version,coverage_status', [(None,'missing'),(1,'missing'),(2,'missing'),(None,'complete'),(1,'complete')])
+def test_old_runs_recompute_together_and_pool_bytes_are_untouched(baseline, monkeypatch, version, coverage_status):
     exp,config,_=baseline;b=Baseline(exp,config);p=build_plan(b);steps=Steps(b,p)
     pool=exp/'state/policy-pool-llm-2.json';write_json(pool,dict(status='completed',config_hash=steps.digest))
     pool_before=(pool.read_bytes(),pool.stat().st_mtime_ns)
     runs=Runs(b,steps);tests=[test_test('a'),test_test('b')];runs.register(tests);runs.ready=True
     for t in tests:
-        path=runs.path(1,execution_id(t));write_json(path,dict(coverage_version=version,methods=[dict(t,state='pass')]))
+        path=runs.path(1,execution_id(t));write_json(path,dict(coverage_version=version,coverage_status=coverage_status,
+            coverage_reason='batch JVM failed or timed out' if coverage_status=='missing' else '',
+            methods=[dict(t,state='pass',**({'lines':[]} if coverage_status=='complete' else {}))]))
         write_json(exp/f'state/policy-run-{execution_id(t)}-1.json',dict(status='completed',config_hash=steps.digest))
     jobs=[]
     monkeypatch.setattr(runs.adapter,'build',lambda *_:dict(build='ok'))
@@ -112,16 +113,6 @@ def test_old_runs_recompute_together_and_pool_bytes_are_untouched(baseline, monk
     assert len(jobs)==1 and len(jobs[0]['methods'])==2
     assert all(read_json(runs.path(1,h))['methods'][0]['lines']==[['src/main/java/A.java',1]] for h in digests)
     assert pool_before==(pool.read_bytes(),pool.stat().st_mtime_ns)
-
-
-def test_prefetch_uses_configured_workers(baseline,monkeypatch):
-    exp,config,_=baseline;b=Baseline(exp,config);b.execution_config['runner']['workers']['survive']=2
-    runs=Runs(b,Steps(b,build_plan(b)));barrier=threading.Barrier(2);calls=[]
-    def run(index,digests):
-        calls.append(index);barrier.wait(timeout=5)
-    monkeypatch.setattr(runs,'run_index',run)
-    runs.prefetch([1,2],{'file'})
-    assert sorted(calls)==[1,2]
 
 
 def test_old_developer_plan_and_llm_pool_skip_without_force(baseline,monkeypatch,capsys):
@@ -232,7 +223,7 @@ def test_selection_only_parent_is_skipped_by_control_survive_cover_and_report(tm
         def __init__(self,*args):self.runner=self
         def setup_runner(self):pass
         def session(self,stage):return nullcontext()
-        def run_group(self,index,group,methods,phase='A'):
+        def run_group(self,index,group,methods,phase='A',*,dead_at=None):
             calls.append((phase,index,group));assert group=='dev-scope' and methods==[a]
             result=dict(index=index,group=group,status='evaluated',methods=[dict(a,state='pass',flaky=False)],files=[])
             write_json(tmp_path/f'results/raw/{index}-{group}.json',result);return result

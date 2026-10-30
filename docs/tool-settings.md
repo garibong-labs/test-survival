@@ -76,3 +76,56 @@ Display settings do not enter the experiment configuration, fingerprints,
 compiler environment, result provenance or resume decision. Changing the display
 zone requires no rehash, migration, cache clearing or experiment rerun. Existing
 records are read as stored and are never rewritten to change their timezone.
+
+## Policy coverage JVM heap
+
+`SURVIVAL_JVM_JACOCO` overrides `runner.jvm.jacoco` for policy coverage JVM
+launches (`policy-survive` and pool `policy-cover`) without editing experiment
+configuration. Use a Java heap size such as `3g`:
+
+```sh
+export SURVIVAL_JVM_JACOCO=3g
+cd /Users/donggi/_projects/experiment-projects/json-schema-validator && survival policy run experiments/regen-policies
+```
+
+The host forwards the value to the container worker, which reads it when
+launching coverage. Unset or empty values use the configured heap. The original
+`jvm` settings and optional `coverage_environment` are saved in the worker's
+`*-job.json`; `coverage-jvm.json` and the batch result record the configured and
+effective heap and environment override. Each chunk's command, manifest and log
+are recorded in the batch result's `runs` list, with logs under
+`work/policy-survive/<index>/chunks/<chunk>/console.txt`.
+
+The override never enters stage hashes, build fingerprints or the policy digest.
+It does not affect compilation, fallback test launchers or baseline coverage.
+Policy survival instrumentation is restricted to packages from the saved scope;
+each JVM processes at most eight snapshot groups, sequentially. Failed chunks
+fall back independently, preserving successful chunks' coverage.
+
+Coverage version 3 recomputes version-2 policy records with missing coverage on
+resume without `--force`. Version-2 complete coverage, completed pools, imported
+run records and carry records remain reusable. Survival, coverage and reports
+refresh through the existing version check. Older pre-version-2 executions are
+still upgraded.
+
+Baseline survival evaluates commits in order within each group (groups may run
+in parallel). Policy survival also waits for each index's outcomes before
+requesting the next index. Only methods alive on entry are requested; a physical
+method shared by policies is requested if any policy still needs it. Later
+records retain dead methods as `state: dead`, with
+`message: not executed; failed at index N`, keeping the full denominator.
+Unselected members of a partially selected policy pool are recorded as
+`not-selected`. Neither marker is a new first failure.
+
+Baseline `input_sha256` still uses the full frozen method list. Existing PR #21
+survival records retain compatibility through an exact provenance check for the
+orchestration files changed here; other runner provenance must still match.
+Cached records are read unchanged and reconstruct alive-entry sets on resume.
+
+New policy processes inherit the environment of the shell that starts them.
+For a dnsjava baseline command chained into `survival policy plan` and
+`survival policy run`, those new processes use the merged code and the variable
+if it is already exported in their launching shell. Exporting it in a different
+shell does not change an already-running process's environment.
+An already-running baseline coordinator also keeps its loaded orchestration
+code; alive-entry dispatch applies when survival starts in a new process.

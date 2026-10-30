@@ -298,7 +298,7 @@ for t in methods:
 # duplicate-class failure. Rejected syntax never reaches helper inventory.
 Path('/out/two/Rejected.java').write_text('???;')
 policy_coverage.run(worker,dict(index=0,sha='fixture',methods=methods,survival=True,
-    excluded_files=['two/Rejected.java','two/BrokenTest.java'],scope_files=['src/main/java/fixture/Production.java'],
+    excluded_files=['two/Rejected.java','two/BrokenTest.java'],scope_files=['src/main/java/fixture/Production.java'],scope_classes=['fixture.Production'],
     work='combined',output='combined-result.json'))
 combined=json.loads(Path('/out/combined-result.json').read_text())
 assert combined['coverage_status']=='complete' and all(t['state']=='pass' for t in combined['methods']),combined
@@ -317,13 +317,13 @@ Path('/out/isolated-c/CTest.java').write_text('package fixture; public class CTe
 isolated=[dict(id=n,file_hash=n,execution_hash=n,file='isolated-'+n+'/'+n.upper()+'Test.java',source_root='isolated-'+n,
                **{'class':'fixture.'+n.upper()+'Test'},method='works') for n in ('a','b','c')]
 policy_coverage.run(worker,dict(index=0,sha='fixture',methods=isolated,survival=True,
-    scope_files=['src/main/java/fixture/Production.java'],work='isolated',output='isolated-result.json'))
+    scope_files=['src/main/java/fixture/Production.java'],scope_classes=['fixture.Production'],work='isolated',output='isolated-result.json'))
 result=json.loads(Path('/out/isolated-result.json').read_text())
 assert {t['id']:t['state'] for t in result['methods']}=={'a':'fail','b':'pass','c':'compile-fail'},result
 assert next(t for t in result['methods'] if t['id']=='a')['message'].startswith('java.lang.ClassNotFoundException: fixture.ForeignHelper')
 assert result['compile'][0]['snapshot_full_suite'] and result['compile'][1]['snapshot_full_suite']
 policy_coverage.run(worker,dict(index=0,sha='fixture',methods=isolated[:1],survival=True,
-    scope_files=['src/main/java/fixture/Production.java'],work='alone',output='alone-result.json'))
+    scope_files=['src/main/java/fixture/Production.java'],scope_classes=['fixture.Production'],work='alone',output='alone-result.json'))
 assert json.loads(Path('/out/alone-result.json').read_text())['methods'][0]['state']=='fail'
 # Direct scoped developer execution still compiles runtime-only frozen helpers.
 import shutil

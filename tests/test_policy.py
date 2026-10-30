@@ -191,7 +191,7 @@ def test_synthetic_commit_loop_imports_segment_one_and_deduplicates(baseline,mon
         calls.append((index,digest))
         return dict(methods=[dict(new,state='pass')])
     monkeypatch.setattr(execute.Runs,'get',get)
-    monkeypatch.setattr(execute.Runs,'prefetch',lambda *_:None)
+    monkeypatch.setattr(execute.Runs,'run_index',lambda *_,**kw:None)
     execute.survive(b,p,{('dev-scope',2):[new]},step)
     for name in ['release-reset','half-fill']:
         rows=read_csv(exp/f'results/policy/{name}/survival.csv')

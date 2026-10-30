@@ -1,13 +1,28 @@
-"""Container-side batched coverage. Tests execute in exactly one JVM per job."""
+"""Container-side coverage with bounded, sequential snapshot batches."""
 import base64
 from collections import defaultdict
+import os
 from pathlib import Path
 import shutil
 
 from .snapshot_compile import compile_snapshot, filtered_roots
 
 
-COVERAGE_VERSION = 2  # Compile and load each source snapshot independently.
+COVERAGE_VERSION = 3  # Retry legacy missing records with bounded instrumentation.
+MAX_SNAPSHOT_GROUPS = 8
+
+
+def includes_pattern(classes):
+    """JaCoCo package patterns for the production scope (including nested types)."""
+    patterns = set()
+    for cls in classes:
+        package, _, name = cls.rpartition('.')
+        if package:
+            patterns.add(package+'.*')
+        else:
+            # A bare '*' would also instrument every dependency package.
+            patterns.update((name, name+'$*'))
+    return ':'.join(sorted(patterns))
 
 
 def run(w, job):
@@ -66,20 +81,37 @@ def run(w, job):
             if (resource_root/name).exists():
                 shutil.copytree(resource_root/name, runtime_dir/'src/test'/name)
     scope_options = []
+    agent_options = 'output=none,dumponexit=false'
     if job.get('survival'):
         scope_file = work/'scope-files.txt'
         scope_file.write_text('\n'.join(job['scope_files'])+'\n')
         scope_options = ['-Dsurvival.coverage.scope='+str(scope_file)]
-    run = w.execute(['java', '-Xmx'+w.JVM['jacoco'], *scope_options, f'-javaagent:{agent}=output=none,dumponexit=false', '-cp', str(helper)+':'+helper_cp,
-                     'PerTestCoverage', str(manifest_path)], runtime_dir, work/'console.txt',
-                    w.TIMEOUTS['test_class']*max(1, len(job['methods'])))
-    if run['exit_code'] or run.get('timeout'):
-        if job.get('survival'):
-            return fallback(w, job, original, work, run)
-        raise RuntimeError('Per-test coverage JVM failed; see '+str(work/'console.txt'))
-    methods = rejected; universe = set()
+        agent_options += ',includes='+includes_pattern(job['scope_classes'])
+    override = os.environ.get('SURVIVAL_JVM_JACOCO')
+    heap = override or w.JVM['jacoco']
+    jvm = dict(configured=w.JVM['jacoco'], effective=heap,
+               environment={'SURVIVAL_JVM_JACOCO': override} if override else {})
+    w.write_json(work/'coverage-jvm.json', dict(jvm=jvm, agent_options=agent_options))
+    methods = rejected; universe = set(); runs = []; files = []; successful = []
+    for start in range(0, len(manifest), MAX_SNAPSHOT_GROUPS):
+        chunk = work/'chunks'/str(start//MAX_SNAPSHOT_GROUPS); chunk.mkdir(parents=True)
+        chunk_manifest = chunk/'batches.tsv'
+        chunk_manifest.write_text('\n'.join(manifest[start:start+MAX_SNAPSHOT_GROUPS])+'\n')
+        chunk_outputs = outputs[start:start+MAX_SNAPSHOT_GROUPS]
+        tests = [t for _, members in chunk_outputs for t in members]
+        run = w.execute(['java', '-Xmx'+heap, *scope_options, f'-javaagent:{agent}={agent_options}', '-cp', str(helper)+':'+helper_cp,
+                         'PerTestCoverage', str(chunk_manifest)], runtime_dir, chunk/'console.txt',
+                        w.TIMEOUTS['test_class']*len(tests))
+        runs.append(dict(run, manifest=str(chunk_manifest.relative_to(w.EXP)), groups=len(chunk_outputs)))
+        if run['exit_code'] or run.get('timeout'):
+            if not job.get('survival'):
+                raise RuntimeError('Per-test coverage JVM failed; see '+str(chunk/'console.txt'))
+            failed = fallback(w, {**job, 'methods':tests}, original, chunk)
+            methods.extend(failed['methods']); files.extend(failed['files'])
+        else:
+            successful.extend(chunk_outputs)
     scope = set(job.get('scope_files', []))
-    for output, tests in outputs:
+    for output, tests in successful:
         observed = defaultdict(list); covered = defaultdict(set)
         path = output/'tests.tsv'
         for line in path.read_text().splitlines() if path.exists() else []:
@@ -97,12 +129,15 @@ def run(w, job):
             state = 'pass' if states and all(s == 'SUCCESSFUL' for s, _ in states) else 'fail' if states else 'absent'
             methods.append(dict(id=t['id'], file_hash=t['file_hash'], execution_hash=t.get('execution_hash', t['file_hash']), **{'class':t['class']}, method=t['method'], state=state,
                                 message='\n'.join(m for s, m in states if s != 'SUCCESSFUL' and m)[:4000], lines=sorted(covered[ident])))
-    w.write_json(w.EXP/job['output'], dict(coverage_status='complete', coverage_version=COVERAGE_VERSION, status='evaluated', index=job['index'], sha=job['sha'], methods=methods,
-                                         universe=sorted(universe), run=run, compile=compile_runs))
+    missing = any(r['exit_code'] or r.get('timeout') for r in runs)
+    w.write_json(w.EXP/job['output'], dict(coverage_status='missing' if missing else 'complete',
+                                         coverage_reason='batch JVM failed or timed out' if missing else '',
+                                         coverage_version=COVERAGE_VERSION, status='evaluated', index=job['index'], sha=job['sha'], methods=methods,
+                                         universe=sorted(universe), runs=runs, jvm=jvm, files=files, compile=compile_runs))
 
 
-def fallback(w, job, original, work, failure):
-    """A failed batch JVM loses coverage, never the index's survival evidence."""
+def fallback(w, job, original, work):
+    """A failed chunk loses coverage, never the index's survival evidence."""
     files = []
     by_file = defaultdict(list)
     for t in job['methods']:
@@ -117,7 +152,7 @@ def fallback(w, job, original, work, failure):
             source = originals[(t.get('execution_hash', t['file_hash']), t['class'], t['method'])]
             state = t['state'] if t['state'] in ('pass', 'absent', 'compile-fail') else 'fail'
             methods.append(dict(source, state=state, message=t.get('message', '')[:4000], flaky=False))
-    w.write_json(w.EXP/job['output'], dict(index=job['index'], sha=job['sha'], status='evaluated',
-                                         coverage_version=COVERAGE_VERSION, coverage_status='missing',
-                                         coverage_reason='batch JVM failed or timed out',
-                                         methods=methods, files=files, run=failure))
+            # Pool source metadata may contain anchor coverage, which is not
+            # evidence for this failed launch at the current index.
+            methods[-1].pop('lines', None)
+    return dict(methods=methods, files=files)

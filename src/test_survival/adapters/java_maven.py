@@ -2,6 +2,7 @@
 import collections
 import hashlib
 import io
+import os
 from pathlib import Path
 import re
 import shutil
@@ -15,6 +16,8 @@ from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
 from .java_worker import RUNNER_JAR_RETRIES, RUNNER_JAR_BACKOFF_SECONDS, project_jars, runner_test_jars
 from .maven_dependencies import resolution_timeout
+from .run_reuse import survival_provenance_matches
+from ..rules.survival import dead_method
 
 
 class JavaMavenAdapter:
@@ -225,6 +228,12 @@ class JavaMavenAdapter:
         path = self.exp/job.get('work','work/runner-setup')/'job.json'
         # The worker clears its work directory; keep its input outside that directory.
         path = path.parent.with_name(path.parent.name+'-job.json')
+        command = ['python3', str(Path(__file__).with_name('java_worker.py')), str(path)]
+        if job['action'] in ('policy-cover', 'policy-survive') and os.environ.get('SURVIVAL_JVM_JACOCO'):
+            # Operational launch evidence only: never mutate runner.jvm or any
+            # result/hash inputs. env also works inside a reused Docker session.
+            job['coverage_environment'] = {'SURVIVAL_JVM_JACOCO': os.environ['SURVIVAL_JVM_JACOCO']}
+            command = ['env', 'SURVIVAL_JVM_JACOCO='+os.environ['SURVIVAL_JVM_JACOCO'], *command]
         write_json(path, job)
         # A stale classpath can require both dependency goals, each offline then online.
         dependency_timeout = resolution_timeout(self.config['runner']['timeouts']['build'])
@@ -232,7 +241,7 @@ class JavaMavenAdapter:
         if job['action'] == 'setup':
             # Allow every sequential jar its configured attempt timeout and backoffs.
             timeout = len(read_json(self.helpers/'classpath-artifacts.json')) * ((RUNNER_JAR_RETRIES+1)*self.config['runner']['timeouts']['build'] + RUNNER_JAR_RETRIES*RUNNER_JAR_BACKOFF_SECONDS) + dependency_timeout + 600
-        result = self.runner.execute(['python3', str(Path(__file__).with_name('java_worker.py')), str(path)], self.folder(0), path.with_suffix('.log'), timeout)
+        result = self.runner.execute(command, self.folder(0), path.with_suffix('.log'), timeout)
         if result['exit_code']:
             raise RuntimeError('Java worker failed; see '+str(path.with_suffix('.log')))
         return read_json(self.exp/job['output']) if job.get('output') else result
@@ -289,16 +298,26 @@ class JavaMavenAdapter:
     def run_fingerprint(self, methods, repeats=1):
         return self.run_fingerprints(methods, repeats)[0]
 
-    def run_group(self,index,group,methods,phase='A',repeats=1):
+    def run_group(self,index,group,methods,phase='A',repeats=1,*,dead_at=None):
         fingerprint,legacy=self.run_fingerprints(methods,repeats)
         provenance=self.provenance()
         folder='raw' if phase=='A' else 'raw-coverage' if phase=='B' else phase
         output=f'results/{folder}/{index}-{group}.json'
         old=read_json(self.exp/output,{})
         commit=read_json(self.exp/'results/anchor.json') if index==0 else read_json(self.exp/f'results/builds/{index}.json')
-        if old.get('input_sha256') in (fingerprint,legacy) and old.get('runner_sha256')==provenance and old.get('sha')==commit['sha']:
+        compatible = (survival_provenance_matches(old.get('runner_sha256'), provenance) if phase=='A'
+                      else old.get('runner_sha256')==provenance)
+        complete = dead_at is None or {m['id'] for m in old.get('methods', [])} == {m['id'] for m in methods}
+        # A changed skip policy can make an earlier failure unevaluated without
+        # changing the full-list fingerprint. Omitted tests then need execution.
+        omitted = {m['id'] for m in old.get('methods', []) if m.get('state') == 'dead'}
+        complete = complete and omitted <= (dead_at or {}).keys()
+        if old.get('input_sha256') in (fingerprint,legacy) and compatible and complete and old.get('sha')==commit['sha']:
             return old
-        return self.worker(dict(action='run',index=index,sha=commit['sha'],group=group,phase=phase,methods=methods,repeats=repeats,
+        dead_at = dead_at or {}
+        selected = [m for m in methods if m['id'] not in dead_at]
+        return self.worker(dict(action='run',index=index,sha=commit['sha'],group=group,phase=phase,methods=selected,repeats=repeats,
+                                dead_methods=[dead_method(m, dead_at[m['id']]) for m in methods if m['id'] in dead_at],
                                 input_sha256=fingerprint,runner_sha256=provenance,output=output,work=f'work/phase-{phase}/{index}/{group}'))
 
     def method_coverage(self, method):

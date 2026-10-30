@@ -318,7 +318,7 @@ def _run_group(job, session):
                               repetitions=job.get('repeats',1),retry=job.get('retry',phase in ['A','B']),precompiled=precompiled,
                               environment_retry=job.get('environment_retry'),compiler=compiler))
     result=dict(index=index,sha=job['sha'],group=group,phase=phase,status='evaluated',input_sha256=job['input_sha256'],
-                runner_sha256=job['runner_sha256'],files=files,methods=[m for f in files for m in f['methods']],requested_ids=[r['id'] for r in rows])
+                runner_sha256=job['runner_sha256'],files=files,methods=[m for f in files for m in f['methods']]+job.get('dead_methods', []),requested_ids=[r['id'] for r in rows])
     if suite_compile is not None:result['whole_frozen_suite_compile']=suite_compile
     if coverage:
         folder,_=classpath(index);xml=EXP/job.get('coverage_xml',f'results/coverage/{index}-{group}.xml');xml.parent.mkdir(parents=True,exist_ok=True)
