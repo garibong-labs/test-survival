@@ -79,6 +79,9 @@ def test_report_guard_matches_workflow_fixture_collection():
     args = shlex.split(command)
     assert args[:3] == ['python', '-m', 'pytest']
     assert args.count('--junitxml=java-results.xml') == 1
+    documented = [shlex.split(line) for line in (ROOT/'ci/README.md').read_text().splitlines()
+                  if line.startswith('python -m pytest ') and '-m java_integration' in line]
+    assert documented == [args], 'Documented Java command must match the workflow selection and report'
     # Use the workflow's actual paths/marker selection and parametrized node IDs.
     # Collection does not set up fixtures or start Docker/Java. Do not write a report.
     args.remove('--junitxml=java-results.xml')
