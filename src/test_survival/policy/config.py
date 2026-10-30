@@ -2,6 +2,7 @@
 from copy import deepcopy
 import re
 
+from ..adapters.policy_coverage import COVERAGE_VERSION
 from ..config import ConfigError, Field, _validate, _strings, enum, integer
 
 SCHEMA = {
@@ -61,5 +62,5 @@ def active_plan(b, plan):
 def reusable_run(record):
     # Imports and carry records contain no new execution to upgrade. In
     # particular, the interrupted JSV run has only imports at its pool index.
-    return (record.get('coverage_version') == 1 or record.get('imported') is True
+    return (record.get('coverage_version') == COVERAGE_VERSION or record.get('imported') is True
             or record.get('status') in ('skipped-untouched', 'build-fail'))

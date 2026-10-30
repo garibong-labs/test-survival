@@ -6,7 +6,7 @@ import threading
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv
 from .artifacts import snapshot
-from .config import active_plan, reusable_run
+from .config import COVERAGE_VERSION, active_plan, reusable_run
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
 
 
@@ -93,7 +93,7 @@ class Runs:
                             for t in observed]
                 complete = all('lines' in t for t in observed)
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
-                                      imported=not missing, coverage_version=1,
+                                      imported=not missing, coverage_version=COVERAGE_VERSION,
                                       coverage_status='complete' if complete else 'missing',
                                       coverage_reason='' if complete else raw.get('coverage_reason', 'imported evidence has no per-test coverage'),
                                       methods=observed))
@@ -122,7 +122,7 @@ class Runs:
         path = self.path(index,digest)
         status = 'skipped-untouched' if index in self.b.skipped else 'build-fail'
         self.step(f'run-{digest}-{index}', lambda:write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'],
-                  status=status, coverage_version=1, coverage_status='not-evaluated', methods=[])), outputs=[path])
+                  status=status, coverage_version=COVERAGE_VERSION, coverage_status='not-evaluated', methods=[])), outputs=[path])
 
 
 def baseline_tests(b):

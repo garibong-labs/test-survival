@@ -77,7 +77,7 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
     policy_coverage.run(w,job)
     result=read_json(tmp_path/'result.json')
     assert len([c for c in calls if 'PerTestCoverage' in c]) == 1
-    assert len([c for c in calls if c[-1].endswith('batch.args')]) == 1
+    assert len([c for c in calls if c[-1].endswith('whole-snapshot.args')]) == 1
     assert original == {p:p.read_bytes() for p in root.iterdir()}
     if scenario in ('jvm-failure','timeout'):
         assert result['coverage_status']=='missing' and len(fallback_calls)==2
@@ -92,13 +92,14 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
             assert all(t['message'].startswith('java.lang.IllegalStateException: ') and len(t['message'])==4000 for t in result['methods'])
 
 
-def test_old_runs_recompute_together_and_pool_bytes_are_untouched(baseline, monkeypatch):
+@pytest.mark.parametrize('version', [None, 1])
+def test_old_runs_recompute_together_and_pool_bytes_are_untouched(baseline, monkeypatch, version):
     exp,config,_=baseline;b=Baseline(exp,config);p=build_plan(b);steps=Steps(b,p)
     pool=exp/'state/policy-pool-llm-2.json';write_json(pool,dict(status='completed',config_hash=steps.digest))
     pool_before=(pool.read_bytes(),pool.stat().st_mtime_ns)
     runs=Runs(b,steps);tests=[test_test('a'),test_test('b')];runs.register(tests);runs.ready=True
     for t in tests:
-        path=runs.path(1,execution_id(t));write_json(path,dict(methods=[dict(t,state='pass')]))
+        path=runs.path(1,execution_id(t));write_json(path,dict(coverage_version=version,methods=[dict(t,state='pass')]))
         write_json(exp/f'state/policy-run-{execution_id(t)}-1.json',dict(status='completed',config_hash=steps.digest))
     jobs=[]
     monkeypatch.setattr(runs.adapter,'build',lambda *_:dict(build='ok'))

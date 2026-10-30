@@ -7,6 +7,9 @@ import shutil
 from .snapshot_compile import compile_snapshot, filtered_roots
 
 
+COVERAGE_VERSION = 2  # Compile and load each source snapshot independently.
+
+
 def run(w, job):
     work = w.EXP/job['work']
     if work.exists():
@@ -26,21 +29,19 @@ def run(w, job):
         raise RuntimeError('Cannot compile per-test coverage launcher')
     groups = defaultdict(list)
     for t in job['methods']:
-        groups['suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])].append(t)
+        root = t.get('source_root', str(Path(t['file']).parent))
+        groups[root, 'suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])].append(t)
     manifest = []; outputs = []; compile_runs = []; snapshots = {}; rejected = []
-    batch = compile_batch(w, job['methods'], work, cp, folder) if job.get('survival') and job['methods'] else None
     for number, tests in enumerate(groups.values()):
         part = work/str(number); part.mkdir()
         root = w.EXP/tests[0].get('source_root', str(Path(tests[0]['file']).parent))
-        if batch and batch[1]['exit_code'] == 0:
-            classes, compiled = batch
-        elif root in snapshots:
-            classes, compiled = snapshots[root]
-        else:
+        if root not in snapshots:
+            snapshots[root] = compile_snapshot(w, root, [], work/'snapshots'/str(len(snapshots)), cp, folder,
+                                               full_suite=True)
+        classes, compiled = snapshots[root]
+        if compiled['exit_code'] and not job.get('full_suite'):
             classes, compiled = compile_snapshot(w, root, [w.EXP/tests[0]['file']], part, cp, folder,
-                                                  full_suite=job.get('full_suite', False))
-            if compiled['exit_code'] == 0 and compiled['snapshot_full_suite']:
-                snapshots[root] = (classes, compiled)
+                                                  whole=snapshots[root])
         compile_runs.append(compiled)
         if compiled['exit_code']:
             if not job.get('survival'):
@@ -96,20 +97,8 @@ def run(w, job):
             state = 'pass' if states and all(s == 'SUCCESSFUL' for s, _ in states) else 'fail' if states else 'absent'
             methods.append(dict(id=t['id'], file_hash=t['file_hash'], execution_hash=t.get('execution_hash', t['file_hash']), **{'class':t['class']}, method=t['method'], state=state,
                                 message='\n'.join(m for s, m in states if s != 'SUCCESSFUL' and m)[:4000], lines=sorted(covered[ident])))
-    w.write_json(w.EXP/job['output'], dict(coverage_status='complete', coverage_version=1, status='evaluated', index=job['index'], sha=job['sha'], methods=methods,
+    w.write_json(w.EXP/job['output'], dict(coverage_status='complete', coverage_version=COVERAGE_VERSION, status='evaluated', index=job['index'], sha=job['sha'], methods=methods,
                                          universe=sorted(universe), run=run, compile=compile_runs))
-
-
-def compile_batch(w, methods, work, cp, folder):
-    """One compilation of the collected files and their helper source roots."""
-    classes = work/'batch-classes'; classes.mkdir()
-    roots = sorted({w.EXP/t['source_root'] for t in methods})
-    sources = sorted({p for root in roots for p in root.rglob('*.java')})
-    args = work/'batch.args'
-    args.write_text('\n'.join('"'+str(p).replace('\\', '\\\\').replace('"', '\\"')+'"' for p in sources))
-    result = w.execute(['javac', '-J-Xmx'+w.JVM['javac'], '-cp', cp, '-sourcepath', ':'.join(map(str, roots)),
-                        '-d', str(classes), '@'+str(args)], folder, work/'batch.txt', w.TIMEOUTS['compile'])
-    return classes, {**result, 'snapshot_full_suite':True, 'source_count':len(sources)}
 
 
 def fallback(w, job, original, work, failure):
@@ -129,6 +118,6 @@ def fallback(w, job, original, work, failure):
             state = t['state'] if t['state'] in ('pass', 'absent', 'compile-fail') else 'fail'
             methods.append(dict(source, state=state, message=t.get('message', '')[:4000], flaky=False))
     w.write_json(w.EXP/job['output'], dict(index=job['index'], sha=job['sha'], status='evaluated',
-                                         coverage_version=1, coverage_status='missing',
+                                         coverage_version=COVERAGE_VERSION, coverage_status='missing',
                                          coverage_reason='batch JVM failed or timed out',
                                          methods=methods, files=files, run=failure))

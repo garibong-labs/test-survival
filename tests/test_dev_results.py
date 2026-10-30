@@ -645,3 +645,66 @@ def test_legacy_dev_results_manifest_defaults_to_error_without_mutation(experime
     set_unmapped_policy(target, 'exclude')
     with pytest.raises(PipelineError, match='unmapped'):
         imported_baseline(target, load(target))
+
+
+@pytest.mark.parametrize('when', ['before', 'after-legacy', 'reimport'])
+def test_selection_only_parent_preserves_imported_child_routing(experiments, when, monkeypatch):
+    from test_survival.dev_results import imported_groups
+    from test_survival.progress import snapshot
+    from test_survival.report.consistency import build
+    source, target, calls = experiments
+    if when != 'before':
+        import_experiment(target, source, 'dev-results')
+    settings = yaml.safe_load((target/'experiment.yaml').read_text())
+    next(g for g in settings['dev']['groups'] if g['name']=='dev-all')['frozen'] = False
+    (target/'experiment.yaml').write_text(yaml.safe_dump(settings))
+    if when != 'after-legacy':
+        import_experiment(target, source, 'dev-results')
+    else:
+        # Pre-fix import manifests have no explicit folder hint.
+        state = read_json(target/'state/import.json')
+        for group in state['dev-results']['groups'].values():
+            group.pop('raw_folder', None)
+        write_json(target/'state/import.json', state)
+    provenance = read_json(target/'state/import.json')['dev-results']
+    before = {p:(target/p).read_bytes() for p in provenance['files']}
+    folder = 'raw-derived' if when=='after-legacy' else 'raw'
+    assert survive.raw_folder('dev-scope',load(target),provenance)==folder
+    source.rename(source.with_name('archived'))
+    assert 'dev-all' in imported_groups(target,load(target))  # Still available for selection.
+    for stage in (control,survive,cover):
+        stage.run(target,load(target))
+    assert before == {p:(target/p).read_bytes() for p in before}
+    assert {c[2] for c in calls if len(c)==3} == {'local','llm'}
+    assert read_json(target/f'results/{folder}/2-dev-scope.json')['status']=='skipped-untouched'
+    assert read_json(target/'results/survival-consistency.json')['raw_count_matches']
+    assert 'dev-all' not in read_json(target/'results/alive-entering.json')['1']
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    monkeypatch.setattr(JavaMavenAdapter,'provenance',lambda _: 'archived-runner')
+    monkeypatch.setattr(JavaMavenAdapter,'run_fingerprints',lambda *a: ('archived-fingerprint',))
+    assert snapshot(target,'survive',load(target))['done']==3
+    summary=build(target,load(target))
+    assert summary['imported_dev_results']['groups']==['dev-scope']
+    assert summary['final_survivors']['dev-scope']==0
+
+
+def test_selection_only_import_is_filtered_when_child_is_local(experiments):
+    from test_survival.dev_results import imported_for, imported_groups
+    source,target,calls=experiments
+    import_experiment(target,source,'dev-results')
+    state=read_json(target/'state/import.json')
+    del state['dev-results']['groups']['dev-scope']
+    write_json(target/'state/import.json',state)
+    settings=yaml.safe_load((target/'experiment.yaml').read_text())
+    next(g for g in settings['dev']['groups'] if g['name']=='dev-all')['frozen']=False
+    (target/'experiment.yaml').write_text(yaml.safe_dump(settings))
+    config=load(target)
+    # Unused measurement evidence must not even be validated. Scope imports
+    # remain available from the common developer baseline and frozen selection.
+    (target/'results/raw-coverage/0-dev-all.json').unlink()
+    assert 'dev-all' in imported_groups(target,config)
+    assert imported_for(target,config,'cover')[1]=={}
+    for stage in (control,survive,cover):stage.run(target,config)
+    assert {c[2] for c in calls if len(c)==3}=={'dev-scope','local','llm'}
+    assert 'dev-all' not in read_json(target/'results/alive-entering.json')['0']
+    assert 'scope_dev-all_covered' not in read_csv(target/'results/changed-lines.csv')[0]

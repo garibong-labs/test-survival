@@ -10,7 +10,7 @@ from ..display import UTC_DISPLAY
 from ..io import atomic_text, now, read_json, write_json
 from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
-from .config import digest_options, active_plan, reusable_run
+from .config import COVERAGE_VERSION, digest_options, active_plan, reusable_run
 from . import plan as planning
 from .progress import LiveProgress, description
 
@@ -29,7 +29,7 @@ class Steps:
         prior = read_json(path, {})
         if prior and prior.get('config_hash') != self.digest:
             raise ConfigError('Policy inputs changed; use --force to rebuild policy evidence')
-        revision = dict(coverage_version=1, regenerate_developer=self.b.options.get('regenerate_developer', True))
+        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True))
         fresh = True
         if name.startswith('run-'):
             fresh = all(reusable_run(read_json(p, {})) for p in outputs)

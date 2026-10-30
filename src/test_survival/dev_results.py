@@ -7,7 +7,7 @@ import shutil
 
 import yaml
 
-from .config import MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate
+from .config import MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate, execution_groups
 from .io import now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
 from .rules.dev_denominator import denominator_file, unmapped_note
@@ -123,7 +123,9 @@ def check_identity(actual, expected, *, advice=''):
 
 def import_results(exp, source, config):
     """Preflight all compatibility checks and files before copying any evidence."""
+    from .stages.survive import raw_folder
     source_config = archived_config(source)
+    source_provenance = load_provenance(source)
     source_identity = identity(source, source_config)
     check_identity(identity(exp, config), source_identity)
     source_groups = {g['name']: (i, g) for i, g in enumerate(source_config['dev']['groups'])}
@@ -158,8 +160,8 @@ def import_results(exp, source, config):
                     group_paths.append(relative)
         # Measured/derived is an execution choice. Reuse the same observations
         # even if the destination represents this denominator differently.
-        source_folder = 'raw-derived' if old.get('derive_from') else 'raw'
-        target_folder = 'raw-derived' if group.get('derive_from') else 'raw'
+        source_folder = raw_folder(name, source_config, source_provenance)
+        target_folder = raw_folder(name, config)
         if source_folder != target_folder:
             for position, relative in enumerate(group_paths):
                 if relative.startswith(f'results/{source_folder}/'):
@@ -169,7 +171,7 @@ def import_results(exp, source, config):
         control = f'results/control/0-{name}.json'
         if control not in plan:
             raise PipelineError(f'dev-results: missing control result for {name} in {source}')
-        groups[name] = dict(denominator=group['denominator'], frozen=frozen[name], files=group_paths)
+        groups[name] = dict(denominator=group['denominator'], frozen=frozen[name], files=group_paths, raw_folder=target_folder)
     for target, path in plan.items():
         if not path.is_file():
             raise PipelineError(f'dev-results: missing source file {path}')
@@ -211,6 +213,8 @@ def imported_groups(exp, config, stage=None, *, provenance=None):
         return {}
     current = {g['name']: g for g in config['dev']['groups']}
     groups = {name: item for name, item in record['groups'].items() if name in current}
+    if stage:
+        groups = execution_groups(config, groups)
     if not groups:
         return {}
     check_identity(identity(exp, config), record['compatibility'], advice=DETACH)

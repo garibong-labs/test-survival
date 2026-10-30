@@ -86,8 +86,12 @@ regeneration points, commit indices run concurrently with
 `runner.workers.survive` workers. The coordinator aggregates those measurements
 in commit order before deciding fill membership at the next transition. Each
 evaluable index submits one worker job containing all non-importable methods
-needed across policies. The worker compiles the collected sources together once;
-if that fails, it compiles each file with its helper sources separately. Screening
+needed across policies. The worker compiles each source root (snapshot) once,
+with its own sourcepath and class output directory. Different regeneration points
+can therefore contain different versions of the same class without duplicate-class
+errors or access to another snapshot's helpers. If a root batch fails, its files
+fall back to separate compilation with their helpers; the failed whole-root
+attempt is reused rather than repeated for each file. Screening
 validation records exclude rejected test files before snapshot inventory or
 compilation. Scratch copies leave pool sources and stored execution hashes intact.
 
@@ -150,7 +154,9 @@ shared runs, coverage jobs, and stages. Changed inputs require `--force`; comple
 work is otherwise reused. `regenerate_developer` is excluded from the digest;
 changing it filters saved plans without invalidating any pool or measured-source
 identity. Aggregate survival/coverage/report steps track their execution revision
-separately. Completed measured run records without the new coverage schema are
+separately. Coverage schema version 2 records the isolated snapshot compilation
+semantics; version 1 cross-root measurements must be upgraded as well. Completed
+measured run records without the current coverage schema are
 recomputed automatically, without `--force`, in every experiment. Import and
 skip/build-failure records remain reusable; no pool is regenerated for this
 upgrade. New completed records (including explicit coverage-missing fallbacks)
@@ -206,10 +212,17 @@ The default is `true`. Selection-only groups still drive Maven baseline and
 per-method scope selection at t. This setting leaves prepare, scope, generate,
 and screen hashes unchanged. Later stages filter old frozen-denominator artifacts
 at read time, so screen need not run again. A scoped child of a selection-only
-parent executes its own frozen files directly in control, survive, and cover,
-with the frozen test tree as `-sourcepath` for helpers. It keeps its existing
+parent executes its selected methods directly in control, survive, and cover.
+The whole frozen developer test tree is still compiled, including helpers loaded
+only by reflection, method-provider strings, or service loading. A sourcepath
+alone would not compile those helpers. It keeps its existing
 selection and denominator, and no longer needs parent raw records. Control,
-survival, coverage, and report outputs omit the selection-only group.
+survival, coverage, and report outputs omit the selection-only group. Imported
+developer observations use their recorded raw/raw-derived provenance even after
+the parent becomes selection-only. New imports record the effective destination
+folder. Measurement stages exclude selection-only imports before validating or
+reading raw evidence, while scope selection retains access to imported baseline
+and denominator data.
 
 The four local experiment configuration edits for this rollout are recorded in
 [resume-configs.patch](../examples/regen-policies/resume-configs.patch). These

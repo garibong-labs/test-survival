@@ -305,7 +305,7 @@ def _run_group(job, session):
     for row in rows:by_file[row['file']].append(row)
     files=[];suite_compile=None;precompiled=None
     compiler=CompilationService(EXP,session.execute,{k:job[k] for k in ('index','sha','group','phase')},backend=session.identity)
-    if DEVELOPER and rows and job.get('developer_suite', True):
+    if DEVELOPER and rows:
         folder,cp=classpath(index)
         suite_classes=work/'suite-classes';suite_classes.mkdir()
         sources=sorted((EXP/'dev/src-test-t/java').rglob('*.java'))

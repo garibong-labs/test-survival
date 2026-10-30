@@ -2,7 +2,7 @@
 from pathlib import Path
 
 
-def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full_suite=False):
+def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full_suite=False, whole=None):
     """Prefer the whole snapshot; isolate live tests if unrelated tests broke.
 
     Explicitly compiling non-test helper sources preserves reflection, external
@@ -24,7 +24,9 @@ def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full
                                 '-d', str(classes), '@'+str(args)], folder, log, w.TIMEOUTS['compile'])
         return classes, {**result, 'source_count':len(sources)}
 
-    classes, whole = compile_sources(sources, 'whole-snapshot')
+    # A caller batching multiple files from this root can reuse even a failed
+    # whole-tree attempt; per-file fallback must not recompile the suite.
+    classes, whole = whole if whole is not None else compile_sources(sources, 'whole-snapshot')
     if whole['exit_code'] == 0 or full_suite:
         return classes, {**whole, 'snapshot_full_suite':True}
     inventory = part/'inventory.tsv'
