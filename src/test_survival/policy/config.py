@@ -63,9 +63,17 @@ def active_plan(b, plan):
 def reusable_run(record, *, required_methods=None):
     # A record may mix imported markers and real observations. Its imported
     # flag cannot establish whether it contains execution for current demand.
-    if required_methods is not None and any(t.get('state') in ('dead', 'not-selected') and identity(t) in required_methods
-                                            for t in record.get('methods', [])):
-        return False
+    if required_methods is not None:
+        for t in record.get('methods', []):
+            if identity(t) not in required_methods:
+                continue
+            if t.get('state') in ('dead', 'not-selected'):
+                return False
+            # A method the policies need must carry its executed lines: records
+            # imported from the baseline, pool-screening markers and chunks whose
+            # coverage JVM failed have none, and are measured again.
+            if 'lines' not in t:
+                return False
     # Imports and carry records contain no new execution to upgrade. In
     # particular, the interrupted JSV run has only imports at its pool index.
     return (record.get('coverage_version') == COVERAGE_VERSION

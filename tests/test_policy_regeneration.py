@@ -13,6 +13,7 @@ from test_survival.policy.baseline import Baseline
 from test_survival.policy.config import active_plan, digest_options
 from test_survival.policy.execute import Runs
 from test_survival.policy.pipeline import Steps
+from test_survival.policy.config import reusable_run
 from test_survival.policy.plan import build_plan, run as plan
 from test_survival.policy.segments import execution_id
 
@@ -271,15 +272,24 @@ def test_screening_exclusions_keep_helpers_without_modifying_pool(tmp_path):
     assert summary=={'ktester/10':dict(kept=1,rejected=2,scratch=1)}
 
 
-def test_legacy_imported_run_is_reused_byte_for_byte(baseline,monkeypatch):
+def test_legacy_imported_run_is_measured_again(baseline,monkeypatch):
+    # Records the old importer copied from the baseline carry no executed lines,
+    # so they cannot feed changed-line coverage; the method is executed instead.
     exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
     t=test_test('a');runs.register([t]);path=runs.path(1,execution_id(t))
-    write_json(path,dict(imported=True,methods=[dict(t,state='pass')]))
+    write_json(path,dict(imported=True,coverage_version=3,methods=[dict(t,state='pass')]))
     state=exp/f'state/policy-run-{execution_id(t)}-1.json';write_json(state,dict(status='completed',config_hash=steps.digest))
-    before={p:p.read_bytes() for p in (path,state)}
-    monkeypatch.setattr(runs,'initialize',lambda:pytest.fail('Legacy imports must not run'))
-    assert runs.get(1,execution_id(t))['methods'][0]['state']=='pass'
-    assert before=={p:p.read_bytes() for p in before}
+    assert not reusable_run(read_json(path),required_methods={'A#a'})
+    jobs=[]
+    runs.ready=True
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    def worker(job):
+        jobs.append(job)
+        return dict(methods=[dict(m,state='pass',lines=[['src/main/java/A.java',1]]) for m in job['methods']])
+    monkeypatch.setattr(runs.adapter,'worker',worker)
+    result=runs.get(1,execution_id(t))
+    assert [m['id'] for m in jobs[0]['methods']]==['a'] and result['methods'][0]['lines']==[['src/main/java/A.java',1]]
+    assert not result['imported'] and reusable_run(result,required_methods={'A#a'})
 
 
 def test_survive_batches_all_policy_methods_once_per_index_and_resumes(baseline,monkeypatch):
@@ -298,7 +308,8 @@ def test_survive_batches_all_policy_methods_once_per_index_and_resumes(baseline,
         return dict(coverage_status='complete',methods=[dict(t,state='pass',message='',lines=[]) for t in job['methods']])
     monkeypatch.setattr(execute.JavaMavenAdapter,'worker',worker)
     execute.survive(b,p,{('dev-scope',1):tests},Steps(b,p))
-    assert sorted(j['index'] for j in jobs)==[2,3]
-    assert all({t['method'] for t in j['methods']}=={'a','b'} for j in jobs)
+    # Index 1 is the regeneration commit: the reset pool in one batch, then the
+    # baseline method the fill policy carries over; later indices batch all three.
+    assert [(j['index'],sorted(t['method'] for t in j['methods'])) for j in jobs]==[(1,['a','b']),(1,['works']),(2,['a','b','works']),(3,['a','b','works'])]
     execute.survive(b,p,{('dev-scope',1):tests},Steps(b,p))
-    assert len(jobs)==2
+    assert len(jobs)==4

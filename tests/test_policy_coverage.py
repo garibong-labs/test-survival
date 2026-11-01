@@ -131,7 +131,8 @@ def test_only_failed_groups_appear_in_missing_csv(baseline, monkeypatch):
     pools = {(g,1):[test_test(g)] for g in b.groups}
     execute.survive(b, plan, pools, Steps(b, plan))
     out = exp/'results/policy/reset'
-    expected = [dict(index='2', sha=b.by_index[2]['sha'], group='bad', reason='batch JVM failed or timed out')]
+    # The pool is measured at its own regeneration commit (index 1) as well.
+    expected = [dict(index=str(i), sha=b.by_index[i]['sha'], group='bad', reason='batch JVM failed or timed out') for i in (1,2)]
     assert read_csv(out/'coverage-missing.csv') == expected
     rows = [dict(index=i, sha=b.by_index[i]['sha'], date='date', subject='change', scope_executable=1) for i in (2,3)]
     write_csv(root/'results/changed-lines.csv', rows, list(rows[0]))

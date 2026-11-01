@@ -143,7 +143,7 @@ def test_policy_alive_jobs_preserve_curves_failures_and_alive_bytes(baseline, mo
     out=exp/'results/policy/reset'
     outputs=['survival.csv','first-failures.csv','alive.json']
     expected={name:(out/name).read_bytes() for name in outputs}
-    assert [len(j['methods']) for j in calls]==[3,3,3]
+    assert [len(j['methods']) for j in calls]==[3,3,3,3]  # pool index 1, then 2, 3, 4
     # Retain the completed prefix, then resume with alive-entry execution.
     prefix=exp/'results/policy/runs/shared/2.json'
     saved=read_json(prefix); saved['coverage_version']=2; write_json(prefix,saved)
@@ -184,7 +184,9 @@ def test_policy_shared_method_runs_if_any_policy_revives_it(baseline, monkeypatc
     write_json(exp/f'results/policy/runs/{digest}/2.json',dict(coverage_version=2,coverage_status='complete',methods=[dict(t,state='fail',lines=[])]))
     write_json(exp/f'state/policy-run-{digest}-2.json',dict(status='completed',config_hash=step.digest))
     execute.survive(b,plan,{('dev-scope',i):[t] for i in (1,2)},step)
-    assert [(j['index'],[m['id'] for m in j['methods']]) for j in calls]==[(3,['shared'])]
+    # Index 1 is the early pool's own regeneration commit (executed for coverage);
+    # the later pool's commit, 2, keeps the cached fail, which has its lines.
+    assert [(j['index'],[m['id'] for m in j['methods']]) for j in calls]==[(1,['shared']),(3,['shared'])]
     assert read_csv(exp/'results/policy/early/survival.csv')[-1]['dev-scope_alive']=='0'
     assert read_csv(exp/'results/policy/later/survival.csv')[-1]['dev-scope_alive']=='1'
 
@@ -238,12 +240,12 @@ def test_policy_remeasures_revived_baseline_dead_method(baseline, monkeypatch, a
                         methods=[dead_method(t,1)]+([dict(extra,state='pass',lines=[])] if cached_marker=='mixed' else [])))
         write_json(exp/'state/policy-run-same-source-3.json',dict(status='completed',config_hash=step.digest))
     execute.survive(b,plan,{('dev-scope',2):pool},step)
-    assert [(job['index'],[m['id'] for m in job['methods']]) for job in jobs]==[(3,[m['id'] for m in pool])]
+    assert [(job['index'],[m['id'] for m in job['methods']]) for job in jobs]==[(i,[m['id'] for m in pool]) for i in (2,3)]
     assert read_csv(exp/'results/policy/revive/survival.csv')[-1]['dev-scope_alive']==str(len(pool))
     result=read_json(exp/'results/policy/runs/same-source/3.json')
     assert not result['imported'] and result['methods'][0]['state']=='pass'
     execute.survive(b,plan,{('dev-scope',2):pool},step)
-    assert len(jobs)==1
+    assert len(jobs)==2
 
 
 @pytest.mark.parametrize('imported', [False, True])
@@ -346,15 +348,16 @@ def test_policy_dead_propagation_tolerates_imported_rows_without_hashes(baseline
         return dict(methods=[dict(t, state='pass', lines=[]) for t in job['methods']])
     monkeypatch.setattr(JavaMavenAdapter, 'worker', worker)
     step=Steps(b,plan)
-    # A completed imported record at index 2, shaped like the importer writes it:
-    # baseline raw rows (identity and state only), no execution or file hashes.
+    # A completed record at index 2 whose rows carry identity, state and lines
+    # but no execution or file hashes (the shape the old importer wrote, with
+    # lines added so the record is reusable for its alive members).
     write_json(exp/'results/policy/runs/shared/2.json', dict(index=2, sha=b.by_index[2]['sha'], status='evaluated', imported=True,
                coverage_version=3, methods=[dict(id=t['id'], **{'class':t['class']}, method=t['method'],
-                                                 state='fail' if t['id']=='a' else 'pass') for t in tests]))
+                                                 state='fail' if t['id']=='a' else 'pass', lines=[]) for t in tests]))
     write_json(exp/'state/policy-run-shared-2.json', dict(status='completed', config_hash=step.digest))
     execute.survive(b,plan,{('dev-scope',1):tests},step)
-    # The failure at index 2 is propagated: only b is requested at index 3.
-    assert [(j['index'],[t['id'] for t in j['methods']]) for j in calls]==[(3,['b'])]
+    # The failure at index 2 is propagated: only b is requested at index 3 (index 1 is the pool's own commit).
+    assert [(j['index'],[t['id'] for t in j['methods']]) for j in calls]==[(1,['a','b']),(3,['b'])]
     assert read_csv(exp/'results/policy/reset/survival.csv')[-1]['dev-scope_alive']=='1'
 
 

@@ -44,18 +44,15 @@ class Runs:
         return self.b.exp/f'results/policy/runs/{digest}/{index}.json'
 
     def imports(self, index, digest):
-        imported = {}
-        for group, baseline_tests in self.baseline_catalog.items():
-            candidates = [t for t in baseline_tests if execution_id(t) == digest]
-            if candidates:
-                raw = {r['id']:r for r in self.b.raw(index,group)['methods']}
-                # Baseline survival may have stopped running this method even
-                # though a later policy pool revives the same physical source.
-                imported.update({identity(t):{**t, **raw[t['origin_id']],
-                                               'file_hash':t['file_hash'], 'execution_hash':execution_id(t)} for t in candidates
-                                 if raw[t['origin_id']]['state'] not in ('dead', 'not-selected')})
-        imported.update(self.pool_catalog.get((index,digest), {}))
-        return imported
+        """Observations a policy may take over without executing.
+
+        Nothing qualifies any more: baseline raw records and pool screening
+        carry pass/fail only, and a policy table needs each surviving method's
+        executed lines at every commit (changed-line coverage). Methods a fill
+        policy carries over from the baseline, and a pool at its own
+        regeneration commit, are therefore executed like any other member.
+        """
+        return {}
 
     def run_index(self, index, digests, *, alive=None, dead_at=None):
         if alive is not None:
@@ -67,8 +64,8 @@ class Runs:
             for h in digests:
                 inactive[h] = {}
                 for ident, t in self.catalog[h].items():
-                    if key(t) in alive or ident in imported[h]:
-                        continue
+                    if key(t) in alive or ident in imported[h] or ident in self.pool_catalog.get((index,h), {}):
+                        continue  # A pool is executed at its own regeneration commit.
                     if key(t) in (dead_at or {}):
                         inactive[h][ident] = dead_method(t, dead_at[key(t)])
                     else:
@@ -258,11 +255,16 @@ def survive(b, plan, pools, step):
             if triggered:
                 for g in triggered:
                     s = regenerate(current[p][g],alive[p][g],pools[(g,index)],action=policy['action'],developer=g in b.dev,seed=b.options['fill_seed'],index=index)
-                    for digest in sorted({execution_id(t) for t in s['tests']}):
-                        runs.get(index,digest)
                     current[p][g] = s; segments[p][g].append(s); alive[p][g] = {key(t) for t in s['tests']}
                     entering_at[p][index][g].update(alive[p][g])
                     _, _, stats[g] = evaluate(s,alive[p][g],[],evaluated=False)
+                # The new composition is executed at its own commit, in one batch
+                # across its sources, for the coverage of the regeneration commit.
+                digests = sorted({execution_id(t) for g in triggered for t in current[p][g]['tests']})
+                entering = {ident for groups in alive.values() for ids in groups.values() for ident in ids}
+                runs.run_index(index,digests,alive=entering,dead_at=dead_at)
+                for digest in digests:
+                    runs.get(index,digest)
                 # Non-triggered groups do not lose tests a second time on the regeneration row.
                 for g in b.groups:
                     stats[g]['lost'] = 0
