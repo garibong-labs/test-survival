@@ -461,3 +461,35 @@ def test_regeneration_rewrite_carries_the_window_coverage_reason(baseline,monkey
     record=read_json(path)
     assert record['coverage_status']=='missing' and record['coverage_reason']=='batch JVM failed or timed out'
     assert runs.missing[(2,key(old))]=='batch JVM failed or timed out' and (2,key(new)) not in runs.missing
+
+
+def test_developer_pool_keeps_its_temp_package(tmp_path):
+    """Scratch exclusion is a generator rule; a developer pool with a `temp` test
+    package keeps it in both trees."""
+    from test_survival.policy.execute import screening_exclusions
+    root=tmp_path/'results/policy/pools/dev-scope/2'
+    src=root/'dev/src-test-t/java'
+    for name in ('ATest','temp/TempPackageTest','temp/TempHelper'):
+        path=src/f'{name}.java'; path.parent.mkdir(parents=True,exist_ok=True); path.write_text('class X {}')
+    pool=[dict(file=str((src/'ATest.java').relative_to(tmp_path)),source_root=str(src.relative_to(tmp_path)))]
+    assert screening_exclusions(tmp_path,{('dev-scope',2):pool},{},None,{'dev-scope':'dev'})==set()
+    assert read_json(tmp_path/'results/policy/excluded-sources.json')=={'dev-scope/2':dict(kept=1,rejected=0,scratch=0)}
+    with pytest.raises(ValueError,match='methods'):
+        screening_exclusions(tmp_path,{},{'ktester':pool},tmp_path/'baseline')
+
+
+def test_remeasure_that_does_not_run_the_method_keeps_the_row_lineless(baseline,monkeypatch):
+    from test_survival.policy.execute import Runs
+    exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
+    t=dict(test_test('a'),execution_hash='shared');runs.register([t]);runs.ready=True
+    path=runs.path(2,'shared')
+    write_json(path,dict(index=2,sha=b.by_index[2]['sha'],status='evaluated',coverage_version=3,coverage_status='missing',
+                         coverage_reason='batch JVM failed or timed out',methods=[dict(t,state='pass',message='',flaky=False)]))
+    write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    monkeypatch.setattr(runs.adapter,'worker',lambda job: dict(coverage_reason='',methods=[dict(m,state='compile-fail',message='javac',lines=[]) for m in job['methods']]))
+    runs.run_index(2,{'shared'},alive={key(t)},dead_at={})
+    record=read_json(path); row=record['methods'][0]
+    assert row['state']=='pass' and 'lines' not in row and row['remeasured_state']=='compile-fail'
+    assert record['coverage_status']=='missing' and record['coverage_reason'].startswith('remeasure did not execute the method')
+    assert not reusable_run(record,required_methods={'A#a'})  # measured again by the next run
