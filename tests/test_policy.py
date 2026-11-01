@@ -215,7 +215,9 @@ def test_shared_file_run_is_executed_once_and_skip_has_evidence(baseline,monkeyp
         calls.append(job)
         return dict(methods=[dict(t,state='pass',lines=[]) for t in job['methods']],files=[])
     monkeypatch.setattr(runs.adapter,'worker',execute)
+    runs.run_index(1,{'one-physical-source'})
     first=runs.get(1,'one-physical-source')
+    runs.run_index(1,{'one-physical-source'})  # a complete record is not measured again
     second=runs.get(1,'one-physical-source')
     assert first==second and len(calls)==1
     b.skipped[3]='untouched'
@@ -243,19 +245,30 @@ def test_changed_line_coverage_uses_union_and_preserves_empty_denominators(basel
     assert read_json(exp/'results/policy/half-fill/coverage-total.json')['groups']['dev-scope']==1
 
 
-def test_pool_and_baseline_records_import_without_java_execution(baseline,monkeypatch):
+def test_pool_and_baseline_members_are_executed_with_their_lines(baseline,monkeypatch):
+    """A method a policy carries over from the baseline, and a pool member at its
+    own regeneration commit, are executed: baseline raw records and pool
+    screening have no per-test lines, which changed-line coverage needs."""
     from test_survival.policy.execute import Runs,baseline_tests
     exp,config,_=baseline
     b=Baseline(exp,config); runs=Runs(b,Steps(b,build_plan(b)))
-    frozen=baseline_tests(b)
-    runs.baseline_catalog=frozen
-    tests=frozen['dev-scope'];runs.register(tests)
-    monkeypatch.setattr(runs,'initialize',lambda:pytest.fail('Imported records must not launch Java'))
-    imported=runs.get(1,execution_id(tests[0]))
-    assert imported['methods'][0]['state']=='pass' and imported['imported']
+    tests=baseline_tests(b)['dev-scope'];runs.register(tests)
+    jobs=[]; runs.ready=True
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    def worker(job):
+        jobs.append(job)
+        return dict(methods=[dict(m,state='pass',lines=[['src/main/java/A.java',1]]) for m in job['methods']])
+    monkeypatch.setattr(runs.adapter,'worker',worker)
+    with pytest.raises(ValueError, match='Missing policy run record'):
+        runs.get(1,execution_id(tests[0]))  # reading never executes
+    runs.run_index(1,{execution_id(tests[0])},alive={key(tests[0])},dead_at={})
+    carried=runs.get(1,execution_id(tests[0]))
+    assert carried['methods'][0]['lines']==[['src/main/java/A.java',1]]
     new=test_test('new')
-    runs.register([new]); runs.pool_catalog[2,new['file_hash']]={'A#new':dict(new,state='pass')}
-    assert runs.get(2,new['file_hash'])['methods'][0]['state']=='pass'
+    runs.register([new])
+    runs.run_index(2,{new['file_hash']},alive={key(new)},dead_at={})  # a pool member selected at its own commit
+    assert runs.get(2,new['file_hash'])['methods'][0]['lines']==[['src/main/java/A.java',1]]
+    assert [(j['index'],[m['id'] for m in j['methods']]) for j in jobs]==[(1,[tests[0]['id']]),(2,['new'])]
 
 
 def test_policy_runner_mounts_baseline_read_only(baseline):
@@ -335,9 +348,13 @@ def test_execution_identity_retains_snapshot_dependencies(baseline, tmp_path, mo
     assert original['file_hash'] == regenerated['file_hash']
     assert key(original) != key(regenerated)
     runs = Runs(b,Steps(b,build_plan(b)))
-    runs.register([original,regenerated]);runs.baseline_catalog={'dev-scope':[original]}
-    runs.pool_catalog[2,execution_id(regenerated)]={'ATest#works':dict(regenerated,state='pass')}
-    monkeypatch.setattr(runs,'initialize',lambda:pytest.fail('Both snapshot observations should be imported'))
+    runs.register([original,regenerated])
+    runs.ready=True
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    def worker(job):  # the two snapshots of one source are measured in one batch, separately
+        return dict(methods=[dict(m,state='fail' if m['source_root']==original['source_root'] else 'pass',lines=[]) for m in job['methods']])
+    monkeypatch.setattr(runs.adapter,'worker',worker)
+    runs.run_index(2,{execution_id(original),execution_id(regenerated)},alive={key(original),key(regenerated)},dead_at={})
     before = runs.get(2,execution_id(original)); after = runs.get(2,execution_id(regenerated))
     assert before['methods'][0]['state'] == 'fail'
     assert after['methods'][0]['state'] == 'pass'

@@ -60,15 +60,29 @@ def active_plan(b, plan):
                        for k in ('points', 'pools')}}
 
 
+MARKERS = ('dead', 'not-selected')  # record rows that stand for an absent execution
+
+
+def unmet_rows(record, required_methods):
+    """The rows of required members that do not hold a usable observation (a
+    marker, or no executed lines); None when a row is malformed."""
+    rows = []
+    for t in record.get('methods', []):
+        if 'class' not in t or 'method' not in t:
+            return None  # a malformed or legacy row is replaced, never a crash at the gate
+        if identity(t) in required_methods and (t.get('state') in MARKERS or 'lines' not in t):
+            rows.append(t)
+    return rows
+
+
 def reusable_run(record, *, required_methods=None):
-    # A record may mix imported markers and real observations. Its imported
-    # flag cannot establish whether it contains execution for current demand.
-    if required_methods is not None and any(t.get('state') in ('dead', 'not-selected') and identity(t) in required_methods
-                                            for t in record.get('methods', [])):
+    # A method the policies need must carry its executed lines: records an
+    # older version imported from the baseline, pool-screening markers and
+    # chunks whose coverage JVM failed have none, and are measured again
+    # (once per run, by the measuring sites).
+    if required_methods is not None and unmet_rows(record, required_methods) != []:
         return False
-    # Imports and carry records contain no new execution to upgrade. In
-    # particular, the interrupted JSV run has only imports at its pool index.
+    # Carry records contain no execution to upgrade.
     return (record.get('coverage_version') == COVERAGE_VERSION
             or (record.get('coverage_version') == 2 and record.get('coverage_status') == 'complete')
-            or record.get('imported') is True
             or record.get('status') in ('skipped-untouched', 'build-fail'))

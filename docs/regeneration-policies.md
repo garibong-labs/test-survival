@@ -85,8 +85,23 @@ Policy survival and coverage share one execution pass. Between successive
 regeneration points, commit indices run concurrently with
 `runner.workers.survive` workers. The coordinator aggregates those measurements
 in commit order before deciding fill membership at the next transition. Each
-evaluable index submits one worker job containing all non-importable methods
-needed across policies. The worker compiles each source root (snapshot) once,
+evaluable index submits one worker job containing every method needed across
+policies on segments after the first: the alive entrants, including the methods
+a fill policy carries over from the baseline. A regeneration commit submits a
+second job after all policies have evaluated it, for the new compositions of
+every policy that regenerated there; its evidence is written beside the first
+job's (`results/policy/batches/<index>-regenerate.json`,
+`work/policy-survive/<index>-regenerate/`). A job executes only the required
+members of a source that have no usable row in a current record (a dead or
+not-selected marker, or a row without lines); the other rows are kept. Members
+that entered the regeneration commit keep the first job's rows even without
+lines, because the policies evaluated the commit from them; the next run's
+window measures those rows again. Nothing is taken over
+from baseline raw records or pool screening, because those carry pass/fail only
+and a policy table needs each surviving method's executed lines at every commit.
+The frozen snapshot a fill policy executes is subject to the same screening
+exclusions as a pool (scratch subtrees, rejected candidates), read from the
+baseline experiment's records. The worker compiles each source root (snapshot) once,
 with its own sourcepath and class output directory. Different regeneration points
 can therefore contain different versions of the same class without duplicate-class
 errors or access to another snapshot's helpers. If a root batch fails, its files
@@ -124,8 +139,12 @@ If the batch test JVM exits unsuccessfully or times out, the worker reruns that
 index through the existing per-file survival path, with both retry mechanisms
 disabled. It records survival, marks coverage missing, and continues. The
 per-policy `coverage-missing.csv` lists affected indices/groups, including failures
-at indices with no changed executable scope lines. Completed fallback records are
-reused; resuming does not repeatedly retry missing coverage.
+at indices with no changed executable scope lines. A fallback record keeps its
+survival evidence, but a method the policies still need and that has no executed
+lines is measured again by the next run (once per run, at the measuring sites;
+reads of a record never launch anything). A measurement that then succeeds
+clears the index from `coverage-missing.csv`; one that fails again is listed as
+before.
 
 Segment 1 imports baseline raw evidence. At a regeneration commit the old segment
 is evaluated first, then a second `regenerate` row opens the new segment. Reset

@@ -13,8 +13,9 @@ from test_survival.policy.baseline import Baseline
 from test_survival.policy.config import active_plan, digest_options
 from test_survival.policy.execute import Runs
 from test_survival.policy.pipeline import Steps
+from test_survival.policy.config import reusable_run
 from test_survival.policy.plan import build_plan, run as plan
-from test_survival.policy.segments import execution_id
+from test_survival.policy.segments import execution_id, key
 
 
 @pytest.mark.parametrize('jdk,major,expected', [(17,61,'0.8.12'),(25,61,'0.8.14'),(22,61,'0.8.14'),(17,69,'0.8.14')])
@@ -271,15 +272,25 @@ def test_screening_exclusions_keep_helpers_without_modifying_pool(tmp_path):
     assert summary=={'ktester/10':dict(kept=1,rejected=2,scratch=1)}
 
 
-def test_legacy_imported_run_is_reused_byte_for_byte(baseline,monkeypatch):
+def test_legacy_imported_run_is_measured_again(baseline,monkeypatch):
+    # Records the old importer copied from the baseline carry no executed lines,
+    # so they cannot feed changed-line coverage; the method is executed instead.
     exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
     t=test_test('a');runs.register([t]);path=runs.path(1,execution_id(t))
-    write_json(path,dict(imported=True,methods=[dict(t,state='pass')]))
+    write_json(path,dict(imported=True,coverage_version=3,methods=[dict(t,state='pass')]))
     state=exp/f'state/policy-run-{execution_id(t)}-1.json';write_json(state,dict(status='completed',config_hash=steps.digest))
-    before={p:p.read_bytes() for p in (path,state)}
-    monkeypatch.setattr(runs,'initialize',lambda:pytest.fail('Legacy imports must not run'))
-    assert runs.get(1,execution_id(t))['methods'][0]['state']=='pass'
-    assert before=={p:p.read_bytes() for p in before}
+    assert not reusable_run(read_json(path),required_methods={'A#a'})
+    jobs=[]
+    runs.ready=True
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    def worker(job):
+        jobs.append(job)
+        return dict(methods=[dict(m,state='pass',lines=[['src/main/java/A.java',1]]) for m in job['methods']])
+    monkeypatch.setattr(runs.adapter,'worker',worker)
+    runs.run_index(1,{execution_id(t)},alive={key(t)},dead_at={})
+    result=runs.get(1,execution_id(t))
+    assert [m['id'] for m in jobs[0]['methods']]==['a'] and result['methods'][0]['lines']==[['src/main/java/A.java',1]]
+    assert reusable_run(result,required_methods={'A#a'})
 
 
 def test_survive_batches_all_policy_methods_once_per_index_and_resumes(baseline,monkeypatch):
@@ -298,7 +309,112 @@ def test_survive_batches_all_policy_methods_once_per_index_and_resumes(baseline,
         return dict(coverage_status='complete',methods=[dict(t,state='pass',message='',lines=[]) for t in job['methods']])
     monkeypatch.setattr(execute.JavaMavenAdapter,'worker',worker)
     execute.survive(b,p,{('dev-scope',1):tests},Steps(b,p))
-    assert sorted(j['index'] for j in jobs)==[2,3]
-    assert all({t['method'] for t in j['methods']}=={'a','b'} for j in jobs)
+    # Index 1 is the regeneration commit: one batch for both policies' new
+    # compositions (the reset pool and the method the fill policy carries over);
+    # later indices batch all three. Prefetched indices run on several workers.
+    assert sorted((j['index'],sorted(t['method'] for t in j['methods'])) for j in jobs)==[(1,['a','b','works']),(2,['a','b','works']),(3,['a','b','works'])]
     execute.survive(b,p,{('dev-scope',1):tests},Steps(b,p))
-    assert len(jobs)==2
+    assert len(jobs)==3
+
+
+def test_screening_exclusions_cover_the_frozen_snapshot_a_fill_policy_executes(tmp_path):
+    """A fill policy executes the methods it carries over from the baseline, whose
+    snapshot copies every sibling of a kept test (KTester's temp/ attempts, rejected
+    candidates); those are excluded like a pool's, from the baseline's own records."""
+    from test_survival.policy.execute import screening_exclusions
+    baseline=tmp_path/'baseline'; exp=tmp_path/'policy'
+    relative='generated/ktester/round1/test_classes'
+    for n,(name,methods,compile) in enumerate([('Kept',[{'state':'pass'}],{'exit_code':0}),('Rejected',[],None)]):
+        write_json(baseline/f'generated/ktester/round1/validation/{n}.json',dict(file=f'{relative}/{name}.java',methods=methods,compile=compile))
+    snapshot=exp/'results/policy/baseline-sources'/relative
+    for name in ('Kept','Rejected','temp/Kept_0'):
+        path=snapshot/f'{name}.java'; path.parent.mkdir(parents=True,exist_ok=True); path.write_text('???;' if 'Rejected' in name else 'class X {}')
+    frozen={'ktester':[dict(file=str((snapshot/'Kept.java').relative_to(exp)),source_root=str(snapshot.relative_to(exp)))],
+            'dev-scope':[dict(file='results/policy/baseline-sources/dev/src-test-t/java/ATest.java',source_root='results/policy/baseline-sources/dev/src-test-t/java')]}
+    excluded=screening_exclusions(exp,{},frozen,baseline)
+    assert {Path(p).name for p in excluded}=={'Rejected.java','Kept_0.java'}
+    assert all(p.startswith('results/policy/baseline-sources/') for p in excluded)
+    summary=read_json(exp/'results/policy/excluded-sources.json')
+    assert summary=={'ktester/t':dict(kept=1,rejected=1,scratch=1),'dev-scope/t':dict(kept=1,rejected=0,scratch=0)}
+
+
+def test_regeneration_batch_keeps_the_rows_the_policies_evaluated_from(baseline,monkeypatch):
+    """The regeneration commit is measured twice when a source of the old composition
+    is also part of the new one. The second batch executes only members without a
+    usable row, keeps the window's rows (even without lines: the policies evaluated
+    the commit from them), and writes its own evidence files; the next run's window
+    remeasures the lineless rows."""
+    from test_survival.policy import execute
+    exp,config,_=baseline;b=Baseline(exp,config)
+    b.execution_config['runner']['workers']['survive']=1
+    b.options['set']=[dict(name='fill',trigger='threshold',action='fill')]
+    plan=dict(points=[dict(group='dev-scope',index=i,trigger='threshold') for i in (1,2)],pools=[dict(group='dev-scope',index=i) for i in (1,2)])
+    carried=dict(test_test('a'),execution_hash='shared'); dying=dict(test_test('b'),execution_hash='shared'); new=dict(test_test('n'),execution_hash='pool2')
+    monkeypatch.setattr(execute,'baseline_tests',lambda _: {'dev-scope':[]})
+    monkeypatch.setattr(b,'raw',lambda *a: {'methods':[]})
+    monkeypatch.setattr(execute.JavaMavenAdapter,'build',lambda *a: {'build':'ok'})
+    monkeypatch.setattr(execute.JavaMavenAdapter,'setup_runner',lambda *a: None)
+    jobs=[]
+    def worker(self,job):
+        jobs.append(job)
+        if job['index']==2 and job['output'].endswith('/2.json') and not any(j['index']==2 for j in jobs[:-1]):
+            # The window's coverage JVM dies at the regeneration commit, once.
+            return dict(coverage_status='missing',coverage_reason='batch JVM failed or timed out',
+                        methods=[dict(t,state='fail' if t['id']=='b' else 'pass',message='boom') for t in job['methods']])
+        # The regeneration batch would answer pass for b: the kept row must still say fail.
+        regenerate=job['output'].endswith('-regenerate.json')
+        return dict(methods=[dict(t,state='pass' if (t['id']!='b' or regenerate) else 'fail',lines=[]) for t in job['methods']])
+    monkeypatch.setattr(execute.JavaMavenAdapter,'worker',worker)
+    pools={('dev-scope',1):[carried,dying],('dev-scope',2):[new]}
+    execute.survive(b,plan,pools,Steps(b,plan))
+    record=read_json(exp/'results/policy/runs/shared/2.json')
+    assert {t['id']:(t['state'],'lines' in t) for t in record['methods']}=={'a':('pass',False),'b':('fail',False)}
+    assert [(j['index'],sorted(t['id'] for t in j['methods']),j['output'],j['work']) for j in jobs if j['index']==2]==[
+        (2,['a','b'],'results/policy/batches/2.json','work/policy-survive/2'),
+        (2,['n'],'results/policy/batches/2-regenerate.json','work/policy-survive/2-regenerate')]
+    assert read_csv(exp/'results/policy/fill/survival.csv')[-1]['dev-scope_alive']=='2'  # a and n
+    count=len(jobs)
+    execute.survive(b,plan,pools,Steps(b,plan))  # the window remeasures the lineless rows, nothing else runs
+    assert [(j['index'],sorted(t['id'] for t in j['methods'])) for j in jobs[count:]]==[(2,['a','b'])]
+    record=read_json(exp/'results/policy/runs/shared/2.json')
+    assert all('lines' in t for t in record['methods'])
+    count=len(jobs)
+    execute.survive(b,plan,pools,Steps(b,plan))
+    assert len(jobs)==count
+
+
+def test_regeneration_batch_never_replaces_a_row_another_policy_consumed(baseline,monkeypatch):
+    """Reviewer's case: policy A resets at 1 onto [a]; policy B fills at 2 onto [a, b]
+    of the same source. The window measured a at 2 (fail, with lines) and A lost it
+    there; the regeneration batch must execute b only, so a resume reproduces A's curve."""
+    from test_survival.policy import execute
+    exp,config,_=baseline;b=Baseline(exp,config)
+    b.execution_config['runner']['workers']['survive']=1
+    b.options['set']=[dict(name='A',trigger='release',action='reset'),dict(name='B',trigger='threshold',action='fill')]
+    plan=dict(points=[dict(group='dev-scope',index=1,trigger='release'),dict(group='dev-scope',index=2,trigger='threshold')],
+              pools=[dict(group='dev-scope',index=i) for i in (1,2)])
+    a=dict(test_test('a'),execution_hash='shared'); b2=dict(test_test('b'),execution_hash='shared')
+    monkeypatch.setattr(execute,'baseline_tests',lambda _: {'dev-scope':[]})
+    monkeypatch.setattr(b,'raw',lambda *x: {'methods':[]})
+    monkeypatch.setattr(execute.JavaMavenAdapter,'build',lambda *x: {'build':'ok'})
+    monkeypatch.setattr(execute.JavaMavenAdapter,'setup_runner',lambda *x: None)
+    jobs=[]
+    def worker(self,job):
+        jobs.append(job)
+        window=job['output'].endswith('/2.json')
+        return dict(methods=[dict(t,state='fail' if (t['id']=='a' and window) else 'pass',lines=[]) for t in job['methods']])
+    monkeypatch.setattr(execute.JavaMavenAdapter,'worker',worker)
+    pools={('dev-scope',1):[a],('dev-scope',2):[a,b2]}
+    execute.survive(b,plan,pools,Steps(b,plan))
+    assert [(j['index'],sorted(t['id'] for t in j['methods'])) for j in jobs if j['index']==2]==[(2,['a']),(2,['b'])]
+    assert {t['id']:t['state'] for t in read_json(exp/'results/policy/runs/shared/2.json')['methods']}=={'a':'fail','b':'pass'}
+    curve=lambda: [r['dev-scope_alive'] for r in read_csv(exp/'results/policy/A/survival.csv')]
+    first=curve(); assert first[-1]=='0'
+    count=len(jobs)
+    execute.survive(b,plan,pools,Steps(b,plan))
+    assert len(jobs)==count and curve()==first
+
+
+def test_reusable_run_replaces_malformed_rows_instead_of_crashing():
+    assert not reusable_run(dict(coverage_version=3,methods=[dict(id='x',state='pass',lines=[])]),required_methods={'A#x'})
+    assert reusable_run(dict(coverage_version=3,methods=[dict(id='x',**{'class':'A'},method='x',state='pass',lines=[])]),required_methods={'A#x'})

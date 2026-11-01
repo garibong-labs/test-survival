@@ -115,6 +115,7 @@ def test_only_failed_groups_appear_in_missing_csv(baseline, monkeypatch):
     from test_survival.policy import execute, cover
     exp, config, root = baseline
     b = Baseline(exp, config); b.groups = ['good', 'bad']; b.dev = {}
+    b.execution_config['runner']['workers']['survive'] = 1  # deaths are known before the next index is prepared
     b.options['set'] = [dict(name='reset', trigger='release', action='reset')]
     plan = dict(points=[dict(group=g, index=1, trigger='release') for g in b.groups],
                 pools=[dict(group=g, index=1) for g in b.groups])
@@ -122,16 +123,26 @@ def test_only_failed_groups_appear_in_missing_csv(baseline, monkeypatch):
     monkeypatch.setattr(b, 'raw', lambda *a: {'methods':[]})
     monkeypatch.setattr(execute.JavaMavenAdapter, 'build', lambda *a: {'build':'ok'})
     monkeypatch.setattr(execute.JavaMavenAdapter, 'setup_runner', lambda *a: None)
+    launches = []
     def worker(self, job):
         assert job['scope_classes'] == ['A']  # Read from population/scope.json.
+        launches.append(job['index'])
         return dict(coverage_status='missing', coverage_reason='batch JVM failed or timed out',
                     methods=[dict(t, state='pass', lines=[['src/main/java/A.java', 1]]) if t['id']=='good'
                              else dict(t, state='fail') for t in job['methods']])
     monkeypatch.setattr(execute.JavaMavenAdapter, 'worker', worker)
     pools = {(g,1):[test_test(g)] for g in b.groups}
     execute.survive(b, plan, pools, Steps(b, plan))
+    # One launch per index (the pool at its own regeneration commit, then 2 and 3);
+    # the policy's reads of a lineless record never relaunch it.
+    assert sorted(launches) == [1, 2, 3]
     out = exp/'results/policy/reset'
-    expected = [dict(index='2', sha=b.by_index[2]['sha'], group='bad', reason='batch JVM failed or timed out')]
+    expected = [dict(index=str(i), sha=b.by_index[i]['sha'], group='bad', reason='batch JVM failed or timed out') for i in (1,2)]
+    assert read_csv(out/'coverage-missing.csv') == expected
+    # A resume retries a method without lines once per run, not once per read;
+    # at index 3 `bad` is already dead and `good` has its lines, so nothing runs.
+    execute.survive(b, plan, pools, Steps(b, plan))
+    assert sorted(launches) == [1, 1, 2, 2, 3]
     assert read_csv(out/'coverage-missing.csv') == expected
     rows = [dict(index=i, sha=b.by_index[i]['sha'], date='date', subject='change', scope_executable=1) for i in (2,3)]
     write_csv(root/'results/changed-lines.csv', rows, list(rows[0]))
@@ -142,3 +153,36 @@ def test_only_failed_groups_appear_in_missing_csv(baseline, monkeypatch):
     rows = read_csv(out/'coverage-commits.csv')
     assert all(r['good_covered']=='1' for r in rows)
     assert [r['bad_covered'] for r in rows] == ['', '0']
+
+
+def test_transient_coverage_failure_is_cleared_after_a_successful_measurement(baseline, monkeypatch):
+    from test_survival.policy import execute, cover
+    exp, config, root = baseline
+    b = Baseline(exp, config); b.groups = ['g']; b.dev = {}
+    b.options['set'] = [dict(name='reset', trigger='release', action='reset')]
+    plan = dict(points=[dict(group='g', index=1, trigger='release')], pools=[dict(group='g', index=1)])
+    monkeypatch.setattr(execute, 'baseline_tests', lambda _: {'g':[]})
+    monkeypatch.setattr(b, 'raw', lambda *a: {'methods':[]})
+    monkeypatch.setattr(execute.JavaMavenAdapter, 'build', lambda *a: {'build':'ok'})
+    monkeypatch.setattr(execute.JavaMavenAdapter, 'setup_runner', lambda *a: None)
+    seen = []
+    def worker(self, job):
+        first = job['index'] not in seen; seen.append(job['index'])
+        if first:  # the coverage JVM dies once at every index (memory), survival kept by the fallback
+            return dict(coverage_status='missing', coverage_reason='batch JVM failed or timed out',
+                        methods=[dict(t, state='pass') for t in job['methods']])
+        return dict(coverage_status='complete', methods=[dict(t, state='pass', lines=[['src/main/java/A.java', 1]]) for t in job['methods']])
+    monkeypatch.setattr(execute.JavaMavenAdapter, 'worker', worker)
+    pools = {('g',1):[test_test('g')] }
+    execute.survive(b, plan, pools, Steps(b, plan))
+    out = exp/'results/policy/reset'
+    assert [r['index'] for r in read_csv(out/'coverage-missing.csv')] == ['1', '2', '3']
+    execute.survive(b, plan, pools, Steps(b, plan))  # the resume measures each lineless record again, successfully
+    assert read_csv(out/'coverage-missing.csv') == []
+    assert sorted(seen) == [1, 1, 2, 2, 3, 3]
+    rows = [dict(index=i, sha=b.by_index[i]['sha'], date='date', subject='change', scope_executable=1) for i in (2,3)]
+    write_csv(root/'results/changed-lines.csv', rows, list(rows[0]))
+    for i in (2,3):
+        write_json(root/f'results/changes/{i}.json', dict(post_image={'src/main/java/A.java':[1]}))
+    cover.run(b, None)
+    assert [r['g_covered'] for r in read_csv(out/'coverage-commits.csv')] == ['1', '1']
