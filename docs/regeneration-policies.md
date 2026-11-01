@@ -86,12 +86,18 @@ regeneration points, commit indices run concurrently with
 `runner.workers.survive` workers. The coordinator aggregates those measurements
 in commit order before deciding fill membership at the next transition. Each
 evaluable index submits one worker job containing every method needed across
-policies: the alive entrants of every policy, the methods a fill policy carries
-over from the baseline, and, at a regeneration commit, the new compositions of
-every policy that regenerated there (one batch after all policies have evaluated
-that commit). Nothing is taken over from baseline raw records or pool screening,
-because those carry pass/fail only and a policy table needs each surviving
-method's executed lines at every commit. The worker compiles each source root (snapshot) once,
+policies on segments after the first: the alive entrants, including the methods
+a fill policy carries over from the baseline. A regeneration commit submits a
+second job after all policies have evaluated it, for the new compositions of
+every policy that regenerated there; its evidence is written beside the first
+job's (`results/policy/batches/<index>-regenerate.json`,
+`work/policy-survive/<index>-regenerate/`), and members that entered the commit
+stay required so the first job's observations are kept. Nothing is taken over
+from baseline raw records or pool screening, because those carry pass/fail only
+and a policy table needs each surviving method's executed lines at every commit.
+The frozen snapshot a fill policy executes is subject to the same screening
+exclusions as a pool (scratch subtrees, rejected candidates), read from the
+baseline experiment's records. The worker compiles each source root (snapshot) once,
 with its own sourcepath and class output directory. Different regeneration points
 can therefore contain different versions of the same class without duplicate-class
 errors or access to another snapshot's helpers. If a root batch fails, its files

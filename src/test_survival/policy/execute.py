@@ -1,5 +1,6 @@
 """Commit execution deduplicated across policies by source hash and index."""
 from collections import defaultdict
+from pathlib import Path
 import threading
 
 from ..adapters.java_maven import JavaMavenAdapter
@@ -9,6 +10,8 @@ from ..runner.dispatch import dispatch
 from .artifacts import snapshot
 from .config import COVERAGE_VERSION, active_plan, reusable_run
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
+
+MARKERS = ('dead', 'not-selected')  # record rows that stand for an absent execution
 
 
 class Runs:
@@ -24,7 +27,6 @@ class Runs:
         self.lock = threading.Lock()
         self.needed = set()
         self.catalog = defaultdict(dict)
-        self.pool_catalog = defaultdict(dict)
         self.excluded = set()
         self.missing = {}
 
@@ -45,20 +47,23 @@ class Runs:
     def path(self, index, digest):
         return self.b.exp/f'results/policy/runs/{digest}/{index}.json'
 
-    def required(self, index, digest, alive):
-        """Members needed at this index: alive entrants, and the pool regenerated here.
+    def required(self, digest, alive):
+        """Members needed at an index: the alive entrants of the executing policies.
 
         Baseline raw records and pool screening carry pass/fail only, so a method
         a fill policy carries over, and a pool at its own regeneration commit, are
         executed like any other member: a policy table needs every surviving
         method's executed lines at every commit (changed-line coverage).
         """
-        return ({ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
-                | self.pool_catalog.get((index, digest), {}).keys())
+        return {ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
 
-    def run_index(self, index, digests, *, alive=None, dead_at=None):
+    def run_index(self, index, digests, *, alive=None, dead_at=None, label=None):
+        """Measure every required member of `digests` at `index` in one worker batch.
+
+        `label` names a second batch at the same index (the regeneration batch)
+        so its evidence does not overwrite the prefetch window's."""
         digests = sorted(digests)
-        required = {h: self.required(index, h, alive) for h in digests}
+        required = {h: self.required(h, alive) for h in digests}
         inactive = {h: {} for h in digests}
         if alive is not None:
             for h in digests:
@@ -87,11 +92,12 @@ class Runs:
             sha = self.b.by_index[index]['sha']
             if self.adapter.build(index, sha)['build'] != 'ok':
                 raise RuntimeError('Build differs from baseline at evaluable index '+str(index))
+            suffix = f'-{label}' if label else ''
             batch = self.adapter.worker(dict(action='policy-survive', index=index, sha=sha, group='policy-survival',
                                             methods=collected, scope_files=[c['file'] for c in self.b.scope['classes']],
                                             scope_classes=[c['class'] for c in self.b.scope['classes']],
                                             excluded_files=sorted(self.excluded),
-                                            output=f'results/policy/batches/{index}.json', work=f'work/policy-survive/{index}'))
+                                            output=f'results/policy/batches/{index}{suffix}.json', work=f'work/policy-survive/{index}{suffix}'))
             return batch
         for digest in digests:
             self.needed.add((digest,index))
@@ -152,8 +158,14 @@ class Runs:
                 if state.get('status') != 'completed' or not reusable_run(prior):
                     cached = False
                     continue
-                if not reusable_run(prior, required_methods=self.required(index, h, context['alive'])):
-                    if pending:
+                required = self.required(h, context['alive'])
+                if not reusable_run(prior, required_methods=required):
+                    # A dead or not-selected marker may be excused by a death an
+                    # earlier pending index has yet to report; a row that merely
+                    # lacks its lines never is, so it is measured without waiting.
+                    rows = {identity(t): t for t in prior.get('methods', []) if 'class' in t and 'method' in t}
+                    blocking = [rows[i] for i in required if i in rows and (rows[i].get('state') in MARKERS or 'lines' not in rows[i])]
+                    if pending and blocking and all(t.get('state') in MARKERS for t in blocking):
                         return None  # Earlier results may validate these omissions.
                     cached = False
             return context,job(index,context) if cached else None
@@ -180,6 +192,10 @@ class Runs:
             raise ValueError('Shared run method inventory changed; use --force')
         return result
 
+    def verify(self, index, digest):
+        """Inventory check of a record just written."""
+        self.get(index, digest)
+
     def carry(self, index, digest):
         self.needed.add((digest,index))
         path = self.path(index,digest)
@@ -202,11 +218,7 @@ def survive(b, plan, pools, step):
     pools = {k:v for k,v in pools.items() if any(p['group'] == k[0] and p['index'] == k[1] for p in plan['pools'])}
     frozen = baseline_tests(b)
     runs = Runs(b, step)
-    runs.excluded = screening_exclusions(b.exp, pools)
-
-    for (_,index), tests in pools.items():
-        for t in tests:
-            runs.pool_catalog[index,execution_id(t)][identity(t)] = dict(t,state='pass',flaky=False)
+    runs.excluded = screening_exclusions(b.exp, pools, frozen, b.path)
     for tests in [*frozen.values(), *pools.values()]:
         runs.register(tests)
     policies = {p['name']:p for p in b.options['set']}
@@ -226,15 +238,18 @@ def survive(b, plan, pools, step):
     boundaries = sorted({i for ps in points.values() for _,i in ps})
     prefetched_until = -1
     def entering():
-        return {ident for groups in alive.values() for ids in groups.values() for ident in ids}
+        # Members policy run records are read for: segment 1 is evaluated from
+        # baseline raw records and never reads them.
+        return {ident for p in policies for g,s in current[p].items() if s['segment'] > 1 for ident in alive[p][g]}
     for commit in b.curves:
         index = int(commit['index']); evaluable = index > 0 and b.evaluable(index)
         if index > prefetched_until:
             end = next((i for i in boundaries if i >= index),int(b.curves[-1]['index']))
-            digests = {execution_id(t) for gs in current.values() for s in gs.values() if s['segment'] > 1 for t in s['tests']}
+            window_digests = {execution_id(t) for gs in current.values() for s in gs.values() if s['segment'] > 1 for t in s['tests']}
             runs.prefetch([int(c['index']) for c in b.curves if index <= int(c['index']) <= end and b.evaluable(int(c['index']))],
-                          digests,alive=entering(),dead_at=dead_at)
+                          window_digests,alive=entering(),dead_at=dead_at)
             prefetched_until = end
+        before_evaluation = entering()
         regenerated = set()
         for p, policy in policies.items():
             entering_at[p][index] = {g:set(ids) for g,ids in alive[p].items()}
@@ -271,11 +286,12 @@ def survive(b, plan, pools, step):
         if regenerated:
             # Every policy has evaluated this commit, so the new compositions are
             # executed once, in one batch across policies and sources, for the
-            # coverage of the regeneration commit.
-            digests = sorted(regenerated)
-            runs.run_index(index,digests,alive=entering(),dead_at=dead_at)
-            for digest in digests:
-                runs.get(index,digest)
+            # coverage of the regeneration commit. Members that entered this
+            # commit stay required, so a source the window already measured here
+            # keeps its observations instead of receiving dead markers.
+            runs.run_index(index,sorted(regenerated),alive=before_evaluation|entering(),dead_at=dead_at,label='regenerate')
+            for digest in sorted(regenerated):
+                runs.verify(index,digest)
     baseline_alive = {g:{key(t) for t in tests} for g,tests in frozen.items()}
     baseline_at = {}
     for commit in b.curves:
@@ -311,27 +327,30 @@ def survive(b, plan, pools, step):
 GENERATOR_SCRATCH_DIRS = ('temp',)
 
 
-def screening_exclusions(exp, pools):
+def screening_exclusions(exp, pools, frozen=None, baseline=None):
     """Exclude rejected test candidates and generator scratch files from policy jobs.
 
     Successfully compiled helpers and other unscreened siblings stay available
     to javac and the helper inventory, as before. Scratch subtrees are excluded
-    because the pool snapshot copies every sibling of a kept test: without this
-    the whole-root compile fails at every index and an unparsable attempt can
-    abort the per-file fallback. Pool artifacts on disk and their stored hashes
-    are not modified; a per-pool summary goes to results/policy/excluded-sources.json.
+    because a snapshot copies every sibling of a kept test: without this the
+    whole-root compile fails at every index and an unparsable attempt can abort
+    the per-file fallback. This applies to the regeneration pools and, since a
+    fill policy executes the methods it carries over, to the frozen snapshot
+    under `results/policy/baseline-sources` as well (`<group>/t`), whose
+    screening records live in the baseline experiment. Pool artifacts on disk
+    and their stored hashes are not modified; a per-pool summary goes to
+    results/policy/excluded-sources.json.
     """
     excluded = set(); summary = {}
-    for (group, index), tests in pools.items():
-        root = exp/f'results/policy/pools/{group}/{index}'
+    def collect(label, group, records_root, snapshot_root, tests):
         kept = {(exp/t['file']).resolve() for t in tests}
         rejected = set()
-        for path in (root/'generated').glob('*/round*/validation/*.json'):
+        for path in (records_root/'generated'/group).glob('round*/validation/*.json'):
             record = read_json(path)
             candidate = record.get('file')
             helper = not record.get('methods') and (record.get('compile') or {}).get('exit_code') == 0
-            if candidate and not helper and (root/candidate).resolve() not in kept:
-                rejected.add((root/candidate).resolve())
+            if candidate and not helper and (snapshot_root/candidate).resolve() not in kept:
+                rejected.add((snapshot_root/candidate).resolve())
         scratch = set()
         for source_root in {(exp/t['source_root']).resolve() for t in tests if t.get('source_root')}:
             for name in GENERATOR_SCRATCH_DIRS:
@@ -339,6 +358,12 @@ def screening_exclusions(exp, pools):
         scratch -= kept
         for p in rejected | scratch:
             excluded.add(str(p.relative_to(exp.resolve())))
-        summary[f'{group}/{index}'] = dict(kept=len(kept), rejected=len(rejected), scratch=len(scratch))
+        summary[label] = dict(kept=len(kept), rejected=len(rejected), scratch=len(scratch))
+    for (group, index), tests in pools.items():
+        root = exp/f'results/policy/pools/{group}/{index}'
+        collect(f'{group}/{index}', group, root, root, tests)
+    for group, tests in (frozen or {}).items():
+        if tests and baseline is not None:  # developer groups have no scratch and no screening records
+            collect(f'{group}/t', group, Path(baseline), exp/'results/policy/baseline-sources', tests)
     write_json(exp/'results/policy/excluded-sources.json', summary)
     return excluded

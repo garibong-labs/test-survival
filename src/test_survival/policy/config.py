@@ -65,6 +65,8 @@ def reusable_run(record, *, required_methods=None):
     # flag cannot establish whether it contains execution for current demand.
     if required_methods is not None:
         for t in record.get('methods', []):
+            if 'class' not in t or 'method' not in t:
+                return False  # a malformed or legacy row is replaced, never a crash at the gate
             if identity(t) not in required_methods:
                 continue
             if t.get('state') in ('dead', 'not-selected'):

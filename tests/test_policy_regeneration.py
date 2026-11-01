@@ -315,3 +315,64 @@ def test_survive_batches_all_policy_methods_once_per_index_and_resumes(baseline,
     assert sorted((j['index'],sorted(t['method'] for t in j['methods'])) for j in jobs)==[(1,['a','b','works']),(2,['a','b','works']),(3,['a','b','works'])]
     execute.survive(b,p,{('dev-scope',1):tests},Steps(b,p))
     assert len(jobs)==3
+
+
+def test_screening_exclusions_cover_the_frozen_snapshot_a_fill_policy_executes(tmp_path):
+    """A fill policy executes the methods it carries over from the baseline, whose
+    snapshot copies every sibling of a kept test (KTester's temp/ attempts, rejected
+    candidates); those are excluded like a pool's, from the baseline's own records."""
+    from test_survival.policy.execute import screening_exclusions
+    baseline=tmp_path/'baseline'; exp=tmp_path/'policy'
+    relative='generated/ktester/round1/test_classes'
+    for n,(name,methods,compile) in enumerate([('Kept',[{'state':'pass'}],{'exit_code':0}),('Rejected',[],None)]):
+        write_json(baseline/f'generated/ktester/round1/validation/{n}.json',dict(file=f'{relative}/{name}.java',methods=methods,compile=compile))
+    snapshot=exp/'results/policy/baseline-sources'/relative
+    for name in ('Kept','Rejected','temp/Kept_0'):
+        path=snapshot/f'{name}.java'; path.parent.mkdir(parents=True,exist_ok=True); path.write_text('???;' if 'Rejected' in name else 'class X {}')
+    frozen={'ktester':[dict(file=str((snapshot/'Kept.java').relative_to(exp)),source_root=str(snapshot.relative_to(exp)))],
+            'dev-scope':[dict(file='results/policy/baseline-sources/dev/src-test-t/java/ATest.java',source_root='results/policy/baseline-sources/dev/src-test-t/java')]}
+    excluded=screening_exclusions(exp,{},frozen,baseline)
+    assert {Path(p).name for p in excluded}=={'Rejected.java','Kept_0.java'}
+    assert all(p.startswith('results/policy/baseline-sources/') for p in excluded)
+    summary=read_json(exp/'results/policy/excluded-sources.json')
+    assert summary=={'ktester/t':dict(kept=1,rejected=1,scratch=1),'dev-scope/t':dict(kept=1,rejected=0,scratch=0)}
+
+
+def test_regeneration_batch_keeps_the_observations_of_the_commit_it_shares(baseline,monkeypatch):
+    """The regeneration commit is measured twice when a source of the old composition
+    is also part of the new one: by the prefetch window and by the regeneration batch.
+    The second batch must keep what the first observed (a method lost at that commit
+    stays required, with its real failure) and write its own evidence files."""
+    from test_survival.policy import execute
+    exp,config,_=baseline;b=Baseline(exp,config)
+    b.execution_config['runner']['workers']['survive']=1
+    b.options['set']=[dict(name='fill',trigger='threshold',action='fill')]
+    plan=dict(points=[dict(group='dev-scope',index=i,trigger='threshold') for i in (1,2)],pools=[dict(group='dev-scope',index=i) for i in (1,2)])
+    carried=dict(test_test('a'),execution_hash='shared'); dying=dict(test_test('b'),execution_hash='shared'); new=dict(test_test('n'),execution_hash='pool2')
+    monkeypatch.setattr(execute,'baseline_tests',lambda _: {'dev-scope':[]})
+    monkeypatch.setattr(b,'raw',lambda *a: {'methods':[]})
+    monkeypatch.setattr(execute.JavaMavenAdapter,'build',lambda *a: {'build':'ok'})
+    monkeypatch.setattr(execute.JavaMavenAdapter,'setup_runner',lambda *a: None)
+    jobs=[]
+    def worker(self,job):
+        jobs.append(job)
+        if job['index']==2 and job['output'].endswith('/2.json'):  # the window's coverage JVM dies at the regeneration commit
+            return dict(coverage_status='missing',coverage_reason='batch JVM failed or timed out',
+                        methods=[dict(t,state='fail' if t['id']=='b' else 'pass',message='boom') for t in job['methods']])
+        return dict(methods=[dict(t,state='fail' if (job['index']>=2 and t['id']=='b') else 'pass',lines=[]) for t in job['methods']])
+    monkeypatch.setattr(execute.JavaMavenAdapter,'worker',worker)
+    execute.survive(b,plan,{('dev-scope',1):[carried,dying],('dev-scope',2):[new]},Steps(b,plan))
+    record=read_json(exp/'results/policy/runs/shared/2.json')
+    states={t['id']:(t['state'],'lines' in t) for t in record['methods']}
+    assert states=={'a':('pass',True),'b':('fail',True)}  # re-measured with lines, not overwritten by a dead marker
+    outputs=[(j['index'],j['output'],j['work']) for j in jobs if j['index']==2]
+    assert outputs==[(2,'results/policy/batches/2.json','work/policy-survive/2'),
+                     (2,'results/policy/batches/2-regenerate.json','work/policy-survive/2-regenerate')]
+    count=len(jobs)
+    execute.survive(b,plan,{('dev-scope',1):[carried,dying],('dev-scope',2):[new]},Steps(b,plan))
+    assert len(jobs)==count  # the resume converges: every required row has its lines
+
+
+def test_reusable_run_replaces_malformed_rows_instead_of_crashing():
+    assert not reusable_run(dict(coverage_version=3,methods=[dict(id='x',state='pass',lines=[])]),required_methods={'A#x'})
+    assert reusable_run(dict(coverage_version=3,methods=[dict(id='x',**{'class':'A'},method='x',state='pass',lines=[])]),required_methods={'A#x'})

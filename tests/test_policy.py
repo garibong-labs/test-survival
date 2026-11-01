@@ -265,8 +265,8 @@ def test_pool_and_baseline_members_are_executed_with_their_lines(baseline,monkey
     carried=runs.get(1,execution_id(tests[0]))
     assert carried['methods'][0]['lines']==[['src/main/java/A.java',1]]
     new=test_test('new')
-    runs.register([new]); runs.pool_catalog[2,new['file_hash']]={'A#new':dict(new,state='pass')}
-    runs.run_index(2,{new['file_hash']},alive=set(),dead_at={})  # entering set excludes the pool; its own commit still runs it
+    runs.register([new])
+    runs.run_index(2,{new['file_hash']},alive={key(new)},dead_at={})  # a pool member selected at its own commit
     assert runs.get(2,new['file_hash'])['methods'][0]['lines']==[['src/main/java/A.java',1]]
     assert [(j['index'],[m['id'] for m in j['methods']]) for j in jobs]==[(1,[tests[0]['id']]),(2,['new'])]
 
@@ -349,13 +349,12 @@ def test_execution_identity_retains_snapshot_dependencies(baseline, tmp_path, mo
     assert key(original) != key(regenerated)
     runs = Runs(b,Steps(b,build_plan(b)))
     runs.register([original,regenerated])
-    runs.pool_catalog[2,execution_id(regenerated)]={'ATest#works':dict(regenerated,state='pass')}
     runs.ready=True
     monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
     def worker(job):  # the two snapshots of one source are measured in one batch, separately
         return dict(methods=[dict(m,state='fail' if m['source_root']==original['source_root'] else 'pass',lines=[]) for m in job['methods']])
     monkeypatch.setattr(runs.adapter,'worker',worker)
-    runs.run_index(2,{execution_id(original),execution_id(regenerated)},alive={key(original)},dead_at={})
+    runs.run_index(2,{execution_id(original),execution_id(regenerated)},alive={key(original),key(regenerated)},dead_at={})
     before = runs.get(2,execution_id(original)); after = runs.get(2,execution_id(regenerated))
     assert before['methods'][0]['state'] == 'fail'
     assert after['methods'][0]['state'] == 'pass'

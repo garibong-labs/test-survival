@@ -115,6 +115,7 @@ def test_only_failed_groups_appear_in_missing_csv(baseline, monkeypatch):
     from test_survival.policy import execute, cover
     exp, config, root = baseline
     b = Baseline(exp, config); b.groups = ['good', 'bad']; b.dev = {}
+    b.execution_config['runner']['workers']['survive'] = 1  # deaths are known before the next index is prepared
     b.options['set'] = [dict(name='reset', trigger='release', action='reset')]
     plan = dict(points=[dict(group=g, index=1, trigger='release') for g in b.groups],
                 pools=[dict(group=g, index=1) for g in b.groups])
