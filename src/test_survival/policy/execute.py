@@ -8,10 +8,8 @@ from ..io import read_json, write_json, write_csv
 from ..rules.survival import FAILURES, dead_method
 from ..runner.dispatch import dispatch
 from .artifacts import snapshot
-from .config import COVERAGE_VERSION, active_plan, reusable_run
+from .config import COVERAGE_VERSION, MARKERS, active_plan, reusable_run, unmet_rows
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
-
-MARKERS = ('dead', 'not-selected')  # record rows that stand for an absent execution
 
 
 class Runs:
@@ -57,11 +55,17 @@ class Runs:
         """
         return {ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
 
-    def run_index(self, index, digests, *, alive=None, dead_at=None, label=None):
-        """Measure every required member of `digests` at `index` in one worker batch.
+    def run_index(self, index, digests, *, alive=None, dead_at=None, label=None, evaluated=frozenset()):
+        """Measure the required members of `digests` at `index` that have no usable
+        row yet, in one worker batch; the other rows of each record are kept
+        when the record itself is current.
 
-        `label` names a second batch at the same index (the regeneration batch)
-        so its evidence does not overwrite the prefetch window's."""
+        A usable row is a real observation (not a dead or not-selected marker)
+        with its executed lines. A row without lines is measured again (once per
+        run), except for members in `evaluated`: the regeneration batch passes
+        the members that entered the commit, because the policies have already
+        evaluated it from the rows the window measured. `label` names that
+        second batch so its evidence does not overwrite the window's."""
         digests = sorted(digests)
         required = {h: self.required(h, alive) for h in digests}
         inactive = {h: {} for h in digests}
@@ -76,13 +80,23 @@ class Runs:
                         # A fill policy can select only part of a pool/file.
                         # Keep its full inventory without executing unused tests.
                         inactive[h][ident] = dict(t, state='not-selected', message='not executed; outside active segments', flaky=False, lines=[])
+        kept = {h: {} for h in digests}
         collected = []
         for h in digests:
             prior = read_json(self.path(index,h), {})
             state = read_json(self.b.exp/f'state/policy-run-{h}-{index}.json', {})
             if state.get('status') == 'completed' and reusable_run(prior, required_methods=required[h]):
                 continue
-            collected.extend(t for ident,t in self.catalog[h].items() if ident not in inactive[h])
+            current = state.get('status') == 'completed' and reusable_run(prior)  # an old-format record is replaced whole
+            rows = {identity(t): t for t in prior.get('methods', []) if 'class' in t and 'method' in t} if current else {}
+            for ident, t in self.catalog[h].items():
+                if ident in inactive[h]:
+                    continue
+                row = rows.get(ident)
+                if row is not None and row.get('state') not in MARKERS and ('lines' in row or key(t) in evaluated):
+                    kept[h][ident] = row
+                else:
+                    collected.append(t)
         batch = None
         def measure():
             nonlocal batch
@@ -104,7 +118,7 @@ class Runs:
             methods = list(self.catalog[digest].values())
             path = self.path(index,digest)
             def execute():
-                observations = dict(inactive[digest])
+                observations = {**inactive[digest], **kept[digest]}
                 missing = set(self.catalog[digest]) - observations.keys()
                 raw = measure() if missing else {}
                 observations.update({identity(t):t for t in raw.get('methods', []) if execution_id(t) == digest and identity(t) in missing})
@@ -158,14 +172,12 @@ class Runs:
                 if state.get('status') != 'completed' or not reusable_run(prior):
                     cached = False
                     continue
-                required = self.required(h, context['alive'])
-                if not reusable_run(prior, required_methods=required):
+                blocking = unmet_rows(prior, self.required(h, context['alive']))
+                if blocking is None or blocking:
                     # A dead or not-selected marker may be excused by a death an
-                    # earlier pending index has yet to report; a row that merely
-                    # lacks its lines never is, so it is measured without waiting.
-                    rows = {identity(t): t for t in prior.get('methods', []) if 'class' in t and 'method' in t}
-                    blocking = [rows[i] for i in required if i in rows and (rows[i].get('state') in MARKERS or 'lines' not in rows[i])]
-                    if pending and blocking and all(t.get('state') in MARKERS for t in blocking):
+                    # earlier pending index has yet to report; rows that merely
+                    # lack their lines never are, so they are measured without waiting.
+                    if pending and blocking and any(t.get('state') in MARKERS for t in blocking):
                         return None  # Earlier results may validate these omissions.
                     cached = False
             return context,job(index,context) if cached else None
@@ -218,7 +230,8 @@ def survive(b, plan, pools, step):
     pools = {k:v for k,v in pools.items() if any(p['group'] == k[0] and p['index'] == k[1] for p in plan['pools'])}
     frozen = baseline_tests(b)
     runs = Runs(b, step)
-    runs.excluded = screening_exclusions(b.exp, pools, frozen, b.path)
+    generators = {g['name']:g['method'] for g in b.config['generators']}
+    runs.excluded = screening_exclusions(b.exp, pools, {g:tests for g,tests in frozen.items() if generators.get(g,'dev') != 'dev'}, b.path)
     for tests in [*frozen.values(), *pools.values()]:
         runs.register(tests)
     policies = {p['name']:p for p in b.options['set']}
@@ -287,9 +300,10 @@ def survive(b, plan, pools, step):
             # Every policy has evaluated this commit, so the new compositions are
             # executed once, in one batch across policies and sources, for the
             # coverage of the regeneration commit. Members that entered this
-            # commit stay required, so a source the window already measured here
-            # keeps its observations instead of receiving dead markers.
-            runs.run_index(index,sorted(regenerated),alive=before_evaluation|entering(),dead_at=dead_at,label='regenerate')
+            # commit stay required and keep the rows the window measured here,
+            # even without lines (the policies have evaluated this commit from
+            # them); only members without a usable row are executed.
+            runs.run_index(index,sorted(regenerated),alive=before_evaluation|entering(),dead_at=dead_at,label='regenerate',evaluated=before_evaluation)
             for digest in sorted(regenerated):
                 runs.verify(index,digest)
     baseline_alive = {g:{key(t) for t in tests} for g,tests in frozen.items()}
@@ -362,8 +376,8 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None):
     for (group, index), tests in pools.items():
         root = exp/f'results/policy/pools/{group}/{index}'
         collect(f'{group}/{index}', group, root, root, tests)
-    for group, tests in (frozen or {}).items():
-        if tests and baseline is not None:  # developer groups have no scratch and no screening records
+    for group, tests in (frozen or {}).items():  # generator groups only: a developer tree may have a `temp` package
+        if tests and baseline is not None:
             collect(f'{group}/t', group, Path(baseline), exp/'results/policy/baseline-sources', tests)
     write_json(exp/'results/policy/excluded-sources.json', summary)
     return excluded

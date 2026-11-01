@@ -240,7 +240,8 @@ def test_policy_remeasures_revived_baseline_dead_method(baseline, monkeypatch, a
                         methods=[dead_method(t,1)]+([dict(extra,state='pass',lines=[])] if cached_marker=='mixed' else [])))
         write_json(exp/'state/policy-run-same-source-3.json',dict(status='completed',config_hash=step.digest))
     execute.survive(b,plan,{('dev-scope',2):pool},step)
-    assert sorted((job['index'],[m['id'] for m in job['methods']]) for job in jobs)==[(i,[m['id'] for m in pool]) for i in (2,3)]
+    # At index 3 a cached usable row (`extra`, mixed case) is kept; only the dead marker is remeasured.
+    assert sorted((job['index'],[m['id'] for m in job['methods']]) for job in jobs)==[(2,[m['id'] for m in pool]),(3,['shared'] if cached_marker=='mixed' else [m['id'] for m in pool])]
     assert read_csv(exp/'results/policy/revive/survival.csv')[-1]['dev-scope_alive']==str(len(pool))
     result=read_json(exp/'results/policy/runs/same-source/3.json')
     assert result['methods'][0]['state']=='pass'
@@ -274,7 +275,8 @@ def test_policy_cache_markers_follow_current_demand(baseline, monkeypatch, impor
     run({'alive'})
     assert not jobs and before=={p:p.read_bytes() for p in before}
     result=run({'alive',revived})
-    assert len(jobs)==1 and {t['id'] for t in jobs[0]['methods']}=={'alive',revived}
+    # Only the revived member is executed; the cached usable row of `alive` is kept.
+    assert len(jobs)==1 and {t['id'] for t in jobs[0]['methods']}=={revived}
     assert {t['id'] for t in result['methods'] if t['state']=='pass'}=={'alive',revived}
     remaining='unused' if revived=='died' else 'died'
     assert next(t for t in result['methods'] if t['id']==remaining)['state']==('not-selected' if remaining=='unused' else 'dead')

@@ -91,8 +91,12 @@ a fill policy carries over from the baseline. A regeneration commit submits a
 second job after all policies have evaluated it, for the new compositions of
 every policy that regenerated there; its evidence is written beside the first
 job's (`results/policy/batches/<index>-regenerate.json`,
-`work/policy-survive/<index>-regenerate/`), and members that entered the commit
-stay required so the first job's observations are kept. Nothing is taken over
+`work/policy-survive/<index>-regenerate/`). A job executes only the required
+members of a source that have no usable row in a current record (a dead or
+not-selected marker, or a row without lines); the other rows are kept. Members
+that entered the regeneration commit keep the first job's rows even without
+lines, because the policies evaluated the commit from them; the next run's
+window measures those rows again. Nothing is taken over
 from baseline raw records or pool screening, because those carry pass/fail only
 and a policy table needs each surviving method's executed lines at every commit.
 The frozen snapshot a fill policy executes is subject to the same screening
