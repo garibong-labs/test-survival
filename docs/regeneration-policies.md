@@ -140,11 +140,18 @@ index through the existing per-file survival path, with both retry mechanisms
 disabled. It records survival, marks coverage missing, and continues. The
 per-policy `coverage-missing.csv` lists affected indices/groups, including failures
 at indices with no changed executable scope lines. A fallback record keeps its
-survival evidence, but a method the policies still need and that has no executed
+survival verdicts: a method the policies still need and that has no executed
 lines is measured again by the next run (once per run, at the measuring sites;
-reads of a record never launch anything). A measurement that then succeeds
-clears the index from `coverage-missing.csv`; one that fails again is listed as
-before.
+reads of a record never launch anything), and that measurement refreshes the
+row's lines only, never its state, so survival curves are reproducible across
+resumes. A measurement that then succeeds clears the index from
+`coverage-missing.csv`; one that fails again is listed as before. A remeasure
+that does not run the method (compile failure, absent) leaves the row lineless,
+with the outcome in `remeasured_state`, so the index stays listed and is
+measured again. Inside a prefetch window an index waits for the pending earlier
+indices only when a required row is a dead or not-selected marker (a death
+reported there may excuse it); rows that merely lack lines are measured at once,
+so a run of JVM failures is re-measured in parallel.
 
 Segment 1 imports baseline raw evidence. At a regeneration commit the old segment
 is evaluated first, then a second `regenerate` row opens the new segment. Reset
