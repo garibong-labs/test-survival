@@ -80,7 +80,7 @@ class Runs:
                         # A fill policy can select only part of a pool/file.
                         # Keep its full inventory without executing unused tests.
                         inactive[h][ident] = dict(t, state='not-selected', message='not executed; outside active segments', flaky=False, lines=[])
-        kept = {h: {} for h in digests}
+        kept = {h: {} for h in digests}; verdicts = {h: {} for h in digests}; reasons = {}
         collected = []
         for h in digests:
             prior = read_json(self.path(index,h), {})
@@ -96,7 +96,14 @@ class Runs:
                 if row is not None and row.get('state') not in MARKERS and ('lines' in row or key(t) in evaluated):
                     kept[h][ident] = row
                 else:
+                    if row is not None and row.get('state') not in MARKERS:
+                        # The per-file fallback kept this survival verdict when the
+                        # coverage JVM died; a run may already have evaluated from it.
+                        # Measuring again refreshes the lines, never the verdict.
+                        verdicts[h][ident] = {k: row[k] for k in ('state', 'message', 'flaky') if k in row}
                     collected.append(t)
+            if any('lines' not in row for row in kept[h].values()):
+                reasons[h] = prior.get('coverage_reason', '')
         batch = None
         def measure():
             nonlocal batch
@@ -110,7 +117,7 @@ class Runs:
             batch = self.adapter.worker(dict(action='policy-survive', index=index, sha=sha, group='policy-survival',
                                             methods=collected, scope_files=[c['file'] for c in self.b.scope['classes']],
                                             scope_classes=[c['class'] for c in self.b.scope['classes']],
-                                            excluded_files=sorted(self.excluded),
+                                            excluded_files=sorted(self.excluded_for(collected)),
                                             output=f'results/policy/batches/{index}{suffix}.json', work=f'work/policy-survive/{index}{suffix}'))
             return batch
         for digest in digests:
@@ -121,7 +128,7 @@ class Runs:
                 observations = {**inactive[digest], **kept[digest]}
                 missing = set(self.catalog[digest]) - observations.keys()
                 raw = measure() if missing else {}
-                observations.update({identity(t):t for t in raw.get('methods', []) if execution_id(t) == digest and identity(t) in missing})
+                observations.update({identity(t):{**t, **verdicts[digest].get(identity(t), {})} for t in raw.get('methods', []) if execution_id(t) == digest and identity(t) in missing})
                 if set(observations) < set(self.catalog[digest]):
                     raise ValueError('Incomplete policy batch inventory')
                 observed = [observations[identity(t)] for t in methods]
@@ -132,10 +139,15 @@ class Runs:
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
                                       coverage_version=COVERAGE_VERSION,
                                       coverage_status='complete' if complete else 'missing',
-                                      coverage_reason='' if complete else raw.get('coverage_reason', ''),
+                                      coverage_reason='' if complete else (raw.get('coverage_reason') or reasons.get(digest, '')),
                                       methods=observed))
             self.step(f'run-{digest}-{index}', execute, outputs=[path], required_methods=required[digest])
             self.track_missing(index, digest, read_json(path))
+
+    def excluded_for(self, methods):
+        """The exclusions that lie under the source roots of a batch."""
+        roots = tuple(sorted({t['source_root'].rstrip('/')+'/' for t in methods if t.get('source_root')}))
+        return {p for p in self.excluded if p.startswith(roots)} if roots else set()
 
     def track_missing(self, index, digest, saved):
         """Keep `missing` in step with the record on disk: a chunk whose coverage
@@ -146,7 +158,7 @@ class Runs:
             if ref is None:
                 continue
             k = (index, key(ref))
-            if 'lines' in t:
+            if t.get('state') not in MARKERS and 'lines' in t:
                 self.missing.pop(k, None)
             elif reason == 'batch JVM failed or timed out':
                 self.missing[k] = reason
@@ -174,10 +186,9 @@ class Runs:
                     continue
                 blocking = unmet_rows(prior, self.required(h, context['alive']))
                 if blocking is None or blocking:
-                    # A dead or not-selected marker may be excused by a death an
-                    # earlier pending index has yet to report; rows that merely
-                    # lack their lines never are, so they are measured without waiting.
-                    if pending and blocking and any(t.get('state') in MARKERS for t in blocking):
+                    # A death an earlier pending index has yet to report may excuse
+                    # the row (a marker then, instead of an execution), so wait.
+                    if pending and blocking:
                         return None  # Earlier results may validate these omissions.
                     cached = False
             return context,job(index,context) if cached else None
@@ -204,10 +215,6 @@ class Runs:
             raise ValueError('Shared run method inventory changed; use --force')
         return result
 
-    def verify(self, index, digest):
-        """Inventory check of a record just written."""
-        self.get(index, digest)
-
     def carry(self, index, digest):
         self.needed.add((digest,index))
         path = self.path(index,digest)
@@ -216,13 +223,16 @@ class Runs:
                   status=status, coverage_version=COVERAGE_VERSION, coverage_status='not-evaluated', methods=[])), outputs=[path])
 
 
-def baseline_tests(b):
-    groups = {}
+def generator_methods(b):
+    """Group name -> generation method; developer groups are 'dev'."""
     generators = {g['name']:g['method'] for g in b.config['generators']}
-    for g in b.groups:
-        groups[g] = snapshot(b.path, b.exp, b.frozen[g], group=g, method=generators.get(g,'dev'),
-                             scope=b.scope['classes'], prefix='results/policy/baseline-sources')
-    return groups
+    return {g: generators.get(g, 'dev') for g in b.groups}
+
+
+def baseline_tests(b):
+    methods = generator_methods(b)
+    return {g: snapshot(b.path, b.exp, b.frozen[g], group=g, method=methods[g],
+                        scope=b.scope['classes'], prefix='results/policy/baseline-sources') for g in b.groups}
 
 
 def survive(b, plan, pools, step):
@@ -230,8 +240,7 @@ def survive(b, plan, pools, step):
     pools = {k:v for k,v in pools.items() if any(p['group'] == k[0] and p['index'] == k[1] for p in plan['pools'])}
     frozen = baseline_tests(b)
     runs = Runs(b, step)
-    generators = {g['name']:g['method'] for g in b.config['generators']}
-    runs.excluded = screening_exclusions(b.exp, pools, {g:tests for g,tests in frozen.items() if generators.get(g,'dev') != 'dev'}, b.path)
+    runs.excluded = screening_exclusions(b.exp, pools, frozen, b.path, generator_methods(b))
     for tests in [*frozen.values(), *pools.values()]:
         runs.register(tests)
     policies = {p['name']:p for p in b.options['set']}
@@ -305,7 +314,7 @@ def survive(b, plan, pools, step):
             # them); only members without a usable row are executed.
             runs.run_index(index,sorted(regenerated),alive=before_evaluation|entering(),dead_at=dead_at,label='regenerate',evaluated=before_evaluation)
             for digest in sorted(regenerated):
-                runs.verify(index,digest)
+                runs.get(index,digest)  # inventory check of the record just written
     baseline_alive = {g:{key(t) for t in tests} for g,tests in frozen.items()}
     baseline_at = {}
     for commit in b.curves:
@@ -341,7 +350,7 @@ def survive(b, plan, pools, step):
 GENERATOR_SCRATCH_DIRS = ('temp',)
 
 
-def screening_exclusions(exp, pools, frozen=None, baseline=None):
+def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
     """Exclude rejected test candidates and generator scratch files from policy jobs.
 
     Successfully compiled helpers and other unscreened siblings stay available
@@ -376,8 +385,9 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None):
     for (group, index), tests in pools.items():
         root = exp/f'results/policy/pools/{group}/{index}'
         collect(f'{group}/{index}', group, root, root, tests)
-    for group, tests in (frozen or {}).items():  # generator groups only: a developer tree may have a `temp` package
-        if tests and baseline is not None:
+    for group, tests in (frozen or {}).items():
+        # Generator groups only: a developer tree may legitimately have a `temp` package.
+        if tests and baseline is not None and (methods or {}).get(group, 'dev') != 'dev':
             collect(f'{group}/t', group, Path(baseline), exp/'results/policy/baseline-sources', tests)
     write_json(exp/'results/policy/excluded-sources.json', summary)
     return excluded

@@ -29,7 +29,9 @@ class Steps:
         prior = read_json(path, {})
         if prior and prior.get('config_hash') != self.digest:
             raise ConfigError('Policy inputs changed; use --force to rebuild policy evidence')
-        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True))
+        # survive=2: carried and pool members are executed for their lines; records
+        # with lines stay reusable, so bumping this only re-runs the step itself.
+        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=2)
         fresh = True
         if name.startswith('run-'):
             fresh = all(reusable_run(read_json(p, {}), required_methods=required_methods) for p in outputs)
