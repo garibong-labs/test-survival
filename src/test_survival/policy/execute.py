@@ -12,6 +12,10 @@ from .segments import execution_id, key, identity, segment, regenerate, assemble
 
 
 class Runs:
+    """Per-index execution of every method the policies need, deduplicated by
+    source digest. Records are written by the measuring sites (prefetch windows
+    and regeneration batches); `get` only reads them."""
+
     def __init__(self, baseline, step):
         self.b = baseline
         self.step = step
@@ -20,11 +24,9 @@ class Runs:
         self.lock = threading.Lock()
         self.needed = set()
         self.catalog = defaultdict(dict)
-        self.baseline_catalog = {}
         self.pool_catalog = defaultdict(dict)
         self.excluded = set()
         self.missing = {}
-        self.entry_context = {}
 
     def initialize(self):
         with self.lock:
@@ -43,46 +45,39 @@ class Runs:
     def path(self, index, digest):
         return self.b.exp/f'results/policy/runs/{digest}/{index}.json'
 
-    def imports(self, index, digest):
-        """Observations a policy may take over without executing.
+    def required(self, index, digest, alive):
+        """Members needed at this index: alive entrants, and the pool regenerated here.
 
-        Nothing qualifies any more: baseline raw records and pool screening
-        carry pass/fail only, and a policy table needs each surviving method's
-        executed lines at every commit (changed-line coverage). Methods a fill
-        policy carries over from the baseline, and a pool at its own
-        regeneration commit, are therefore executed like any other member.
+        Baseline raw records and pool screening carry pass/fail only, so a method
+        a fill policy carries over, and a pool at its own regeneration commit, are
+        executed like any other member: a policy table needs every surviving
+        method's executed lines at every commit (changed-line coverage).
         """
-        return {}
+        return ({ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
+                | self.pool_catalog.get((index, digest), {}).keys())
 
     def run_index(self, index, digests, *, alive=None, dead_at=None):
-        if alive is not None:
-            self.entry_context[index] = dict(alive=set(alive), dead_at=dict(dead_at or {}))
         digests = sorted(digests)
-        imported = {h:self.imports(index,h) for h in digests}
-        inactive = {}
+        required = {h: self.required(index, h, alive) for h in digests}
+        inactive = {h: {} for h in digests}
         if alive is not None:
             for h in digests:
-                inactive[h] = {}
                 for ident, t in self.catalog[h].items():
-                    if key(t) in alive or ident in imported[h] or ident in self.pool_catalog.get((index,h), {}):
-                        continue  # A pool is executed at its own regeneration commit.
+                    if ident in required[h]:
+                        continue
                     if key(t) in (dead_at or {}):
                         inactive[h][ident] = dead_method(t, dead_at[key(t)])
                     else:
                         # A fill policy can select only part of a pool/file.
                         # Keep its full inventory without executing unused tests.
                         inactive[h][ident] = dict(t, state='not-selected', message='not executed; outside active segments', flaky=False, lines=[])
-        # Pools can introduce new live demand later at this same index. Other
-        # available imports do not make an inactive method required.
-        required = {h:{ident for ident,t in self.catalog[h].items() if alive is None or key(t) in alive}
-                    | self.pool_catalog.get((index,h), {}).keys() for h in digests}
         collected = []
         for h in digests:
             prior = read_json(self.path(index,h), {})
             state = read_json(self.b.exp/f'state/policy-run-{h}-{index}.json', {})
             if state.get('status') == 'completed' and reusable_run(prior, required_methods=required[h]):
                 continue
-            collected.extend(t for ident,t in self.catalog[h].items() if ident not in imported[h] and ident not in inactive.get(h, {}))
+            collected.extend(t for ident,t in self.catalog[h].items() if ident not in inactive[h])
         batch = None
         def measure():
             nonlocal batch
@@ -103,7 +98,7 @@ class Runs:
             methods = list(self.catalog[digest].values())
             path = self.path(index,digest)
             def execute():
-                observations = {**imported[digest], **inactive.get(digest, {})}
+                observations = dict(inactive[digest])
                 missing = set(self.catalog[digest]) - observations.keys()
                 raw = measure() if missing else {}
                 observations.update({identity(t):t for t in raw.get('methods', []) if execution_id(t) == digest and identity(t) in missing})
@@ -115,16 +110,26 @@ class Runs:
                             for t in observed]
                 complete = all('lines' in t for t in observed)
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
-                                      imported=not missing and not inactive.get(digest), coverage_version=COVERAGE_VERSION,
+                                      coverage_version=COVERAGE_VERSION,
                                       coverage_status='complete' if complete else 'missing',
-                                      coverage_reason='' if complete else raw.get('coverage_reason', 'imported evidence has no per-test coverage'),
+                                      coverage_reason='' if complete else raw.get('coverage_reason', ''),
                                       methods=observed))
             self.step(f'run-{digest}-{index}', execute, outputs=[path], required_methods=required[digest])
-            saved = read_json(path)
-            if saved.get('coverage_reason') == 'batch JVM failed or timed out':
-                for t in saved['methods']:
-                    if 'lines' not in t:
-                        self.missing[index, key(t)] = saved['coverage_reason']
+            self.track_missing(index, digest, read_json(path))
+
+    def track_missing(self, index, digest, saved):
+        """Keep `missing` in step with the record on disk: a chunk whose coverage
+        JVM failed is listed, and a later successful measurement clears it."""
+        reason = saved.get('coverage_reason')
+        for t in saved.get('methods', []):
+            ref = self.catalog[digest].get(identity(t))
+            if ref is None:
+                continue
+            k = (index, key(ref))
+            if 'lines' in t:
+                self.missing.pop(k, None)
+            elif reason == 'batch JVM failed or timed out':
+                self.missing[k] = reason
 
     def prefetch(self, indices, digests, *, alive, dead_at):
         """Dispatch a fixed-composition window using completed observations.
@@ -147,16 +152,14 @@ class Runs:
                 if state.get('status') != 'completed' or not reusable_run(prior):
                     cached = False
                     continue
-                required = {ident for ident,t in self.catalog[h].items() if key(t) in context['alive']}
-                required |= self.pool_catalog.get((index,h), {}).keys()
-                if not reusable_run(prior, required_methods=required):
+                if not reusable_run(prior, required_methods=self.required(index, h, context['alive'])):
                     if pending:
                         return None  # Earlier results may validate these omissions.
                     cached = False
             return context,job(index,context) if cached else None
         def completed(index, records):
-            # Record rows imported from the baseline (and dead markers) carry no
-            # file_hash; resolve each row to its catalog test by identity for the key.
+            # Rows may lack file_hash (records written before this layout);
+            # resolve each row to its catalog test by identity for the key.
             for h, record in zip(sorted(digests), records):
                 tests = self.catalog[h]
                 for t in record.get('methods', []):
@@ -169,10 +172,10 @@ class Runs:
         dispatch(indices,self.b.execution_config['runner']['workers']['survive'],prepare,job,completed)
 
     def get(self, index, digest):
-        # Re-reading a measured batch must retain its entry demand; otherwise
-        # legitimate inactive markers would look like missing observations.
-        self.run_index(index, [digest], **self.entry_context.get(index, {}))
-        result = read_json(self.path(index,digest))
+        """Read the record a measuring site wrote; never execute."""
+        result = read_json(self.path(index,digest), None)
+        if result is None:
+            raise ValueError(f'Missing policy run record at index {index} for {digest}')
         if set(self.catalog[digest]) != {identity(t) for t in result['methods']}:
             raise ValueError('Shared run method inventory changed; use --force')
         return result
@@ -199,7 +202,6 @@ def survive(b, plan, pools, step):
     pools = {k:v for k,v in pools.items() if any(p['group'] == k[0] and p['index'] == k[1] for p in plan['pools'])}
     frozen = baseline_tests(b)
     runs = Runs(b, step)
-    runs.baseline_catalog = frozen
     runs.excluded = screening_exclusions(b.exp, pools)
 
     for (_,index), tests in pools.items():
@@ -223,15 +225,17 @@ def survive(b, plan, pools, step):
     dead_at = {}
     boundaries = sorted({i for ps in points.values() for _,i in ps})
     prefetched_until = -1
+    def entering():
+        return {ident for groups in alive.values() for ids in groups.values() for ident in ids}
     for commit in b.curves:
         index = int(commit['index']); evaluable = index > 0 and b.evaluable(index)
         if index > prefetched_until:
             end = next((i for i in boundaries if i >= index),int(b.curves[-1]['index']))
             digests = {execution_id(t) for gs in current.values() for s in gs.values() if s['segment'] > 1 for t in s['tests']}
-            entering = {ident for groups in alive.values() for ids in groups.values() for ident in ids}
             runs.prefetch([int(c['index']) for c in b.curves if index <= int(c['index']) <= end and b.evaluable(int(c['index']))],
-                          digests,alive=entering,dead_at=dead_at)
+                          digests,alive=entering(),dead_at=dead_at)
             prefetched_until = end
+        regenerated = set()
         for p, policy in policies.items():
             entering_at[p][index] = {g:set(ids) for g,ids in alive[p].items()}
             stats = {}
@@ -257,19 +261,21 @@ def survive(b, plan, pools, step):
                     s = regenerate(current[p][g],alive[p][g],pools[(g,index)],action=policy['action'],developer=g in b.dev,seed=b.options['fill_seed'],index=index)
                     current[p][g] = s; segments[p][g].append(s); alive[p][g] = {key(t) for t in s['tests']}
                     entering_at[p][index][g].update(alive[p][g])
+                    regenerated.update(execution_id(t) for t in s['tests'])
                     _, _, stats[g] = evaluate(s,alive[p][g],[],evaluated=False)
-                # The new composition is executed at its own commit, in one batch
-                # across its sources, for the coverage of the regeneration commit.
-                digests = sorted({execution_id(t) for g in triggered for t in current[p][g]['tests']})
-                entering = {ident for groups in alive.values() for ids in groups.values() for ident in ids}
-                runs.run_index(index,digests,alive=entering,dead_at=dead_at)
-                for digest in digests:
-                    runs.get(index,digest)
                 # Non-triggered groups do not lose tests a second time on the regeneration row.
                 for g in b.groups:
                     stats[g]['lost'] = 0
                 row_for(commit,p,'regenerate',stats)
             alive_at[p][str(index)] = {g:[t for t in current[p][g]['tests'] if key(t) in alive[p][g]] for g in b.groups}
+        if regenerated:
+            # Every policy has evaluated this commit, so the new compositions are
+            # executed once, in one batch across policies and sources, for the
+            # coverage of the regeneration commit.
+            digests = sorted(regenerated)
+            runs.run_index(index,digests,alive=entering(),dead_at=dead_at)
+            for digest in digests:
+                runs.get(index,digest)
     baseline_alive = {g:{key(t) for t in tests} for g,tests in frozen.items()}
     baseline_at = {}
     for commit in b.curves:

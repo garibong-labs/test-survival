@@ -15,7 +15,7 @@ from test_survival.policy.execute import Runs
 from test_survival.policy.pipeline import Steps
 from test_survival.policy.config import reusable_run
 from test_survival.policy.plan import build_plan, run as plan
-from test_survival.policy.segments import execution_id
+from test_survival.policy.segments import execution_id, key
 
 
 @pytest.mark.parametrize('jdk,major,expected', [(17,61,'0.8.12'),(25,61,'0.8.14'),(22,61,'0.8.14'),(17,69,'0.8.14')])
@@ -287,9 +287,10 @@ def test_legacy_imported_run_is_measured_again(baseline,monkeypatch):
         jobs.append(job)
         return dict(methods=[dict(m,state='pass',lines=[['src/main/java/A.java',1]]) for m in job['methods']])
     monkeypatch.setattr(runs.adapter,'worker',worker)
+    runs.run_index(1,{execution_id(t)},alive={key(t)},dead_at={})
     result=runs.get(1,execution_id(t))
     assert [m['id'] for m in jobs[0]['methods']]==['a'] and result['methods'][0]['lines']==[['src/main/java/A.java',1]]
-    assert not result['imported'] and reusable_run(result,required_methods={'A#a'})
+    assert reusable_run(result,required_methods={'A#a'})
 
 
 def test_survive_batches_all_policy_methods_once_per_index_and_resumes(baseline,monkeypatch):
@@ -308,8 +309,9 @@ def test_survive_batches_all_policy_methods_once_per_index_and_resumes(baseline,
         return dict(coverage_status='complete',methods=[dict(t,state='pass',message='',lines=[]) for t in job['methods']])
     monkeypatch.setattr(execute.JavaMavenAdapter,'worker',worker)
     execute.survive(b,p,{('dev-scope',1):tests},Steps(b,p))
-    # Index 1 is the regeneration commit: the reset pool in one batch, then the
-    # baseline method the fill policy carries over; later indices batch all three.
-    assert [(j['index'],sorted(t['method'] for t in j['methods'])) for j in jobs]==[(1,['a','b']),(1,['works']),(2,['a','b','works']),(3,['a','b','works'])]
+    # Index 1 is the regeneration commit: one batch for both policies' new
+    # compositions (the reset pool and the method the fill policy carries over);
+    # later indices batch all three. Prefetched indices run on several workers.
+    assert sorted((j['index'],sorted(t['method'] for t in j['methods'])) for j in jobs)==[(1,['a','b','works']),(2,['a','b','works']),(3,['a','b','works'])]
     execute.survive(b,p,{('dev-scope',1):tests},Steps(b,p))
-    assert len(jobs)==4
+    assert len(jobs)==3

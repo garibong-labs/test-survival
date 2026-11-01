@@ -70,13 +70,12 @@ def reusable_run(record, *, required_methods=None):
             if t.get('state') in ('dead', 'not-selected'):
                 return False
             # A method the policies need must carry its executed lines: records
-            # imported from the baseline, pool-screening markers and chunks whose
-            # coverage JVM failed have none, and are measured again.
+            # an older version imported from the baseline, pool-screening markers
+            # and chunks whose coverage JVM failed have none, and are measured
+            # again (once per run, by the measuring sites).
             if 'lines' not in t:
                 return False
-    # Imports and carry records contain no new execution to upgrade. In
-    # particular, the interrupted JSV run has only imports at its pool index.
+    # Carry records contain no execution to upgrade.
     return (record.get('coverage_version') == COVERAGE_VERSION
             or (record.get('coverage_version') == 2 and record.get('coverage_status') == 'complete')
-            or record.get('imported') is True
             or record.get('status') in ('skipped-untouched', 'build-fail'))

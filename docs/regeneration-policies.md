@@ -85,8 +85,13 @@ Policy survival and coverage share one execution pass. Between successive
 regeneration points, commit indices run concurrently with
 `runner.workers.survive` workers. The coordinator aggregates those measurements
 in commit order before deciding fill membership at the next transition. Each
-evaluable index submits one worker job containing all non-importable methods
-needed across policies. The worker compiles each source root (snapshot) once,
+evaluable index submits one worker job containing every method needed across
+policies: the alive entrants of every policy, the methods a fill policy carries
+over from the baseline, and, at a regeneration commit, the new compositions of
+every policy that regenerated there (one batch after all policies have evaluated
+that commit). Nothing is taken over from baseline raw records or pool screening,
+because those carry pass/fail only and a policy table needs each surviving
+method's executed lines at every commit. The worker compiles each source root (snapshot) once,
 with its own sourcepath and class output directory. Different regeneration points
 can therefore contain different versions of the same class without duplicate-class
 errors or access to another snapshot's helpers. If a root batch fails, its files
@@ -124,8 +129,12 @@ If the batch test JVM exits unsuccessfully or times out, the worker reruns that
 index through the existing per-file survival path, with both retry mechanisms
 disabled. It records survival, marks coverage missing, and continues. The
 per-policy `coverage-missing.csv` lists affected indices/groups, including failures
-at indices with no changed executable scope lines. Completed fallback records are
-reused; resuming does not repeatedly retry missing coverage.
+at indices with no changed executable scope lines. A fallback record keeps its
+survival evidence, but a method the policies still need and that has no executed
+lines is measured again by the next run (once per run, at the measuring sites;
+reads of a record never launch anything). A measurement that then succeeds
+clears the index from `coverage-missing.csv`; one that fails again is listed as
+before.
 
 Segment 1 imports baseline raw evidence. At a regeneration commit the old segment
 is evaluated first, then a second `regenerate` row opens the new segment. Reset

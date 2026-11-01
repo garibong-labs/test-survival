@@ -186,7 +186,7 @@ def test_policy_shared_method_runs_if_any_policy_revives_it(baseline, monkeypatc
     execute.survive(b,plan,{('dev-scope',i):[t] for i in (1,2)},step)
     # Index 1 is the early pool's own regeneration commit (executed for coverage);
     # the later pool's commit, 2, keeps the cached fail, which has its lines.
-    assert [(j['index'],[m['id'] for m in j['methods']]) for j in calls]==[(1,['shared']),(3,['shared'])]
+    assert sorted((j['index'],[m['id'] for m in j['methods']]) for j in calls)==[(1,['shared']),(3,['shared'])]
     assert read_csv(exp/'results/policy/early/survival.csv')[-1]['dev-scope_alive']=='0'
     assert read_csv(exp/'results/policy/later/survival.csv')[-1]['dev-scope_alive']=='1'
 
@@ -240,10 +240,10 @@ def test_policy_remeasures_revived_baseline_dead_method(baseline, monkeypatch, a
                         methods=[dead_method(t,1)]+([dict(extra,state='pass',lines=[])] if cached_marker=='mixed' else [])))
         write_json(exp/'state/policy-run-same-source-3.json',dict(status='completed',config_hash=step.digest))
     execute.survive(b,plan,{('dev-scope',2):pool},step)
-    assert [(job['index'],[m['id'] for m in job['methods']]) for job in jobs]==[(i,[m['id'] for m in pool]) for i in (2,3)]
+    assert sorted((job['index'],[m['id'] for m in job['methods']]) for job in jobs)==[(i,[m['id'] for m in pool]) for i in (2,3)]
     assert read_csv(exp/'results/policy/revive/survival.csv')[-1]['dev-scope_alive']==str(len(pool))
     result=read_json(exp/'results/policy/runs/same-source/3.json')
-    assert not result['imported'] and result['methods'][0]['state']=='pass'
+    assert result['methods'][0]['state']=='pass'
     execute.survive(b,plan,{('dev-scope',2):pool},step)
     assert len(jobs)==2
 
@@ -272,13 +272,6 @@ def test_policy_cache_markers_follow_current_demand(baseline, monkeypatch, impor
         runs.run_index(2,{'shared'},alive={key(tests[n]) for n in alive},dead_at={key(tests['died']):1})
         return runs.get(2,'shared')
     run({'alive'})
-    assert not jobs and before=={p:p.read_bytes() for p in before}
-    # Available baseline observations for inactive methods do not constitute
-    # live policy demand, and must not invalidate legitimate cached markers.
-    runs=Runs(b,step); runs.register(tests.values())
-    monkeypatch.setattr(runs,'imports',lambda *a: {f'A#{n}':dict(t,state='pass',lines=[]) for n,t in tests.items()})
-    runs.run_index(2,{'shared'},alive={key(tests['alive'])},dead_at={key(tests['died']):1})
-    runs.get(2,'shared')
     assert not jobs and before=={p:p.read_bytes() for p in before}
     result=run({'alive',revived})
     assert len(jobs)==1 and {t['id'] for t in jobs[0]['methods']}=={'alive',revived}
@@ -357,7 +350,7 @@ def test_policy_dead_propagation_tolerates_imported_rows_without_hashes(baseline
     write_json(exp/'state/policy-run-shared-2.json', dict(status='completed', config_hash=step.digest))
     execute.survive(b,plan,{('dev-scope',1):tests},step)
     # The failure at index 2 is propagated: only b is requested at index 3 (index 1 is the pool's own commit).
-    assert [(j['index'],[t['id'] for t in j['methods']]) for j in calls]==[(1,['a','b']),(3,['b'])]
+    assert sorted((j['index'],[t['id'] for t in j['methods']]) for j in calls)==[(1,['a','b']),(3,['b'])]
     assert read_csv(exp/'results/policy/reset/survival.csv')[-1]['dev-scope_alive']=='1'
 
 
