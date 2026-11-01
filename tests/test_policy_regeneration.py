@@ -265,7 +265,7 @@ def test_screening_exclusions_keep_helpers_without_modifying_pool(tmp_path):
     source_root=str((root/'generated/ktester/round1/test_classes').relative_to(tmp_path))
     tests=[dict(file=str((root/'generated/ktester/round1/test_classes/Kept.java').relative_to(tmp_path)),source_root=source_root)]
     before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
-    excluded=screening_exclusions(tmp_path,{('ktester',10):tests})
+    excluded=screening_exclusions(tmp_path,{('ktester',10):tests},{},None,{'ktester':'ktester'})
     assert {Path(p).name for p in excluded}=={'Rejected.java','Failed.java','Kept_0.java'}
     assert before=={p:p.read_bytes() for p in before}
     summary=read_json(tmp_path/'results/policy/excluded-sources.json')
@@ -436,10 +436,12 @@ def test_remeasuring_a_lineless_row_refreshes_lines_but_keeps_the_fallback_verdi
     write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
     monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
     monkeypatch.setattr(runs.adapter,'worker',lambda job: dict(methods=[dict(m,state='pass',message='',lines=[['src/main/java/A.java',1]]) for m in job['methods']]))
+    runs.missing[(2,key(t))]='batch JVM failed or timed out'  # as survive would hold it from the previous record
     runs.run_index(2,{'shared'},alive={key(t)},dead_at={})
     row=runs.get(2,'shared')['methods'][0]
     assert (row['state'],row['message'],row['lines'])==('fail','boom',[['src/main/java/A.java',1]])
-    assert read_json(path)['coverage_status']=='complete' and (2,key(t)) not in runs.missing
+    assert row['remeasured_state']=='pass'
+    assert read_json(path)['coverage_status']=='complete' and (2,key(t)) not in runs.missing  # the entry is popped
 
 
 def test_regeneration_rewrite_carries_the_window_coverage_reason(baseline,monkeypatch):
@@ -491,5 +493,65 @@ def test_remeasure_that_does_not_run_the_method_keeps_the_row_lineless(baseline,
     runs.run_index(2,{'shared'},alive={key(t)},dead_at={})
     record=read_json(path); row=record['methods'][0]
     assert row['state']=='pass' and 'lines' not in row and row['remeasured_state']=='compile-fail'
-    assert record['coverage_status']=='missing' and record['coverage_reason'].startswith('remeasure did not execute the method')
+    assert record['coverage_status']=='missing' and record['coverage_reason'].startswith('remeasure did not execute')
+    assert runs.missing[(2,key(t))]==record['coverage_reason']  # listed by survive, under the record's reason
     assert not reusable_run(record,required_methods={'A#a'})  # measured again by the next run
+
+
+@pytest.mark.parametrize('verdict,remeasure,expect_lines,expect_reason', [
+    ('fail','compile-fail',True,''),            # dead here: settled with the compile failure's empty lines
+    ('fail','pass',True,''),                    # same outcome class is not required for a non-pass verdict
+    ('pass','pass',True,''),                    # agrees: settled
+    ('pass','fail',True,'remeasure disagreed'), # lines adopted, disagreement surfaced
+    ('pass','compile-fail',False,'remeasure did not execute'),
+])
+def test_settle_rules_for_remeasured_rows(verdict,remeasure,expect_lines,expect_reason,baseline,monkeypatch):
+    from test_survival.policy.execute import Runs
+    exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
+    t=dict(test_test('a'),execution_hash='shared');runs.register([t]);runs.ready=True
+    path=runs.path(2,'shared')
+    write_json(path,dict(index=2,sha=b.by_index[2]['sha'],status='evaluated',coverage_version=3,coverage_status='missing',
+                         coverage_reason='batch JVM failed or timed out',methods=[dict(t,state=verdict,message='v',flaky=False)]))
+    write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    monkeypatch.setattr(runs.adapter,'worker',lambda job: dict(methods=[dict(m,state=remeasure,message='r',lines=[]) for m in job['methods']]))
+    runs.run_index(2,{'shared'},alive={key(t)},dead_at={})
+    record=read_json(path); row=record['methods'][0]
+    assert row['state']==verdict and row['remeasured_state']==remeasure and ('lines' in row)==expect_lines
+    assert record['coverage_reason'].startswith(expect_reason)
+    assert reusable_run(record,required_methods={'A#a'})==expect_lines  # settled unless kept lineless
+    assert ((2,key(t)) in runs.missing)==(not expect_lines)
+
+
+def test_window_rewrite_keeps_measured_rows_of_members_outside_its_demand(baseline,monkeypatch):
+    """The regeneration batch measured the new entrants at the commit; a later
+    window rewrite of the same record (one window row lineless) keeps those rows."""
+    from test_survival.policy.execute import Runs
+    exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
+    old=dict(test_test('a'),execution_hash='shared'); new=dict(test_test('n'),execution_hash='shared');runs.register([old,new]);runs.ready=True
+    path=runs.path(2,'shared')
+    write_json(path,dict(index=2,sha=b.by_index[2]['sha'],status='evaluated',coverage_version=3,coverage_status='missing',
+                         coverage_reason='batch JVM failed or timed out',
+                         methods=[dict(old,state='pass',message='',flaky=False),dict(new,state='pass',message='',flaky=False,lines=[['src/main/java/A.java',2]])]))
+    write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    jobs=[]
+    def worker(job):
+        jobs.append(job); return dict(methods=[dict(m,state='pass',message='',lines=[['src/main/java/A.java',1]]) for m in job['methods']])
+    monkeypatch.setattr(runs.adapter,'worker',worker)
+    runs.run_index(2,{'shared'},alive={key(old)},dead_at={})  # the window needs `a` only
+    assert [m['id'] for m in jobs[0]['methods']]==['a']
+    rows={r['id']:r for r in read_json(path)['methods']}
+    assert rows['n']['state']=='pass' and rows['n']['lines']==[['src/main/java/A.java',2]]  # kept, no marker
+    assert rows['a']['lines']==[['src/main/java/A.java',1]]
+
+
+def test_excluded_for_follows_the_worker_root_rule(baseline):
+    from test_survival.policy.execute import Runs, source_root_of
+    exp,config,_=baseline;b=Baseline(exp,config);runs=Runs(b,Steps(b,build_plan(b)))
+    runs.excluded={'results/policy/pools/k/1/gen/temp/A_0.java','results/policy/baseline-sources/gen/temp/B_0.java','elsewhere/temp/C.java'}
+    with_root=dict(file='results/policy/pools/k/1/gen/A.java',source_root='results/policy/pools/k/1/gen/../gen')  # non-normalised
+    without=dict(file='results/policy/baseline-sources/gen/B.java')  # the worker falls back to the file's folder
+    assert source_root_of(without)=='results/policy/baseline-sources/gen'
+    assert runs.excluded_for([with_root,without])=={'results/policy/pools/k/1/gen/temp/A_0.java','results/policy/baseline-sources/gen/temp/B_0.java'}
+    assert runs.excluded_for([])==set()

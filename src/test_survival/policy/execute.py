@@ -55,31 +55,21 @@ class Runs:
         """
         return {ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
 
-    def run_index(self, index, digests, *, alive=None, dead_at=None, label=None, evaluated=frozenset()):
+    def run_index(self, index, digests, *, alive=None, dead_at=None, label=None, evaluated=None):
         """Measure the required members of `digests` at `index` that have no usable
         row yet, in one worker batch; the other rows of each record are kept
         when the record itself is current.
 
         A usable row is a real observation (not a dead or not-selected marker)
-        with its executed lines. A row without lines is measured again (once per
-        run), except for members in `evaluated`: the regeneration batch passes
-        the members that entered the commit, because the policies have already
-        evaluated it from the rows the window measured. `label` names that
-        second batch so its evidence does not overwrite the window's."""
+        with its executed lines. `evaluated` names the members whose prior rows
+        the policies evaluated from (None: every required member, the window's
+        case): their lineless rows keep their verdict when measured again, and
+        at the regeneration batch they are not measured at all, since that batch
+        only adds the new composition. `label` names that second batch so its
+        evidence does not overwrite the window's."""
         digests = sorted(digests)
         required = {h: self.required(h, alive) for h in digests}
-        inactive = {h: {} for h in digests}
-        if alive is not None:
-            for h in digests:
-                for ident, t in self.catalog[h].items():
-                    if ident in required[h]:
-                        continue
-                    if key(t) in (dead_at or {}):
-                        inactive[h][ident] = dead_method(t, dead_at[key(t)])
-                    else:
-                        # A fill policy can select only part of a pool/file.
-                        # Keep its full inventory without executing unused tests.
-                        inactive[h][ident] = dict(t, state='not-selected', message='not executed; outside active segments', flaky=False, lines=[])
+        consumed = {h: (required[h] if evaluated is None else {i for i, t in self.catalog[h].items() if key(t) in evaluated}) for h in digests}
         kept = {h: {} for h in digests}
         verdicts = {h: {} for h in digests}
         reasons = {}
@@ -92,15 +82,25 @@ class Runs:
             current = state.get('status') == 'completed' and reusable_run(prior)  # an old-format record is replaced whole
             rows = {identity(t): t for t in prior.get('methods', []) if 'class' in t and 'method' in t} if current else {}
             for ident, t in self.catalog[h].items():
-                if ident in inactive[h]:
-                    continue
                 row = rows.get(ident)
-                if row is not None and row.get('state') not in MARKERS and ('lines' in row or key(t) in evaluated):
+                usable = row is not None and row.get('state') not in MARKERS and 'lines' in row
+                if ident not in required[h]:
+                    # Not needed here: keep a usable row another batch measured
+                    # (the regeneration batch's new entrants), else write a marker.
+                    if usable:
+                        kept[h][ident] = row
+                    elif key(t) in (dead_at or {}):
+                        kept[h][ident] = dead_method(t, dead_at[key(t)])
+                    else:
+                        # A fill policy can select only part of a pool/file.
+                        # Keep its full inventory without executing unused tests.
+                        kept[h][ident] = dict(t, state='not-selected', message='not executed; outside active segments', flaky=False, lines=[])
+                elif usable or (evaluated is not None and ident in consumed[h] and row is not None and row.get('state') not in MARKERS):
                     kept[h][ident] = row
                 else:
-                    if row is not None and row.get('state') not in MARKERS:
+                    if row is not None and row.get('state') not in MARKERS and ident in consumed[h]:
                         # The per-file fallback kept this survival verdict when the
-                        # coverage JVM died; a run may already have evaluated from it.
+                        # coverage JVM died, and the policies evaluated from it.
                         # Measuring again refreshes the lines, never the verdict.
                         verdicts[h][ident] = {k: row[k] for k in ('state', 'message', 'flaky') if k in row}
                     collected.append(t)
@@ -127,24 +127,15 @@ class Runs:
             methods = list(self.catalog[digest].values())
             path = self.path(index,digest)
             def execute():
-                unexecuted = set()
-                observations = {**inactive[digest], **kept[digest]}
+                unsettled = []
+                disagreed = []
+                observations = dict(kept[digest])
                 missing = set(self.catalog[digest]) - observations.keys()
                 raw = measure() if missing else {}
                 for t in raw.get('methods', []):
                     if execution_id(t) != digest or identity(t) not in missing:
                         continue
-                    verdict = verdicts[digest].get(identity(t))
-                    if verdict is None:
-                        observations[identity(t)] = t
-                    elif t.get('state') in ('pass', 'fail'):
-                        # The remeasure ran the method: take its lines, keep the verdict.
-                        observations[identity(t)] = {**t, **verdict, 'remeasured_state': t['state']}
-                    else:
-                        # Not executed this time (compile failure, absent): the row stays
-                        # lineless so the index is listed as missing and measured again.
-                        observations[identity(t)] = {**{k: v for k, v in t.items() if k != 'lines'}, **verdict, 'remeasured_state': t.get('state')}
-                        unexecuted.add(t.get('state'))
+                    observations[identity(t)] = settle(t, verdicts[digest].get(identity(t)), unsettled, disagreed)
                 if set(observations) < set(self.catalog[digest]):
                     raise ValueError('Incomplete policy batch inventory')
                 observed = [observations[identity(t)] for t in methods]
@@ -152,34 +143,38 @@ class Runs:
                 observed = [{**t, 'message':t.get('message', '')[:4000], **({'lines':[line for line in t['lines'] if line[0] in scope]} if 'lines' in t else {})}
                             for t in observed]
                 complete = all('lines' in t for t in observed)
+                reason = (raw.get('coverage_reason') or reasons.get(digest, '')
+                          or (f'remeasure did not execute {len(unsettled)} passing method(s): '+', '.join(sorted(set(unsettled))) if unsettled else ''))
+                if complete and disagreed:
+                    reason = f'remeasure disagreed with the recorded verdict for {len(disagreed)} method(s)'
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
                                       coverage_version=COVERAGE_VERSION,
                                       coverage_status='complete' if complete else 'missing',
-                                      coverage_reason='' if complete else (raw.get('coverage_reason') or reasons.get(digest, '')
-                                                                           or ('remeasure did not execute the method: '+', '.join(sorted(map(str, unexecuted))) if unexecuted else '')),
+                                      coverage_reason=reason if (not complete or disagreed) else '',
                                       methods=observed))
             self.step(f'run-{digest}-{index}', execute, outputs=[path], required_methods=required[digest])
             self.track_missing(index, digest, read_json(path))
 
     def excluded_for(self, methods):
-        """The exclusions that lie under the source roots of a batch."""
-        roots = tuple(sorted({(t.get('source_root') or str(Path(t['file']).parent)).rstrip('/')+'/' for t in methods}))
-        return {p for p in self.excluded if p.startswith(roots)} if roots else set()
+        """The exclusions that lie under the source roots of a batch (the worker's
+        root rule: `source_root`, else the file's folder; compared as resolved paths)."""
+        exp = self.b.exp.resolve()
+        roots = {(exp/source_root_of(t)).resolve() for t in methods}
+        return {p for p in self.excluded if any((exp/p).resolve().is_relative_to(r) for r in roots)}
 
     def track_missing(self, index, digest, saved):
-        """Keep `missing` in step with the record on disk: a chunk whose coverage
-        JVM failed is listed, and a later successful measurement clears it."""
-        reason = saved.get('coverage_reason')
+        """Keep `missing` in step with the record on disk: a lineless observation
+        is listed with the record's reason, and a later measurement that gives it
+        lines clears it. Marker rows are not measurements in either direction."""
+        reason = saved.get('coverage_reason') or 'missing per-test coverage'
         for t in saved.get('methods', []):
             ref = self.catalog[digest].get(identity(t))
-            if ref is None:
+            if ref is None or t.get('state') in MARKERS:
                 continue
             k = (index, key(ref))
-            if t.get('state') in MARKERS:
-                continue  # a marker is not a measurement in either direction
             if 'lines' in t:
                 self.missing.pop(k, None)
-            elif reason == 'batch JVM failed or timed out':
+            else:
                 self.missing[k] = reason
 
     def prefetch(self, indices, digests, *, alive, dead_at):
@@ -242,6 +237,34 @@ class Runs:
         status = 'skipped-untouched' if index in self.b.skipped else 'build-fail'
         self.step(f'run-{digest}-{index}', lambda:write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'],
                   status=status, coverage_version=COVERAGE_VERSION, coverage_status='not-evaluated', methods=[])), outputs=[path])
+
+
+def source_root_of(test):
+    """The worker's root rule (policy_coverage.run, snapshot_compile.filtered_roots)."""
+    return test.get('source_root', str(Path(test['file']).parent))
+
+
+def settle(row, verdict, unsettled, disagreed):
+    """Merge a remeasured row with the verdict the policies evaluated from.
+
+    - no verdict: the row as measured;
+    - same state, or a non-pass verdict (the member is dead here and its lines
+      are never read): the measured row with the verdict's message, settled;
+    - pass verdict, run again with another outcome: keep the verdict and take
+      the lines, recording the disagreement;
+    - pass verdict, not executed this time (compile failure, absent): the row
+      stays lineless so the index is listed and measured again.
+    """
+    if verdict is None:
+        return row
+    state = row.get('state')
+    if state == verdict['state'] or verdict['state'] != 'pass':
+        return {**row, **verdict, 'remeasured_state': state}
+    if state in ('pass', 'fail'):
+        disagreed.append(state)
+        return {**row, **verdict, 'remeasured_state': state}
+    unsettled.append(str(state))
+    return {**{k: v for k, v in row.items() if k != 'lines'}, **verdict, 'remeasured_state': state}
 
 
 def generator_methods(b):
@@ -387,9 +410,12 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
     and their stored hashes are not modified; a per-tree summary goes to
     results/policy/excluded-sources.json.
     """
-    if frozen and methods is None:
-        raise ValueError('screening_exclusions: methods (group -> generation method) is required with frozen')
+    if (pools or frozen) and methods is None:
+        raise ValueError('screening_exclusions: methods (group -> generation method) is required')
     methods = methods or {}
+    for group in {g for g, _ in pools} | set(frozen or {}):
+        if group not in methods:
+            raise ValueError(f'screening_exclusions: no generation method for group {group}')
     excluded = set(); summary = {}
     def collect(label, group, records_root, snapshot_root, tests):
         kept = {(exp/t['file']).resolve() for t in tests}
