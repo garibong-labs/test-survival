@@ -404,8 +404,10 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
     records live in the `baseline` experiment; `methods` maps a group to its
     generation method and is required with `frozen`. Developer groups (`dev`)
     get no scratch scan in either tree: a developer test tree may have a `temp`
-    package of its own. Successfully compiled helpers and other unscreened
-    siblings stay available to javac and the helper inventory, as before.
+    package of its own. Unscreened siblings that never were candidates (support
+    classes, providers, package subdirectories) stay available to javac and the
+    helper inventory; a candidate without a kept method is excluded whether or
+    not it compiled.
     Scratch subtrees are excluded because a snapshot copies every sibling of a
     kept test: without this the whole-root compile fails at every index and an
     unparsable attempt can abort the per-file fallback. Pool artifacts on disk
@@ -425,8 +427,13 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
         for path in (records_root/'generated'/group).glob('round*/validation/*.json'):
             record = read_json(path)
             candidate = record.get('file')
-            helper = not record.get('methods') and (record.get('compile') or {}).get('exit_code') == 0
-            if candidate and not helper and (snapshot_root/candidate).resolve() not in kept:
+            # Every screening record is a generated test candidate. One without a
+            # kept method is excluded even when it compiled at generation time: a
+            # candidate whose tests the generator commented out still breaks the
+            # whole-root compile, and the selected-and-helpers retry, once the
+            # API it was written against changes (json-schema-validator commit 11
+            # lost every carried KTester method this way).
+            if candidate and (snapshot_root/candidate).resolve() not in kept:
                 rejected.add((snapshot_root/candidate).resolve())
         scratch = set()
         if methods.get(group) != 'dev':

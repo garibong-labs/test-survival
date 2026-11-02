@@ -266,10 +266,13 @@ def test_screening_exclusions_keep_helpers_without_modifying_pool(tmp_path):
     tests=[dict(file=str((root/'generated/ktester/round1/test_classes/Kept.java').relative_to(tmp_path)),source_root=source_root)]
     before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
     excluded=screening_exclusions(tmp_path,{('ktester',10):tests},{},None,{'ktester':'ktester'})
-    assert {Path(p).name for p in excluded}=={'Rejected.java','Failed.java','Kept_0.java'}
+    # 'Helper' is a candidate that compiled with no test method (KTester comments
+    # failing tests out): excluded like any rejected candidate; `util/Support.java`
+    # was never a candidate and stays.
+    assert {Path(p).name for p in excluded}=={'Rejected.java','Failed.java','Helper.java','Kept_0.java'}
     assert before=={p:p.read_bytes() for p in before}
     summary=read_json(tmp_path/'results/policy/excluded-sources.json')
-    assert summary=={'ktester/10':dict(kept=1,rejected=2,scratch=1)}
+    assert summary=={'ktester/10':dict(kept=1,rejected=3,scratch=1)}
 
 
 def test_legacy_imported_run_is_measured_again(baseline,monkeypatch):
