@@ -555,3 +555,58 @@ def test_excluded_for_follows_the_worker_root_rule(baseline):
     assert source_root_of(without)=='results/policy/baseline-sources/gen'
     assert runs.excluded_for([with_root,without])=={'results/policy/pools/k/1/gen/temp/A_0.java','results/policy/baseline-sources/gen/temp/B_0.java'}
     assert runs.excluded_for([])==set()
+
+
+def test_cover_reads_a_non_executing_remeasure_as_unavailable_not_zero(baseline,monkeypatch):
+    """A row settled by a compile-fail remeasure carries empty lines. A policy that
+    revives the member at that commit reads it: cover must report the coverage as
+    unavailable rather than zero."""
+    from test_survival.policy import cover
+    exp,config,root=baseline;b=Baseline(exp,config)
+    t=dict(test_test('a'),execution_hash='shared')
+    out=exp/'results/policy/revive'; out.mkdir(parents=True)
+    write_json(out/'alive.json',{'1':{'dev-scope':[t]}})
+    write_json(out/'segments.json',{'dev-scope':[dict(segment=1,start=0,tests=[]),dict(segment=2,start=1,tests=[t])]})
+    write_json(exp/'results/policy/runs/shared/1.json',dict(index=1,coverage_version=3,coverage_status='complete',coverage_reason='',
+               methods=[dict(t,state='fail',message='v',lines=[],remeasured_state='compile-fail')]))
+    row=dict(index=1,sha=b.by_index[1]['sha'],date='date',subject='change',scope_executable=1)
+    write_csv(root/'results/changed-lines.csv',[row],list(row))
+    write_json(root/'results/changes/1.json',dict(post_image={'src/main/java/A.java':[1]}))
+    b.options['set']=[dict(name='revive',trigger='release',action='reset')]
+    cover.run(b,None)
+    assert read_csv(out/'coverage-commits.csv')[0]['dev-scope_covered']==''
+    assert read_csv(out/'coverage-missing.csv')[0]['reason'].startswith('remeasure did not execute the method')
+
+
+def test_cover_keeps_every_survival_missing_entry(baseline):
+    """Survival may list an index under any reason, including one without changed
+    scope lines; cover keeps those entries and adds its own."""
+    from test_survival.policy import cover
+    exp,config,root=baseline;b=Baseline(exp,config)
+    out=exp/'results/policy/reset'; out.mkdir(parents=True)
+    write_json(out/'alive.json',{'1':{'dev-scope':[]},'2':{'dev-scope':[]}})
+    write_json(out/'segments.json',{'dev-scope':[dict(segment=1,start=0,tests=[])]})
+    kept=[dict(index='1',sha=b.by_index[1]['sha'],group='dev-scope',reason='remeasure did not execute 1 passing method(s): compile-fail')]
+    write_csv(out/'coverage-missing.csv',kept,['index','sha','group','reason'])
+    row=dict(index=2,sha=b.by_index[2]['sha'],date='date',subject='change',scope_executable=1)  # index 1 changes no scope line
+    write_csv(root/'results/changed-lines.csv',[row],list(row))
+    write_json(root/'results/changes/2.json',dict(post_image={'src/main/java/A.java':[1]}))
+    b.options['set']=[dict(name='reset',trigger='release',action='reset')]
+    cover.run(b,None)
+    assert read_csv(out/'coverage-missing.csv')==kept
+
+
+def test_rewrite_carries_a_kept_disagreement_into_the_reason(baseline,monkeypatch):
+    from test_survival.policy.execute import Runs
+    exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
+    a=dict(test_test('a'),execution_hash='shared'); n=dict(test_test('n'),execution_hash='shared');runs.register([a,n]);runs.ready=True
+    path=runs.path(2,'shared')
+    write_json(path,dict(index=2,sha=b.by_index[2]['sha'],status='evaluated',coverage_version=3,coverage_status='complete',
+                         coverage_reason='remeasure disagreed with the recorded verdict for 1 method(s)',
+                         methods=[dict(a,state='pass',message='v',flaky=False,lines=[],remeasured_state='fail'),dict(n,state='not-selected',message='',flaky=False,lines=[])]))
+    write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
+    monkeypatch.setattr(runs.adapter,'build',lambda *x: {'build':'ok'})
+    monkeypatch.setattr(runs.adapter,'worker',lambda job: dict(methods=[dict(m,state='pass',message='',lines=[]) for m in job['methods']]))
+    runs.run_index(2,{'shared'},alive={key(a),key(n)},dead_at={},label='regenerate',evaluated={key(a)})  # n enters; a is kept
+    record=read_json(path)
+    assert record['coverage_status']=='complete' and 'disagreed' in record['coverage_reason']

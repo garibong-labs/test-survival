@@ -128,14 +128,13 @@ class Runs:
             path = self.path(index,digest)
             def execute():
                 unsettled = []
-                disagreed = []
                 observations = dict(kept[digest])
                 missing = set(self.catalog[digest]) - observations.keys()
                 raw = measure() if missing else {}
                 for t in raw.get('methods', []):
                     if execution_id(t) != digest or identity(t) not in missing:
                         continue
-                    observations[identity(t)] = settle(t, verdicts[digest].get(identity(t)), unsettled, disagreed)
+                    observations[identity(t)] = settle(t, verdicts[digest].get(identity(t)), unsettled)
                 if set(observations) < set(self.catalog[digest]):
                     raise ValueError('Incomplete policy batch inventory')
                 observed = [observations[identity(t)] for t in methods]
@@ -143,14 +142,19 @@ class Runs:
                 observed = [{**t, 'message':t.get('message', '')[:4000], **({'lines':[line for line in t['lines'] if line[0] in scope]} if 'lines' in t else {})}
                             for t in observed]
                 complete = all('lines' in t for t in observed)
-                reason = (raw.get('coverage_reason') or reasons.get(digest, '')
-                          or (f'remeasure did not execute {len(unsettled)} passing method(s): '+', '.join(sorted(set(unsettled))) if unsettled else ''))
-                if complete and disagreed:
-                    reason = f'remeasure disagreed with the recorded verdict for {len(disagreed)} method(s)'
+                # Reasons are derived from the final rows, kept or measured, so a
+                # rewrite carries a disagreement or a non-executing remeasure over.
+                disagreed = [t for t in observed if t.get('remeasured_state') in ('pass', 'fail') and t['remeasured_state'] != t.get('state')]
+                parts = []
+                if not complete:
+                    parts.append(raw.get('coverage_reason') or reasons.get(digest, '')
+                                 or (f'remeasure did not execute {len(unsettled)} passing method(s): '+', '.join(sorted(set(unsettled))) if unsettled else 'missing per-test coverage'))
+                if disagreed:
+                    parts.append(f'remeasure disagreed with the recorded verdict for {len(disagreed)} method(s)')
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
                                       coverage_version=COVERAGE_VERSION,
                                       coverage_status='complete' if complete else 'missing',
-                                      coverage_reason=reason if (not complete or disagreed) else '',
+                                      coverage_reason='; '.join(p for p in parts if p),
                                       methods=observed))
             self.step(f'run-{digest}-{index}', execute, outputs=[path], required_methods=required[digest])
             self.track_missing(index, digest, read_json(path))
@@ -244,24 +248,22 @@ def source_root_of(test):
     return test.get('source_root', str(Path(test['file']).parent))
 
 
-def settle(row, verdict, unsettled, disagreed):
+def settle(row, verdict, unsettled):
     """Merge a remeasured row with the verdict the policies evaluated from.
 
     - no verdict: the row as measured;
-    - same state, or a non-pass verdict (the member is dead here and its lines
-      are never read): the measured row with the verdict's message, settled;
-    - pass verdict, run again with another outcome: keep the verdict and take
-      the lines, recording the disagreement;
+    - same state: the measured row (settled);
+    - a non-pass verdict, or a pass verdict run again with another outcome: keep
+      the verdict and the verdict's message, take the measured lines; the outcome
+      stays in `remeasured_state` (a disagreement, or a non-executing remeasure
+      whose empty lines `cover` must not read as zero coverage);
     - pass verdict, not executed this time (compile failure, absent): the row
       stays lineless so the index is listed and measured again.
     """
     if verdict is None:
         return row
     state = row.get('state')
-    if state == verdict['state'] or verdict['state'] != 'pass':
-        return {**row, **verdict, 'remeasured_state': state}
-    if state in ('pass', 'fail'):
-        disagreed.append(state)
+    if state == verdict['state'] or verdict['state'] != 'pass' or state in ('pass', 'fail'):
         return {**row, **verdict, 'remeasured_state': state}
     unsettled.append(str(state))
     return {**{k: v for k, v in row.items() if k != 'lines'}, **verdict, 'remeasured_state': state}
