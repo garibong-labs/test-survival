@@ -14,8 +14,11 @@ def run(b, step):
         segments = read_json(output/'segments.json')
         rows = []
         missing_path = output/'coverage-missing.csv'
-        missing = [r for r in read_csv(missing_path) if r['reason'] == 'batch JVM failed or timed out'] if missing_path.exists() else []
-        batch_missing = {(int(r['index']),r['group']) for r in missing}
+        # Survival lists every (index, group) whose rows lack lines, under the
+        # record's reason; those entries are kept, whatever the reason and whether
+        # or not the index changes scope lines, and this stage adds its own.
+        missing = list(read_csv(missing_path)) if missing_path.exists() else []
+        batch_missing = {(int(r['index']),r['group']):r['reason'] for r in missing}
         references = [g for g in b.groups if not regenerates(b,g)]
         for change_row in changes:
             index = int(change_row['index'])
@@ -39,7 +42,7 @@ def run(b, step):
                     value = change_row.get('scope_'+g+'_covered', '')
                     covered = int(value) if value != '' else ''
                 else:
-                    hits = set(); reasons = {'batch JVM failed or timed out'} if (index,g) in batch_missing else set()
+                    hits = set(); reasons = {batch_missing[index,g]} if (index,g) in batch_missing else set()
                     for t in alive[str(index)][g]:
                         digest = execution_id(t)
                         if digest not in cache:
@@ -48,6 +51,11 @@ def run(b, step):
                         found = [r for r in raw.get('methods', []) if identity(r) == identity(t)]
                         if not found or 'lines' not in found[0]:
                             reasons.add(raw.get('coverage_reason') or 'missing per-test coverage')
+                        elif found[0].get('remeasured_state') not in (None, 'pass', 'fail'):
+                            # The member ran when the policies evaluated it, but the
+                            # measurement that gave the row its (empty) lines did not
+                            # execute it: unavailable, not zero.
+                            reasons.add('remeasure did not execute the method: '+str(found[0]['remeasured_state']))
                         else:
                             hits.update((f,int(n)) for f,n in found[0]['lines'] if f in scope)
                     covered = '' if reasons else len(hits & executable)

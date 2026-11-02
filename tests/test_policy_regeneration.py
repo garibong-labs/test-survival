@@ -265,7 +265,7 @@ def test_screening_exclusions_keep_helpers_without_modifying_pool(tmp_path):
     source_root=str((root/'generated/ktester/round1/test_classes').relative_to(tmp_path))
     tests=[dict(file=str((root/'generated/ktester/round1/test_classes/Kept.java').relative_to(tmp_path)),source_root=source_root)]
     before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
-    excluded=screening_exclusions(tmp_path,{('ktester',10):tests})
+    excluded=screening_exclusions(tmp_path,{('ktester',10):tests},{},None,{'ktester':'ktester'})
     assert {Path(p).name for p in excluded}=={'Rejected.java','Failed.java','Kept_0.java'}
     assert before=={p:p.read_bytes() for p in before}
     summary=read_json(tmp_path/'results/policy/excluded-sources.json')
@@ -436,10 +436,12 @@ def test_remeasuring_a_lineless_row_refreshes_lines_but_keeps_the_fallback_verdi
     write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
     monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
     monkeypatch.setattr(runs.adapter,'worker',lambda job: dict(methods=[dict(m,state='pass',message='',lines=[['src/main/java/A.java',1]]) for m in job['methods']]))
+    runs.missing[(2,key(t))]='batch JVM failed or timed out'  # as survive would hold it from the previous record
     runs.run_index(2,{'shared'},alive={key(t)},dead_at={})
     row=runs.get(2,'shared')['methods'][0]
     assert (row['state'],row['message'],row['lines'])==('fail','boom',[['src/main/java/A.java',1]])
-    assert read_json(path)['coverage_status']=='complete' and (2,key(t)) not in runs.missing
+    assert row['remeasured_state']=='pass'
+    assert read_json(path)['coverage_status']=='complete' and (2,key(t)) not in runs.missing  # the entry is popped
 
 
 def test_regeneration_rewrite_carries_the_window_coverage_reason(baseline,monkeypatch):
@@ -491,5 +493,120 @@ def test_remeasure_that_does_not_run_the_method_keeps_the_row_lineless(baseline,
     runs.run_index(2,{'shared'},alive={key(t)},dead_at={})
     record=read_json(path); row=record['methods'][0]
     assert row['state']=='pass' and 'lines' not in row and row['remeasured_state']=='compile-fail'
-    assert record['coverage_status']=='missing' and record['coverage_reason'].startswith('remeasure did not execute the method')
+    assert record['coverage_status']=='missing' and record['coverage_reason'].startswith('remeasure did not execute')
+    assert runs.missing[(2,key(t))]==record['coverage_reason']  # listed by survive, under the record's reason
     assert not reusable_run(record,required_methods={'A#a'})  # measured again by the next run
+
+
+@pytest.mark.parametrize('verdict,remeasure,expect_lines,expect_reason', [
+    ('fail','compile-fail',True,''),            # dead here: settled with the compile failure's empty lines
+    ('fail','pass',True,''),                    # same outcome class is not required for a non-pass verdict
+    ('pass','pass',True,''),                    # agrees: settled
+    ('pass','fail',True,'remeasure disagreed'), # lines adopted, disagreement surfaced
+    ('pass','compile-fail',False,'remeasure did not execute'),
+])
+def test_settle_rules_for_remeasured_rows(verdict,remeasure,expect_lines,expect_reason,baseline,monkeypatch):
+    from test_survival.policy.execute import Runs
+    exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
+    t=dict(test_test('a'),execution_hash='shared');runs.register([t]);runs.ready=True
+    path=runs.path(2,'shared')
+    write_json(path,dict(index=2,sha=b.by_index[2]['sha'],status='evaluated',coverage_version=3,coverage_status='missing',
+                         coverage_reason='batch JVM failed or timed out',methods=[dict(t,state=verdict,message='v',flaky=False)]))
+    write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    monkeypatch.setattr(runs.adapter,'worker',lambda job: dict(methods=[dict(m,state=remeasure,message='r',lines=[]) for m in job['methods']]))
+    runs.run_index(2,{'shared'},alive={key(t)},dead_at={})
+    record=read_json(path); row=record['methods'][0]
+    assert row['state']==verdict and row['remeasured_state']==remeasure and ('lines' in row)==expect_lines
+    assert record['coverage_reason'].startswith(expect_reason)
+    assert reusable_run(record,required_methods={'A#a'})==expect_lines  # settled unless kept lineless
+    assert ((2,key(t)) in runs.missing)==(not expect_lines)
+
+
+def test_window_rewrite_keeps_measured_rows_of_members_outside_its_demand(baseline,monkeypatch):
+    """The regeneration batch measured the new entrants at the commit; a later
+    window rewrite of the same record (one window row lineless) keeps those rows."""
+    from test_survival.policy.execute import Runs
+    exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
+    old=dict(test_test('a'),execution_hash='shared'); new=dict(test_test('n'),execution_hash='shared');runs.register([old,new]);runs.ready=True
+    path=runs.path(2,'shared')
+    write_json(path,dict(index=2,sha=b.by_index[2]['sha'],status='evaluated',coverage_version=3,coverage_status='missing',
+                         coverage_reason='batch JVM failed or timed out',
+                         methods=[dict(old,state='pass',message='',flaky=False),dict(new,state='pass',message='',flaky=False,lines=[['src/main/java/A.java',2]])]))
+    write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
+    monkeypatch.setattr(runs.adapter,'build',lambda *a: {'build':'ok'})
+    jobs=[]
+    def worker(job):
+        jobs.append(job); return dict(methods=[dict(m,state='pass',message='',lines=[['src/main/java/A.java',1]]) for m in job['methods']])
+    monkeypatch.setattr(runs.adapter,'worker',worker)
+    runs.run_index(2,{'shared'},alive={key(old)},dead_at={})  # the window needs `a` only
+    assert [m['id'] for m in jobs[0]['methods']]==['a']
+    rows={r['id']:r for r in read_json(path)['methods']}
+    assert rows['n']['state']=='pass' and rows['n']['lines']==[['src/main/java/A.java',2]]  # kept, no marker
+    assert rows['a']['lines']==[['src/main/java/A.java',1]]
+
+
+def test_excluded_for_follows_the_worker_root_rule(baseline):
+    from test_survival.policy.execute import Runs, source_root_of
+    exp,config,_=baseline;b=Baseline(exp,config);runs=Runs(b,Steps(b,build_plan(b)))
+    runs.excluded={'results/policy/pools/k/1/gen/temp/A_0.java','results/policy/baseline-sources/gen/temp/B_0.java','elsewhere/temp/C.java'}
+    with_root=dict(file='results/policy/pools/k/1/gen/A.java',source_root='results/policy/pools/k/1/gen/../gen')  # non-normalised
+    without=dict(file='results/policy/baseline-sources/gen/B.java')  # the worker falls back to the file's folder
+    assert source_root_of(without)=='results/policy/baseline-sources/gen'
+    assert runs.excluded_for([with_root,without])=={'results/policy/pools/k/1/gen/temp/A_0.java','results/policy/baseline-sources/gen/temp/B_0.java'}
+    assert runs.excluded_for([])==set()
+
+
+def test_cover_reads_a_non_executing_remeasure_as_unavailable_not_zero(baseline,monkeypatch):
+    """A row settled by a compile-fail remeasure carries empty lines. A policy that
+    revives the member at that commit reads it: cover must report the coverage as
+    unavailable rather than zero."""
+    from test_survival.policy import cover
+    exp,config,root=baseline;b=Baseline(exp,config)
+    t=dict(test_test('a'),execution_hash='shared')
+    out=exp/'results/policy/revive'; out.mkdir(parents=True)
+    write_json(out/'alive.json',{'1':{'dev-scope':[t]}})
+    write_json(out/'segments.json',{'dev-scope':[dict(segment=1,start=0,tests=[]),dict(segment=2,start=1,tests=[t])]})
+    write_json(exp/'results/policy/runs/shared/1.json',dict(index=1,coverage_version=3,coverage_status='complete',coverage_reason='',
+               methods=[dict(t,state='fail',message='v',lines=[],remeasured_state='compile-fail')]))
+    row=dict(index=1,sha=b.by_index[1]['sha'],date='date',subject='change',scope_executable=1)
+    write_csv(root/'results/changed-lines.csv',[row],list(row))
+    write_json(root/'results/changes/1.json',dict(post_image={'src/main/java/A.java':[1]}))
+    b.options['set']=[dict(name='revive',trigger='release',action='reset')]
+    cover.run(b,None)
+    assert read_csv(out/'coverage-commits.csv')[0]['dev-scope_covered']==''
+    assert read_csv(out/'coverage-missing.csv')[0]['reason'].startswith('remeasure did not execute the method')
+
+
+def test_cover_keeps_every_survival_missing_entry(baseline):
+    """Survival may list an index under any reason, including one without changed
+    scope lines; cover keeps those entries and adds its own."""
+    from test_survival.policy import cover
+    exp,config,root=baseline;b=Baseline(exp,config)
+    out=exp/'results/policy/reset'; out.mkdir(parents=True)
+    write_json(out/'alive.json',{'1':{'dev-scope':[]},'2':{'dev-scope':[]}})
+    write_json(out/'segments.json',{'dev-scope':[dict(segment=1,start=0,tests=[])]})
+    kept=[dict(index='1',sha=b.by_index[1]['sha'],group='dev-scope',reason='remeasure did not execute 1 passing method(s): compile-fail')]
+    write_csv(out/'coverage-missing.csv',kept,['index','sha','group','reason'])
+    row=dict(index=2,sha=b.by_index[2]['sha'],date='date',subject='change',scope_executable=1)  # index 1 changes no scope line
+    write_csv(root/'results/changed-lines.csv',[row],list(row))
+    write_json(root/'results/changes/2.json',dict(post_image={'src/main/java/A.java':[1]}))
+    b.options['set']=[dict(name='reset',trigger='release',action='reset')]
+    cover.run(b,None)
+    assert read_csv(out/'coverage-missing.csv')==kept
+
+
+def test_rewrite_carries_a_kept_disagreement_into_the_reason(baseline,monkeypatch):
+    from test_survival.policy.execute import Runs
+    exp,config,_=baseline;b=Baseline(exp,config);steps=Steps(b,build_plan(b));runs=Runs(b,steps)
+    a=dict(test_test('a'),execution_hash='shared'); n=dict(test_test('n'),execution_hash='shared');runs.register([a,n]);runs.ready=True
+    path=runs.path(2,'shared')
+    write_json(path,dict(index=2,sha=b.by_index[2]['sha'],status='evaluated',coverage_version=3,coverage_status='complete',
+                         coverage_reason='remeasure disagreed with the recorded verdict for 1 method(s)',
+                         methods=[dict(a,state='pass',message='v',flaky=False,lines=[],remeasured_state='fail'),dict(n,state='not-selected',message='',flaky=False,lines=[])]))
+    write_json(exp/'state/policy-run-shared-2.json',dict(status='completed',config_hash=steps.digest))
+    monkeypatch.setattr(runs.adapter,'build',lambda *x: {'build':'ok'})
+    monkeypatch.setattr(runs.adapter,'worker',lambda job: dict(methods=[dict(m,state='pass',message='',lines=[]) for m in job['methods']]))
+    runs.run_index(2,{'shared'},alive={key(a),key(n)},dead_at={},label='regenerate',evaluated={key(a)})  # n enters; a is kept
+    record=read_json(path)
+    assert record['coverage_status']=='complete' and 'disagreed' in record['coverage_reason']

@@ -145,10 +145,19 @@ lines is measured again by the next run (once per run, at the measuring sites;
 reads of a record never launch anything), and that measurement refreshes the
 row's lines only, never its state, so survival curves are reproducible across
 resumes. A measurement that then succeeds clears the index from
-`coverage-missing.csv`; one that fails again is listed as before. A remeasure
-that does not run the method (compile failure, absent) leaves the row lineless,
-with the outcome in `remeasured_state`, so the index stays listed and is
-measured again. Inside a prefetch window an index waits for the pending earlier
+`coverage-missing.csv`; one that fails again is listed as before. The outcome
+of a remeasure is kept in `remeasured_state`: a row whose verdict is not `pass`
+is settled by any outcome, and a `pass` verdict run again with another outcome
+keeps the verdict and takes the lines; the record's reason notes every
+disagreement among its final rows. When the measurement that gave a settled row
+its lines did not execute the method (compile failure, absent), `cover` reports
+that member's coverage as unavailable rather than zero, which matters when a
+later regeneration revives the member. A `pass` verdict whose remeasure did not
+execute stays lineless, so the index stays listed, under the record's reason, and
+is measured again. The coverage stage keeps every entry survival listed, whatever
+the reason and whether or not the index changes scope lines, and adds its own. Only rows
+the policies evaluated from keep a verdict; the regeneration batch's own rows
+for the new entrants are measured afresh. Inside a prefetch window an index waits for the pending earlier
 indices only when a required row is a dead or not-selected marker (a death
 reported there may excuse it); rows that merely lack lines are measured at once,
 so a run of JVM failures is re-measured in parallel.
