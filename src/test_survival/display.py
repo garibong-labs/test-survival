@@ -20,6 +20,7 @@ class DisplayConfigError(ValueError):
 @dataclass(frozen=True)
 class DisplaySettings:
     timezone: tzinfo
+    archive_destination: str | None = None
 
     def timestamp(self, value, *, timespec='auto'):
         if value == 'unknown':
@@ -69,8 +70,14 @@ def load_display_settings():
         data = {}
     except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError):
         raise DisplayConfigError(f'{path}: cannot read valid TOML display settings') from None
-    if set(data)-{'display'} or not isinstance(data.get('display', {}), dict):
-        raise DisplayConfigError(f'{path}: only a [display] table is supported')
+    if set(data)-{'display', 'archive'} or not isinstance(data.get('display', {}), dict):
+        raise DisplayConfigError(f'{path}: only [display] and [archive] tables are supported')
+    archive = data.get('archive', {})
+    if not isinstance(archive, dict) or set(archive)-{'destination'}:
+        raise DisplayConfigError(f'{path}: archive only supports destination')
+    destination = archive.get('destination')
+    if 'destination' in archive and (not isinstance(destination, str) or not destination.strip()):
+        raise DisplayConfigError(f'{path}: archive.destination must be a nonempty directory path')
     display = data.get('display', {})
     if set(display)-{'timezone'}:
         raise DisplayConfigError(f'{path}: display only supports timezone')
@@ -78,6 +85,6 @@ def load_display_settings():
     if not isinstance(name, str) or not name:
         raise DisplayConfigError(f'{path}: display.timezone must be a nonempty IANA time zone name')
     try:
-        return DisplaySettings(ZoneInfo(name))
+        return DisplaySettings(ZoneInfo(name), destination)
     except (ZoneInfoNotFoundError, ValueError):
         raise DisplayConfigError(f'{path}: display.timezone is unknown or unavailable; use an installed IANA time zone name') from None
