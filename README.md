@@ -496,16 +496,24 @@ The local temporary ZIP is removed after the operation.
 
 By default, build caches, checkouts, top-level `work/`, and policy pool `work/`
 directories are excluded. `--include-work` keeps the work directories while
-still excluding regenerable caches inside them. All `generated/` contents are
-preserved. Archive creation prunes excluded directories without traversing them;
+still excluding regenerable caches inside them. All `generated/` contents,
+including policy-pool outputs, are preserved. Pool group/index names are evidence
+identities even when named `target` or `work`.
+Archive creation prunes excluded directories without traversing them;
 `--dry-run` scans them for exact per-entry file counts and bytes and writes nothing.
 
 `--prune` asks you to type the experiment folder name; `--yes` skips that prompt.
 Pruning removes untracked and ignored files, including excluded scratch, and
-preserves every Git-tracked path. It leaves `ARCHIVED.json`, so
+preserves every Git-tracked path and acquired run lock (with its parent directories).
+Lock files remain permanently so another run cannot lock a replacement inode
+while pruning is in progress. It leaves `ARCHIVED.json`, so
 `survival status <experiment>` prints the archive destination even after state
-and configuration files are removed. Without `--prune`, all local evidence stays.
-Running experiments and held run locks block archiving, including dry runs.
+and configuration files are removed. Restoring evidence, initializing, or resuming
+supersedes that status when configuration/state files are added or changed.
+Without `--prune`, all local evidence stays. Running experiments and held run
+locks block archiving, including dry runs. Directly archiving a policy pool also
+guards its coordinator through `state/run-owner.json`; missing or invalid ownership
+requires archiving the owning experiment instead.
 
 See [Archives](docs/result-formats.md#archives) for the complete layout and
 verification details. A verified file in Google Drive for desktop is verified

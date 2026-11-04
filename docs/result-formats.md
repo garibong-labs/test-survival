@@ -85,6 +85,13 @@ lock and any existing `state/*.lock`, `state/policy/run.lock`, or
 `results/policy/state/run.lock` throughout writing, verification and pruning.
 Running run records and incomplete stop cleanup also block the command.
 Dry runs open existing locks only and write nothing.
+When `state/run-owner.json` identifies a policy-pool coordinator, archive first
+holds the owner's existing locks and checks its run/stop state for the entire
+operation, including dry runs and pruning. A different current run ID does not
+bypass ownership. The owner must be an ancestor with an existing run lock;
+invalid or unavailable owners cause an error instructing the user to archive
+the owning experiment. No files are created or changed outside `EXP_DIR` to
+guard an owner.
 
 The destination layout is:
 
@@ -109,8 +116,11 @@ Default regenerable exclusions are directories named `checkouts`, `node_modules`
 `.venv`, `target`, `dist`, `__pycache__`, `.gradle`, `.pytest_cache`, `.pnpm-store`,
 and `compile-cache`; the experiment's top-level `work/`; all `work/` directories
 below `results/policy/pools/`; and `.DS_Store` files. `--include-work` removes
-the two work exclusions only. The entire top-level `generated/` tree is protected
-from exclusions, including cache-like names, because model output costs money.
+the two work exclusions only. The entire top-level `generated/` tree and each
+`results/policy/pools/<group>/<index>/generated/` tree are protected from exclusions,
+including cache-like names, because model output costs money. Pool group/index
+directories are structural identities and are never excluded by their names.
+Actual cache/work directories within a pool retain the ordinary exclusion rules.
 Excluded directories are pruned before recursion during archive creation.
 
 The embedded manifest fields are:
@@ -156,8 +166,11 @@ it is never recorded as verified or overwritten on retry.
 `--prune` requires the verified ZIP, sidecar and index, and a typed experiment
 folder name unless `--yes`. Before deleting, the command checks that included
 paths and their metadata and the Git-tracked path set have not changed.
-Only entries inside `EXP_DIR` are deleted; tracked files and tracked submodule
-directories are retained. Excluded scratch and nested Git repositories are
+Only entries inside `EXP_DIR` are deleted; tracked files, tracked submodule
+directories, and every acquired lock file are retained. Lock parent directories
+also remain: published lock inodes must never be unlinked, even after release,
+since another process may already hold a descriptor to them.
+Excluded scratch and nested Git repositories are
 removed as ordinary directories, read-only entries are retried after adding
 owner permissions, and symlinks are unlinked without following them. Reported
 bytes freed are logical file bytes removed, not filesystem allocation changes.
@@ -165,9 +178,17 @@ Tracked names on macOS are matched using normalized spelling and filesystem
 identity, preserving files even when Git and `scandir` use different Unicode forms.
 
 `EXP_DIR/ARCHIVED.json` contains `destination` (absolute ZIP path), `sha256`,
-and `archived_utc`. The command refuses pruning if this marker is Git-tracked.
+`archived_utc`, and `retained_status_files` (experiment-relative paths to SHA-256
+for any `experiment.yaml` and `state/*.json` files retained after pruning).
+The command refuses pruning if this marker is Git-tracked.
 `survival status EXP_DIR`, including `--watch`, prints `archived to <path>`
-without requiring the deleted configuration or stage state.
+without requiring the deleted configuration or stage state. It ignores the marker
+when configuration/state files have been added or changed since pruning, so
+ZIP restoration, initialization, and resumed baseline/policy runs show their
+normal status. Unchanged tracked configuration/state and permanent lock files
+do not suppress archived status. Older markers without `retained_status_files`
+use an empty retained set. This check is read-only and does not modify run
+state, stage hashes, or execution provenance.
 
 ## State and imports
 

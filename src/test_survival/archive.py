@@ -38,9 +38,21 @@ def git(repo, *args, optional=False):
     return result.stdout.decode('utf-8', errors='surrogateescape').strip() if not result.returncode else None
 
 
+def status_files(exp):
+    """Identify restored/resumed state without changing execution provenance."""
+    exp = Path(exp)
+    paths = [exp/'experiment.yaml', *sorted((exp/'state').glob('*.json'))]
+    return {p.relative_to(exp).as_posix(): sha256(p) for p in paths if p.is_file()}
+
+
 def archived_status(exp):
     record = read_json(Path(exp)/'ARCHIVED.json')
-    return f'archived to {record["destination"]}' if record else None
+    if not record:
+        return None
+    retained = record.get('retained_status_files', {})
+    if any(retained.get(name) != digest for name, digest in status_files(exp).items()):
+        return None  # Restoring evidence, initializing, or resuming supersedes the marker.
+    return f'archived to {record["destination"]}'
 
 
 @contextmanager
@@ -50,13 +62,25 @@ def idle_experiment(exp, *, dry_run):
     if state.is_symlink():
         raise ArchiveError('Refusing a symlinked state directory')
     with ExitStack() as stack:
+        owner = read_json(state/'run-owner.json')
+        owner_locks = set()
+        if owner is not None:
+            if not isinstance(owner, dict) or not isinstance(owner.get('experiment'), str):
+                raise ArchiveError('Invalid state/run-owner.json; archive the owning experiment instead')
+            parent = Path(owner['experiment']).expanduser().resolve()
+            if parent == exp or not exp.is_relative_to(parent) or not (parent/'state/run.lock').is_file():
+                raise ArchiveError('Cannot guard the policy workspace owner; archive the owning experiment instead')
+            # Parent first, and never create or change anything outside EXP_DIR.
+            # Checking the run ID alone is insufficient: a new run also owns this workspace.
+            owner_locks = stack.enter_context(idle_experiment(parent, dry_run=True))
         locks = set(state.glob('*.lock'))
         locks.update(p for p in (state/'policy/run.lock', exp/'results/policy/state/run.lock') if p.exists())
         if not dry_run:
             state.mkdir(exist_ok=True)
             locks.add(state/'run.lock')
         for path in sorted(locks):
-            if path.is_symlink() or not path.resolve().is_relative_to(exp):
+            if (path.is_symlink() or not path.resolve().is_relative_to(exp)
+                    or any(p.is_symlink() for p in path.parents if p.is_relative_to(exp))):
                 raise ArchiveError(f'Refusing a symlinked run lock: {path}')
             stream = stack.enter_context(path.open('rb' if dry_run else 'a+b'))
             try:
@@ -70,13 +94,21 @@ def idle_experiment(exp, *, dry_run):
                 raise ArchiveError(f'Experiment is running: {path} (status={record["status"]})')
         if (state/'stopping.json').exists():
             raise ArchiveError('Experiment stop cleanup is incomplete')
-        yield
+        yield locks | owner_locks
 
 
 def excluded(relative, is_dir, include_work):
     # Paid model output is evidence even when a generator uses a cache-like name.
     if relative.parts[0] == 'generated':
         return False
+    if relative.parts[:3] == ('results', 'policy', 'pools'):
+        # Group/index names identify evidence; e.g. a group named "target" is
+        # not a Maven build directory. Pool-generated output has the same value
+        # as the top-level generated tree, regardless of names inside it.
+        if is_dir and len(relative.parts) in (4, 5):
+            return False
+        if len(relative.parts) >= 6 and relative.parts[5] == 'generated':
+            return False
     if not is_dir:
         return relative.name == '.DS_Store'
     if relative.name in REGENERABLE:
@@ -152,7 +184,7 @@ def tracked_paths(repo, exp):
     return {repo/os.fsdecode(name) for name in result.stdout.split(b'\0') if name}
 
 
-def print_plan(exp, totals, *, prune, tracked):
+def print_plan(exp, totals, *, prune, tracked, locks):
     print(f'Dry run: {exp}')
     print('entry\tincluded files\tincluded bytes\texcluded files\texcluded bytes\taction')
     for name, row in sorted(totals.items()):
@@ -160,7 +192,7 @@ def print_plan(exp, totals, *, prune, tracked):
         if row['included_files'] and (row['excluded_directories'] or row['excluded_files']):
             label += '; regenerable entries excluded'
         if prune:
-            label += '; prune untracked files (keep git-tracked files)'
+            label += '; prune untracked files (keep git-tracked files and run locks)'
         print(f'{name}\t{row["included_files"]}\t{row["included_bytes"]}\t'
               f'{row["excluded_files"]}\t{row["excluded_bytes"]}\t{label}')
     print(f'Total included: {sum(r["included_files"] for r in totals.values())} files, '
@@ -169,6 +201,7 @@ def print_plan(exp, totals, *, prune, tracked):
           f'{sum(r["excluded_bytes"] for r in totals.values())} bytes')
     if prune:
         print(f'Git-tracked paths preserved: {len(tracked)}')
+        print(f'Existing run locks preserved: {sum(p.is_relative_to(exp) for p in locks)}')
     print('No files written or deleted.')
 
 
@@ -184,7 +217,8 @@ def manifest_for(exp, repo, include_work):
         stage_states={p.name: read_json(p) for p in sorted((exp/'state').glob('*.json'))},
         exclusion_rules=dict(directories=sorted(REGENERABLE), files=['.DS_Store'],
                              work=[] if include_work else ['work/', 'results/policy/pools/**/work/'],
-                             protected=['generated/']),
+                             protected=['generated/', 'results/policy/pools/*/',
+                                        'results/policy/pools/*/*/', 'results/policy/pools/*/*/generated/']),
         excluded_counts='null means an excluded directory was not traversed',
     )
 
@@ -343,15 +377,16 @@ def remove_retry(path, *, directory=False):
         path.rmdir() if directory else path.unlink()
 
 
-def prune_files(exp, tracked):
+def prune_files(exp, tracked, *, locks):
     """Never follow directory symlinks, including those in nested git checkouts."""
     # Git may precompose names while macOS scandir returns decomposed names.
     # Confirm file identity too, so case-sensitive volumes keep distinct files.
     def alias(path, info):
         return (unicodedata.normalize('NFD', str(path)).casefold(), info.st_dev, info.st_ino)
+    preserved = tracked | {p for p in locks if p.is_relative_to(exp)}
     aliases = set()
     if sys.platform == 'darwin':
-        for path in tracked:
+        for path in preserved:
             try:
                 aliases.add(alias(path, path.lstat()))
             except FileNotFoundError:
@@ -364,7 +399,7 @@ def prune_files(exp, tracked):
         for entry in children:
             path = Path(entry.path)
             info = entry.stat(follow_symlinks=False)
-            if path in tracked or (aliases and alias(path, info) in aliases):
+            if path in preserved or (aliases and alias(path, info) in aliases):
                 continue  # Also preserve gitlinks (tracked submodule directories).
             if stat.S_ISDIR(info.st_mode):
                 visit(path)
@@ -395,12 +430,12 @@ def archive(exp_dir, *, destination=None, include_work=False, prune=False, yes=F
     if prune and exp/'ARCHIVED.json' in tracked:
         raise ArchiveError('Cannot prune: ARCHIVED.json is tracked by git')
     try:
-        with idle_experiment(exp, dry_run=dry_run):
+        with idle_experiment(exp, dry_run=dry_run) as locks:
             if dry_run:
                 totals = {}
                 for _ in walk(exp, include_work, totals, count_excluded=True):
                     pass
-                print_plan(exp, totals, prune=prune, tracked=tracked)
+                print_plan(exp, totals, prune=prune, tracked=tracked, locks=locks)
                 return None
             manifest = manifest_for(exp, repo, include_work)
             # A sibling of the fork avoids both EXP_DIR and streamed Drive storage.
@@ -431,9 +466,10 @@ def archive(exp_dir, *, destination=None, include_work=False, prune=False, yes=F
                     current = {p: fingerprint(info) for p, info in walk(exp, include_work, {})}
                     if current != snapshots or tracked_paths(repo, exp) != tracked:
                         raise ArchiveError('Experiment files or tracked paths changed; refusing to prune')
-                    freed = prune_files(exp, tracked)
+                    freed = prune_files(exp, tracked, locks=locks)
                     write_json(exp/'ARCHIVED.json', dict(destination=str(final), sha256=digest,
-                                                         archived_utc=manifest['archived_utc']))
+                                                         archived_utc=manifest['archived_utc'],
+                                                         retained_status_files=status_files(exp)))
                     print(f'Bytes freed: {freed} (logical file bytes removed)')
                 return final
     except (OSError, zipfile.BadZipFile, subprocess.CalledProcessError, json.JSONDecodeError) as exc:

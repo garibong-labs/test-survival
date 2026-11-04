@@ -6,12 +6,14 @@ from pathlib import Path
 import stat
 import subprocess
 import zipfile
+from contextlib import ExitStack
 
 import pytest
 
 from test_survival import archive as module
 from test_survival.cli import main
 from test_survival.display import load_display_settings, settings_path
+from test_survival.io import write_json
 
 
 def git(repo, *args):
@@ -210,7 +212,7 @@ def test_prune_preserves_tracked_readonly_nested_git_and_symlinks(experiment, tm
     (exp/'outside-link').symlink_to(outside.parent, target_is_directory=True)
     final = module.archive(exp, destination=dest, prune=True, yes=True)
     remaining = {p.relative_to(exp).as_posix() for p in exp.rglob('*') if p.is_file()}
-    assert remaining == {'docs/report.md', 'work/tracked.txt', 'ARCHIVED.json'}
+    assert remaining == {'docs/report.md', 'work/tracked.txt', 'state/run.lock', 'ARCHIVED.json'}
     assert tracked.read_text() == 'keep'
     assert outside.read_text() == 'outside'
     record = json.loads((exp/'ARCHIVED.json').read_text())
@@ -346,3 +348,189 @@ def test_prune_preserves_git_precomposed_unicode_names(experiment):
     module.archive(exp, destination=dest, prune=True, yes=True)
     assert tracked.read_text() == 'tracked Unicode report'
     assert (exp/'docs/report.md').read_text() == 'tracked report'
+
+
+def owned_pool(exp):
+    pool = exp/'results/policy/pools/group/1'
+    write_json(pool/'state/run-owner.json', dict(experiment=str(exp), run_id='previous-run'))
+    put(pool, 'generated/output.txt', 'paid output')
+    return pool
+
+
+@pytest.mark.parametrize('dry_run', [False, True])
+@pytest.mark.parametrize('active', ['lock', 'running', 'stopping'])
+def test_owned_pool_refuses_active_coordinator(experiment, dry_run, active):
+    _, exp, dest = experiment
+    pool = owned_pool(exp)
+    # A new run ID still owns the same workspace; old pool records cannot bypass it.
+    write_json(exp/'state/run.json', dict(status='running' if active == 'running' else 'completed',
+                                        run_id='new-run'))
+    if active == 'stopping':
+        write_json(exp/'state/stopping.json', {})
+    before = {p: p.read_bytes() for p in exp.rglob('*') if p.is_file()}
+    with (exp/'state/run.lock').open('rb') as owner:
+        if active == 'lock':
+            fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(module.ArchiveError, match='running|locked|cleanup'):
+            module.archive(pool, destination=dest, prune=True, yes=True, dry_run=dry_run)
+    assert before == {p: p.read_bytes() for p in exp.rglob('*') if p.is_file()}
+    assert not list(dest.iterdir())
+
+
+def test_completed_owner_is_locked_through_pool_pruning(experiment, monkeypatch):
+    _, exp, dest = experiment
+    pool = owned_pool(exp)
+    owner_files = {p: p.read_bytes() for p in (exp/'state').iterdir()}
+    original = module.prune_files
+    def prune(*args, **kwargs):
+        result = original(*args, **kwargs)
+        # This runs after deletion, before ARCHIVED.json and lock release.
+        for path in (exp/'state/run.lock', pool/'state/run.lock'):
+            with path.open('rb') as stream:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return result
+    monkeypatch.setattr(module, 'prune_files', prune)
+    module.archive(pool, destination=dest, prune=True, yes=True)
+    assert not (pool/'generated/output.txt').exists()
+    assert (pool/'state/run.lock').is_file()
+    assert owner_files == {p: p.read_bytes() for p in (exp/'state').iterdir()}
+
+
+@pytest.mark.parametrize('owner_kind', ['missing-lock', 'self', 'unrelated', 'malformed'])
+def test_pool_with_unguardable_owner_is_rejected(experiment, owner_kind):
+    _, exp, dest = experiment
+    pool = owned_pool(exp)
+    if owner_kind == 'missing-lock':
+        (exp/'state/run.lock').unlink()
+    else:
+        value = {'self': str(pool), 'unrelated': str(dest), 'malformed': None}[owner_kind]
+        write_json(pool/'state/run-owner.json', dict(experiment=value))
+    with pytest.raises(module.ArchiveError, match='owner|owning'):
+        module.archive(pool, destination=dest, prune=True, yes=True)
+    assert (pool/'generated/output.txt').read_text() == 'paid output'
+    assert not list(dest.iterdir())
+
+
+@pytest.mark.parametrize('include_work', [False, True])
+@pytest.mark.parametrize('group', ['target', 'dist', 'checkouts', 'compile-cache', 'work', 'normal'])
+def test_pool_evidence_is_archived_before_pruning(experiment, group, include_work):
+    repo, exp, dest = experiment
+    pool = exp/f'results/policy/pools/{group}/1'
+    paid = [put(pool, f'generated/{name}/output.txt', 'paid '+name)
+            for name in ('target', 'checkouts', 'compile-cache', 'work')]
+    metadata = put(pool, 'funnel.json', '{}')
+    scratch = put(pool, 'work/scratch.txt', 'scratch')
+    cache = put(pool, 'target/cache.txt', 'regenerable')
+    nested_cache = put(pool, 'work/compile-cache/cache.txt', 'regenerable')
+    final = module.archive(exp, destination=dest, include_work=include_work, prune=True, yes=True)
+    with zipfile.ZipFile(final) as bundle:
+        for path in [*paid, metadata]:
+            assert path.relative_to(repo).as_posix() in bundle.namelist()
+            assert not path.exists()
+        for path in paid:
+            assert bundle.read(path.relative_to(repo).as_posix()).startswith(b'paid ')
+        assert (scratch.relative_to(repo).as_posix() in bundle.namelist()) == include_work
+        assert cache.relative_to(repo).as_posix() not in bundle.namelist()
+        assert nested_cache.relative_to(repo).as_posix() not in bundle.namelist()
+
+
+def test_pruning_keeps_all_acquired_lock_inodes(experiment, monkeypatch):
+    _, exp, dest = experiment
+    names = ['state/run.lock', 'state/stop.lock', 'state/policy-run.lock',
+             'state/policy/run.lock', 'results/policy/state/run.lock']
+    paths = [put(exp, name, '') for name in names]
+    inodes = {path: path.stat().st_ino for path in paths}
+    put(exp, 'work/to-delete.txt')
+    with ExitStack() as stack:
+        # Existing descriptors must refer to the same permanent lock after pruning.
+        clients = [stack.enter_context(path.open('rb')) for path in paths]
+        original = module.remove_retry
+        def remove(path, **kwargs):
+            original(path, **kwargs)
+            for lock, client in zip(paths, clients):
+                assert lock.stat().st_ino == inodes[lock]
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(client, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        monkeypatch.setattr(module, 'remove_retry', remove)
+        module.archive(exp, destination=dest, prune=True, yes=True)
+        for lock, client in zip(paths, clients):
+            assert lock.stat().st_ino == inodes[lock]
+            fcntl.flock(client, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert not (exp/'work').exists()
+
+
+def valid_config(exp):
+    put(exp, 'experiment.yaml', f'name: archive-test\nanchor: t\nproject:\n  repo: {exp}\n')
+
+
+@pytest.mark.parametrize('watch', [False, True])
+def test_restored_archive_shows_stage_status(experiment, capsys, watch):
+    repo, exp, dest = experiment
+    valid_config(exp)
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    capsys.readouterr()
+    with zipfile.ZipFile(final) as bundle:
+        bundle.extractall(repo)
+    assert (exp/'ARCHIVED.json').exists()
+    assert main(['status', str(exp), *(['--watch', '--no-panel'] if watch else [])]) == 0
+    output = capsys.readouterr().out
+    assert 'archived to' not in output
+    assert 'report     stale' in output  # The restored fixture has no config hash.
+
+
+@pytest.mark.parametrize('watch', [False, True])
+def test_new_run_overrides_marker_with_tracked_configuration(experiment, capsys, monkeypatch, watch):
+    from test_survival.pipeline import run_session
+    repo, exp, dest = experiment
+    valid_config(exp)
+    git(repo, 'add', str(exp/'experiment.yaml'), str(exp/'state/run.json'))
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    capsys.readouterr()
+    assert main(['status', str(exp)]) == 0
+    assert capsys.readouterr().out.strip() == f'archived to {final}'
+    with run_session(exp):
+        if watch:
+            # Render one real watch iteration, then finish the synthetic run.
+            def finish(_):
+                write_json(exp/'state/run.json', dict(status='completed'))
+            monkeypatch.setattr('test_survival.panel.time.sleep', finish)
+        assert main(['status', str(exp), *(['--watch', '--no-panel'] if watch else [])]) == 0
+        output = capsys.readouterr().out
+        assert 'archived to' not in output
+        assert 'Process' in output and 'alive' in output
+    assert main(['status', str(exp)]) == 0
+    assert 'archived to' not in capsys.readouterr().out
+
+
+def test_init_after_pruning_overrides_marker(experiment, capsys):
+    _, exp, dest = experiment
+    module.archive(exp, destination=dest, prune=True, yes=True)
+    assert main(['init', str(exp)]) == 0
+    capsys.readouterr()
+    assert main(['status', str(exp)]) == 0
+    output = capsys.readouterr().out
+    assert 'archived to' not in output and 'pending' in output
+
+
+def test_prune_rejects_symlinked_lock_parent(experiment):
+    _, exp, dest = experiment
+    target = exp/'lock-target'
+    put(target, 'run.lock', '')
+    (exp/'state/policy').symlink_to(target, target_is_directory=True)
+    with pytest.raises(module.ArchiveError, match='symlinked run lock'):
+        module.archive(exp, destination=dest, prune=True, yes=True)
+    assert (target/'run.lock').is_file()
+    assert (exp/'results/evidence.json').exists()
+
+
+def test_legacy_marker_still_reports_archive_without_state(experiment, capsys):
+    _, exp, dest = experiment
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    path = exp/'ARCHIVED.json'
+    marker = json.loads(path.read_text())
+    marker.pop('retained_status_files')
+    write_json(path, marker)
+    capsys.readouterr()
+    assert main(['status', str(exp)]) == 0
+    assert capsys.readouterr().out.strip() == f'archived to {final}'
