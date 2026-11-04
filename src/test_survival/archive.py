@@ -3,6 +3,7 @@ from contextlib import contextmanager, ExitStack
 import csv
 import ctypes
 from datetime import datetime, timezone
+import errno
 import fcntl
 import hashlib
 import json
@@ -14,8 +15,9 @@ import sys
 import tempfile
 import unicodedata
 import zipfile
+from uuid import uuid4
 
-from .io import read_json, write_json
+from .io import read_json
 
 
 class ArchiveError(ValueError):
@@ -38,11 +40,59 @@ def git(repo, *args, optional=False):
     return result.stdout.decode('utf-8', errors='surrogateescape').strip() if not result.returncode else None
 
 
+@contextmanager
+def directory_fd(path, *, parent_fd=None):
+    fd = (os.dup(path) if isinstance(path, int) else
+          os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd))
+    try:
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def regular_bytes(name, parent_fd, *, missing=None, strict=False):
+    """Read only an opened regular file, never a link target or a blocking FIFO."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent_fd)
+    except FileNotFoundError:
+        return missing
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            if strict:
+                raise ArchiveError(f'Invalid symlinked {name}; expected a regular file') from exc
+            return None
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            if strict:
+                raise ArchiveError(f'Invalid {name}; expected a regular file')
+            return None
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            return stream.read()
+    finally:
+        os.close(fd)
+
+
+def status_file_bytes(exp, *, include_config=True):
+    with directory_fd(exp) as root_fd, ExitStack() as stack:
+        if include_config:
+            data = regular_bytes('experiment.yaml', root_fd)
+            if data is not None:
+                yield 'experiment.yaml', data
+        try:
+            state_fd = stack.enter_context(directory_fd('state', parent_fd=root_fd))
+        except FileNotFoundError:
+            return
+        for name in sorted(os.listdir(state_fd)):
+            if name.endswith('.json'):
+                data = regular_bytes(name, state_fd)
+                if data is not None:
+                    yield 'state/'+name, data
+
+
 def status_files(exp):
     """Identify restored/resumed state without changing execution provenance."""
-    exp = Path(exp)
-    paths = [exp/'experiment.yaml', *sorted((exp/'state').glob('*.json'))]
-    return {p.relative_to(exp).as_posix(): sha256(p) for p in paths if p.is_file()}
+    return {name: hashlib.sha256(data).hexdigest() for name, data in status_file_bytes(exp)}
 
 
 def archived_status(exp):
@@ -62,10 +112,17 @@ def idle_experiment(exp, *, dry_run):
     if state.is_symlink():
         raise ArchiveError('Refusing a symlinked state directory')
     with ExitStack() as stack:
-        owner = read_json(state/'run-owner.json')
+        missing = object()
+        try:
+            with directory_fd(state) as state_fd:
+                data = regular_bytes('run-owner.json', state_fd, missing=missing, strict=True)
+        except FileNotFoundError:
+            data = missing
+        owner = json.loads(data) if data is not missing else missing
         owner_locks = set()
-        if owner is not None:
-            if not isinstance(owner, dict) or not isinstance(owner.get('experiment'), str):
+        if owner is not missing:
+            if (not isinstance(owner, dict) or not isinstance(owner.get('experiment'), str)
+                    or not Path(owner['experiment']).is_absolute()):
                 raise ArchiveError('Invalid state/run-owner.json; archive the owning experiment instead')
             parent = Path(owner['experiment']).expanduser().resolve()
             if parent == exp or not exp.is_relative_to(parent) or not (parent/'state/run.lock').is_file():
@@ -214,7 +271,8 @@ def manifest_for(exp, repo, include_work):
         branch=git(repo, 'symbolic-ref', '--short', '-q', 'HEAD', optional=True),
         head_sha=git(repo, 'rev-parse', 'HEAD'),
         dirty=bool(git(repo, 'status', '--porcelain', '--untracked-files=normal')),
-        stage_states={p.name: read_json(p) for p in sorted((exp/'state').glob('*.json'))},
+        stage_states={Path(name).name: json.loads(data)
+                      for name, data in status_file_bytes(exp, include_config=False)},
         exclusion_rules=dict(directories=sorted(REGENERABLE), files=['.DS_Store'],
                              work=[] if include_work else ['work/', 'results/policy/pools/**/work/'],
                              protected=['generated/', 'results/policy/pools/*/',
@@ -356,6 +414,9 @@ def append_index(dest, manifest, final, digest):
         if header is not None and header != list(INDEX_FIELDS):
             raise ArchiveError(f'Unexpected archive index header: {path}')
         stream.seek(0, os.SEEK_END)
+        size = os.fstat(stream.fileno()).st_size
+        if size and os.pread(stream.fileno(), 1, size-1) not in (b'\n', b'\r'):
+            stream.write('\n')
         writer = csv.DictWriter(stream, fieldnames=INDEX_FIELDS, lineterminator='\n')
         if header is None:
             writer.writeheader()
@@ -367,17 +428,18 @@ def append_index(dest, manifest, final, digest):
         os.fsync(stream.fileno())
 
 
-def remove_retry(path, *, directory=False):
+def remove_retry(name, *, parent_fd, directory=False):
+    remove = os.rmdir if directory else os.unlink
     try:
-        path.rmdir() if directory else path.unlink()
+        remove(name, dir_fd=parent_fd)
     except PermissionError:
-        path.parent.chmod(path.parent.stat().st_mode | stat.S_IWUSR | stat.S_IXUSR)
-        if not path.is_symlink():
-            path.chmod(path.stat().st_mode | stat.S_IWUSR | (stat.S_IXUSR if directory else 0))
-        path.rmdir() if directory else path.unlink()
+        # POSIX deletion needs permission on the containing directory. fchmod
+        # cannot follow a substituted pathname, unlike Path.chmod on a retry.
+        os.fchmod(parent_fd, os.fstat(parent_fd).st_mode | stat.S_IWUSR | stat.S_IXUSR)
+        remove(name, dir_fd=parent_fd)
 
 
-def prune_files(exp, tracked, *, locks):
+def prune_files(exp, tracked, *, locks, root_fd):
     """Never follow directory symlinks, including those in nested git checkouts."""
     # Git may precompose names while macOS scandir returns decomposed names.
     # Confirm file identity too, so case-sensitive volumes keep distinct files.
@@ -388,28 +450,53 @@ def prune_files(exp, tracked, *, locks):
     if sys.platform == 'darwin':
         for path in preserved:
             try:
-                aliases.add(alias(path, path.lstat()))
+                aliases.add(alias(path, os.stat(path.relative_to(exp), dir_fd=root_fd, follow_symlinks=False)))
             except FileNotFoundError:
                 pass
     freed = 0
-    def visit(directory):
+    def visit(directory, fd):
         nonlocal freed
-        with os.scandir(directory) as entries:
+        with os.scandir(fd) as entries:
             children = sorted(entries, key=lambda entry: entry.name)
         for entry in children:
-            path = Path(entry.path)
+            path = directory/entry.name  # Logical names are used only to preserve tracked paths.
             info = entry.stat(follow_symlinks=False)
             if path in preserved or (aliases and alias(path, info) in aliases):
                 continue  # Also preserve gitlinks (tracked submodule directories).
             if stat.S_ISDIR(info.st_mode):
-                visit(path)
-                if not any(path.iterdir()):
-                    remove_retry(path, directory=True)
+                with directory_fd(entry.name, parent_fd=fd) as child_fd:
+                    if not os.path.samestat(info, os.fstat(child_fd)):
+                        raise ArchiveError(f'Directory changed while pruning: {path}')
+                    visit(path, child_fd)
+                    with os.scandir(child_fd) as remaining:
+                        empty = next(remaining, None) is None
+                    if not os.path.samestat(info, os.stat(entry.name, dir_fd=fd, follow_symlinks=False)):
+                        raise ArchiveError(f'Directory changed while pruning: {path}')
+                    if empty:
+                        remove_retry(entry.name, parent_fd=fd, directory=True)
             else:
-                remove_retry(path)
+                remove_retry(entry.name, parent_fd=fd)
                 freed += info.st_size
-    visit(exp)
+    visit(exp, root_fd)
     return freed
+
+
+def write_marker(root_fd, record):
+    """Keep marker creation anchored to the same experiment directory as pruning."""
+    temporary = '.ARCHIVED.json.'+uuid4().hex+'.tmp'
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=root_fd)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(record, stream, indent=2, ensure_ascii=True)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, 'ARCHIVED.json', src_dir_fd=root_fd, dst_dir_fd=root_fd)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=root_fd)
+        except FileNotFoundError:
+            pass
 
 
 def archive(exp_dir, *, destination=None, include_work=False, prune=False, yes=False, dry_run=False):
@@ -419,6 +506,7 @@ def archive(exp_dir, *, destination=None, include_work=False, prune=False, yes=F
     dest = Path(destination).expanduser().resolve()
     if not exp.is_dir():
         raise ArchiveError(f'Experiment directory does not exist: {exp}')
+    original_root = exp.stat()
     if not dest.exists() or not dest.is_dir():
         raise ArchiveError(f'Archive destination root must already exist: {dest}')
     repo = Path(git(exp, 'rev-parse', '--show-toplevel')).resolve()
@@ -466,10 +554,13 @@ def archive(exp_dir, *, destination=None, include_work=False, prune=False, yes=F
                     current = {p: fingerprint(info) for p, info in walk(exp, include_work, {})}
                     if current != snapshots or tracked_paths(repo, exp) != tracked:
                         raise ArchiveError('Experiment files or tracked paths changed; refusing to prune')
-                    freed = prune_files(exp, tracked, locks=locks)
-                    write_json(exp/'ARCHIVED.json', dict(destination=str(final), sha256=digest,
-                                                         archived_utc=manifest['archived_utc'],
-                                                         retained_status_files=status_files(exp)))
+                    with directory_fd(exp) as root_fd:
+                        if not os.path.samestat(original_root, os.fstat(root_fd)):
+                            raise ArchiveError('Experiment directory changed; refusing to prune')
+                        freed = prune_files(exp, tracked, locks=locks, root_fd=root_fd)
+                        write_marker(root_fd, dict(destination=str(final), sha256=digest,
+                                                  archived_utc=manifest['archived_utc'],
+                                                  retained_status_files=status_files(root_fd)))
                     print(f'Bytes freed: {freed} (logical file bytes removed)')
                 return final
     except (OSError, zipfile.BadZipFile, subprocess.CalledProcessError, json.JSONDecodeError) as exc:

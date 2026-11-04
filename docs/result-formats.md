@@ -92,6 +92,9 @@ bypass ownership. The owner must be an ancestor with an existing run lock;
 invalid or unavailable owners cause an error instructing the user to archive
 the owning experiment. No files are created or changed outside `EXP_DIR` to
 guard an owner.
+Every present ownership record must be a regular JSON object with an absolute
+owner path. JSON `null`, other non-object values, and symlinked records (including
+broken links) are invalid; only a missing file means no recorded owner.
 
 The destination layout is:
 
@@ -129,7 +132,10 @@ The embedded manifest fields are:
   available), `archived_utc` (UTC ISO 8601), `exp_dir` (resolved absolute path),
   `fork`, `remote_url` (origin, or null), `branch` (null for detached HEAD),
   `head_sha`, and `dirty` (Git's porcelain status, including untracked files).
-- `stage_states`: the complete JSON records in `state/*.json`, keyed by filename.
+- `stage_states`: the complete JSON records from regular, non-symlink files in
+  `state/*.json`, keyed by filename. Metadata reads use directory descriptors and
+  no-follow opens; symlinks remain ZIP links without embedding their targets in
+  either manifest.
 - `included_files`, `included_bytes` (uncompressed payload bytes), and
   `included_directories`; file counts include symlinks and their link-text bytes,
   and exclude the embedded manifest itself.
@@ -159,7 +165,9 @@ archived_utc,fork,exp_dir,zip_relative_path,files,bytes,sha256,branch,head_sha
 
 `zip_relative_path` is relative to the destination root; `files` and `bytes`
 match the included payload totals. Each verified copy appends one row under an
-advisory index lock. Sidecar/index write failures prevent pruning, as do CRC,
+advisory index lock. If a valid existing index lacks a trailing line terminator,
+a separator is inserted under that lock before appending the new row.
+Sidecar/index write failures prevent pruning, as do CRC,
 count, size, or SHA failures. A failed copy may leave a final ZIP for inspection;
 it is never recorded as verified or overwritten on retry.
 
@@ -171,15 +179,20 @@ directories, and every acquired lock file are retained. Lock parent directories
 also remain: published lock inodes must never be unlinked, even after release,
 since another process may already hold a descriptor to them.
 Excluded scratch and nested Git repositories are
-removed as ordinary directories, read-only entries are retried after adding
-owner permissions, and symlinks are unlinked without following them. Reported
+removed as ordinary directories. Traversal and deletion are relative to open
+directory descriptors; child directories are opened with `O_DIRECTORY | O_NOFOLLOW`
+and checked for identity changes. Directory-to-symlink swaps cannot redirect
+deletion to the link target. Read-only parent directories are retried after
+adding owner permissions via `fchmod` on their descriptors, and symlinks are
+unlinked without following them. Marker creation uses the same root descriptor
+as pruning. Reported
 bytes freed are logical file bytes removed, not filesystem allocation changes.
 Tracked names on macOS are matched using normalized spelling and filesystem
 identity, preserving files even when Git and `scandir` use different Unicode forms.
 
 `EXP_DIR/ARCHIVED.json` contains `destination` (absolute ZIP path), `sha256`,
 `archived_utc`, and `retained_status_files` (experiment-relative paths to SHA-256
-for any `experiment.yaml` and `state/*.json` files retained after pruning).
+for regular, non-symlink `experiment.yaml` and `state/*.json` files retained after pruning).
 The command refuses pruning if this marker is Git-tracked.
 `survival status EXP_DIR`, including `--watch`, prints `archived to <path>`
 without requiring the deleted configuration or stage state. It ignores the marker

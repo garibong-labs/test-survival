@@ -534,3 +534,219 @@ def test_legacy_marker_still_reports_archive_without_state(experiment, capsys):
     capsys.readouterr()
     assert main(['status', str(exp)]) == 0
     assert capsys.readouterr().out.strip() == f'archived to {final}'
+
+
+@pytest.mark.parametrize('dry_run', [False, True])
+@pytest.mark.parametrize('record', ['null', 'false', '[]', '""'])
+def test_present_nonobject_owner_cannot_bypass_coordinator(experiment, record, dry_run):
+    _, exp, dest = experiment
+    pool = owned_pool(exp)
+    put(pool, 'state/run-owner.json', record)
+    write_json(exp/'state/run.json', dict(status='running', run_id='active'))
+    before = {p: p.read_bytes() for p in exp.rglob('*') if p.is_file()}
+    with (exp/'state/run.lock').open('rb') as owner:
+        fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(module.ArchiveError, match='Invalid state/run-owner.json'):
+            module.archive(pool, destination=dest, prune=True, yes=True, dry_run=dry_run)
+    assert before == {p: p.read_bytes() for p in exp.rglob('*') if p.is_file()}
+    assert not list(dest.iterdir())
+
+
+@pytest.mark.parametrize('broken', [False, True])
+def test_symlinked_owner_is_invalid_not_missing(experiment, tmp_path, broken):
+    _, exp, dest = experiment
+    pool = owned_pool(exp)
+    external = tmp_path/'owner.json'
+    if not broken:
+        external.write_text('null')
+    (pool/'state/run-owner.json').unlink()
+    (pool/'state/run-owner.json').symlink_to(external)
+    with pytest.raises(module.ArchiveError, match='Invalid symlinked run-owner.json'):
+        module.archive(pool, destination=dest, prune=True, yes=True)
+    assert (pool/'generated/output.txt').exists()
+    assert not list(dest.iterdir())
+
+
+@pytest.mark.parametrize('prune', [False, True])
+def test_state_symlinks_do_not_embed_external_json(experiment, tmp_path, prune):
+    repo, exp, dest = experiment
+    secret = 'EXTERNAL_PRIVATE_CONTENT_MUST_NOT_BE_EMBEDDED'
+    external = put(tmp_path, 'outside/private.json', json.dumps({'secret': secret}))
+    (exp/'state/extra.json').symlink_to(external)
+    (exp/'state/broken.json').symlink_to(tmp_path/'missing.json')
+    final = module.archive(exp, destination=dest, prune=prune, yes=True)
+    with zipfile.ZipFile(final) as bundle:
+        manifest_bytes = bundle.read('ARCHIVE-MANIFEST.json')
+        manifest = json.loads(manifest_bytes)
+        assert 'extra.json' not in manifest['stage_states']
+        assert 'broken.json' not in manifest['stage_states']
+        assert manifest['stage_states']['report.json']['status'] == 'completed'
+        assert secret.encode() not in manifest_bytes
+        name = (exp/'state/extra.json').relative_to(repo).as_posix()
+        assert stat.S_ISLNK(bundle.getinfo(name).external_attr >> 16)
+        assert bundle.read(name) == os.fsencode(external)
+    assert secret not in final.with_suffix('.manifest.json').read_text()
+    assert json.loads(external.read_text())['secret'] == secret
+
+
+def test_metadata_open_does_not_follow_file_swapped_to_symlink(experiment, tmp_path, monkeypatch):
+    _, exp, dest = experiment
+    extra = put(exp, 'state/extra.json', '{"status": "completed"}')
+    external = put(tmp_path, 'outside/private.json', '{"secret":"PRIVATE_SWAP_CONTENT"}')
+    original = os.open
+    swapped = False
+    def swap(name, flags, *args, **kwargs):
+        nonlocal swapped
+        if name == 'extra.json' and kwargs.get('dir_fd') is not None and not swapped:
+            extra.unlink()
+            extra.symlink_to(external)
+            swapped = True
+        return original(name, flags, *args, **kwargs)
+    monkeypatch.setattr(module.os, 'open', swap)
+    final = module.archive(exp, destination=dest)
+    assert swapped
+    with zipfile.ZipFile(final) as bundle:
+        data = bundle.read('ARCHIVE-MANIFEST.json')
+        assert b'PRIVATE_SWAP_CONTENT' not in data
+        assert 'extra.json' not in json.loads(data)['stage_states']
+
+
+def test_metadata_open_rejects_swapped_state_directory(experiment, tmp_path, monkeypatch):
+    _, exp, dest = experiment
+    external = tmp_path/'outside'
+    put(external, 'private.json', '{"secret":"PRIVATE_DIRECTORY_CONTENT"}')
+    original = os.open
+    swapped = False
+    def swap(name, flags, *args, **kwargs):
+        nonlocal swapped
+        if name == 'state' and kwargs.get('dir_fd') is not None and not swapped:
+            (exp/'state').rename(exp/'saved-state')
+            (exp/'state').symlink_to(external, target_is_directory=True)
+            swapped = True
+        return original(name, flags, *args, **kwargs)
+    monkeypatch.setattr(module.os, 'open', swap)
+    with pytest.raises(module.ArchiveError, match='Archive failed'):
+        module.archive(exp, destination=dest, prune=True, yes=True)
+    assert swapped
+    assert (external/'private.json').read_text() == '{"secret":"PRIVATE_DIRECTORY_CONTENT"}'
+    assert not list(dest.iterdir())
+
+
+def test_archived_status_never_hashes_tracked_symlink_targets(experiment, tmp_path, capsys):
+    repo, exp, dest = experiment
+    external = put(tmp_path, 'outside/private.json', '{"secret":"original"}')
+    link = exp/'state/extra.json'
+    link.symlink_to(external)
+    git(repo, 'add', str(link))
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    marker = json.loads((exp/'ARCHIVED.json').read_text())
+    assert 'state/extra.json' not in marker['retained_status_files']
+    external.write_bytes(b'not even JSON\xff')
+    capsys.readouterr()
+    assert main(['status', str(exp)]) == 0
+    assert capsys.readouterr().out.strip() == f'archived to {final}'
+
+
+@pytest.mark.parametrize('location', ['work/victim', 'results/victim'])
+@pytest.mark.parametrize('timing', ['before-open', 'after-open'])
+def test_pruning_directory_swap_cannot_touch_external_tree(experiment, tmp_path, monkeypatch, location, timing):
+    _, exp, dest = experiment
+    victim = exp/location
+    put(victim, 'local.txt', 'local scratch')
+    external = tmp_path/'outside'
+    secret = put(external, 'private.txt', 'outside data')
+    secret.chmod(0o444)
+    before = {p: (p.read_bytes(), p.stat().st_mode) for p in external.iterdir()}
+    original_prune, original_open = module.prune_files, os.open
+    swapped = False
+    def prune(*args, **kwargs):
+        def swap(name, flags, *open_args, **open_kwargs):
+            nonlocal swapped
+            if name == 'victim' and flags & os.O_DIRECTORY and not swapped:
+                fd = original_open(name, flags, *open_args, **open_kwargs) if timing == 'after-open' else None
+                victim.rename(victim.with_name('original'))
+                victim.symlink_to(external, target_is_directory=True)
+                swapped = True
+                if fd is not None:
+                    return fd
+            return original_open(name, flags, *open_args, **open_kwargs)
+        with monkeypatch.context() as context:
+            context.setattr(module.os, 'open', swap)
+            return original_prune(*args, **kwargs)
+    monkeypatch.setattr(module, 'prune_files', prune)
+    with pytest.raises(module.ArchiveError):
+        module.archive(exp, destination=dest, prune=True, yes=True)
+    assert swapped
+    assert before == {p: (p.read_bytes(), p.stat().st_mode) for p in external.iterdir()}
+    assert not (exp/'ARCHIVED.json').exists()
+    assert list(dest.rglob('*.zip'))  # A verified archive exists even if pruning aborts.
+
+
+def test_prune_and_marker_stay_anchored_when_root_path_is_swapped(experiment, tmp_path, monkeypatch):
+    repo, exp, dest = experiment
+    tracked = put(exp, 'docs/cafe\u0301.md', 'tracked Unicode report')
+    git(repo, '-c', 'core.precomposeunicode=true', 'add', str(exp/'docs'))
+    external = tmp_path/'outside'
+    put(external, 'private.txt', 'outside data')
+    put(external, 'ARCHIVED.json', 'outside marker')
+    original = module.prune_files
+    moved = exp.with_name('moved-experiment')
+    def swap(*args, **kwargs):
+        exp.rename(moved)
+        exp.symlink_to(external, target_is_directory=True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, 'prune_files', swap)
+    module.archive(exp, destination=dest, prune=True, yes=True)
+    assert (external/'private.txt').read_text() == 'outside data'
+    assert (external/'ARCHIVED.json').read_text() == 'outside marker'
+    assert (moved/'ARCHIVED.json').is_file()
+    assert (moved/'docs/report.md').read_text() == 'tracked report'
+    assert (moved/tracked.relative_to(exp)).read_text() == 'tracked Unicode report'
+
+
+@pytest.mark.parametrize('existing_row', [False, True])
+@pytest.mark.parametrize('ending', ['', '\n', '\r\n', '\r'])
+def test_index_append_preserves_unterminated_csv(experiment, existing_row, ending):
+    import io
+    _, exp, dest = experiment
+    buffer = io.StringIO(newline='')
+    writer = csv.DictWriter(buffer, fieldnames=module.INDEX_FIELDS, lineterminator='\n')
+    writer.writeheader()
+    old_row = dict.fromkeys(module.INDEX_FIELDS, 'old')
+    old_row.update(fork='caf\u00e9', exp_dir='a path, with\na newline')
+    if existing_row:
+        writer.writerow(old_row)
+    (dest/'archive-index.csv').write_bytes((buffer.getvalue().rstrip('\n')+ending).encode())
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    with (dest/'archive-index.csv').open(newline='') as stream:
+        reader = csv.DictReader(stream)
+        rows = list(reader)
+        assert reader.fieldnames == list(module.INDEX_FIELDS)
+    assert len(rows) == 1+existing_row
+    if existing_row:
+        assert rows[0] == old_row
+    assert set(rows[-1]) == set(module.INDEX_FIELDS)
+    assert rows[-1]['sha256'] == module.sha256(final)
+    assert dest/rows[-1]['zip_relative_path'] == final
+    assert not (exp/'generated/model.txt').exists()
+
+
+def test_state_directory_with_json_suffix_is_archived_without_metadata_read(experiment):
+    repo, exp, dest = experiment
+    evidence = put(exp, 'state/attachments.json/evidence.txt', 'regular evidence')
+    final = module.archive(exp, destination=dest)
+    with zipfile.ZipFile(final) as bundle:
+        manifest = json.loads(bundle.read('ARCHIVE-MANIFEST.json'))
+        assert 'attachments.json' not in manifest['stage_states']
+        assert bundle.read(evidence.relative_to(repo).as_posix()) == b'regular evidence'
+
+
+def test_nonregular_owner_is_rejected_without_blocking(experiment):
+    _, exp, dest = experiment
+    pool = owned_pool(exp)
+    path = pool/'state/run-owner.json'
+    path.unlink()
+    os.mkfifo(path)
+    with pytest.raises(module.ArchiveError, match='expected a regular file'):
+        module.archive(pool, destination=dest, prune=True, yes=True)
+    assert (pool/'generated/output.txt').exists()

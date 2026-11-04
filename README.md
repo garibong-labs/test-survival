@@ -512,8 +512,11 @@ and configuration files are removed. Restoring evidence, initializing, or resumi
 supersedes that status when configuration/state files are added or changed.
 Without `--prune`, all local evidence stays. Running experiments and held run
 locks block archiving, including dry runs. Directly archiving a policy pool also
-guards its coordinator through `state/run-owner.json`; missing or invalid ownership
-requires archiving the owning experiment instead.
+guards its coordinator through `state/run-owner.json`; invalid ownership records
+or unavailable owner locks require archiving the owning experiment instead.
+Present but invalid ownership records, including JSON `null`, are rejected.
+Symlinks are stored as links without copying external JSON into manifests, and
+descriptor-based pruning prevents directory-to-symlink swaps from redirecting deletion.
 
 See [Archives](docs/result-formats.md#archives) for the complete layout and
 verification details. A verified file in Google Drive for desktop is verified
