@@ -76,6 +76,99 @@ Tables. Match the hand-run files exactly in structure, including title lines, co
 
 Group display names in tables: `dev` → `Dev`, `ktester` → `KTester`, `ouedraogo` → `Ouédraogo`, `ouedraogo-adj` → `Ouédraogo (adjusted)`, `ouedraogo-adj2` → `Ouédraogo (adjusted 2)`. Put the mapping in configuration as an optional `display` key on each generator entry, defaulting to the name.
 
+## Archives
+
+`survival archive EXP_DIR [--dest DIR] [--include-work] [--prune] [--yes] [--dry-run]`
+packages a stopped experiment without loading or rewriting `experiment.yaml`.
+Baseline and policy runs currently share `state/run.lock`; archive holds that
+lock and any existing `state/*.lock`, `state/policy/run.lock`, or
+`results/policy/state/run.lock` throughout writing, verification and pruning.
+Running run records and incomplete stop cleanup also block the command.
+Dry runs open existing locks only and write nothing.
+
+The destination layout is:
+
+```text
+archive-index.csv
+ta4j/
+  ta4j__commit-survival__2026-11-06.zip
+  ta4j__commit-survival__2026-11-06.manifest.json
+```
+
+Both existing archives and reserved `.partial`/manifest names are skipped,
+using `-2`, `-3`, etc. Publication uses native exclusive rename on macOS/Linux,
+so a competing file created during copying cannot be overwritten. Filesystems
+without that operation fail safely before pruning. ZIP entries use fork-relative paths, for example
+`experiments/commit-survival/results/survival.csv`. Extract into the fork root
+to restore them. `ARCHIVE-MANIFEST.json` is the only metadata entry at ZIP root.
+Empty directories are retained; symbolic links are stored as Unix ZIP symlinks
+without following their targets (restore with an extractor supporting symlinks).
+Special files such as sockets and FIFOs cause an error.
+
+Default regenerable exclusions are directories named `checkouts`, `node_modules`,
+`.venv`, `target`, `dist`, `__pycache__`, `.gradle`, `.pytest_cache`, `.pnpm-store`,
+and `compile-cache`; the experiment's top-level `work/`; all `work/` directories
+below `results/policy/pools/`; and `.DS_Store` files. `--include-work` removes
+the two work exclusions only. The entire top-level `generated/` tree is protected
+from exclusions, including cache-like names, because model output costs money.
+Excluded directories are pruned before recursion during archive creation.
+
+The embedded manifest fields are:
+
+- `format_version` (currently 1), `tool_commit` (null when no tool Git checkout is
+  available), `archived_utc` (UTC ISO 8601), `exp_dir` (resolved absolute path),
+  `fork`, `remote_url` (origin, or null), `branch` (null for detached HEAD),
+  `head_sha`, and `dirty` (Git's porcelain status, including untracked files).
+- `stage_states`: the complete JSON records in `state/*.json`, keyed by filename.
+- `included_files`, `included_bytes` (uncompressed payload bytes), and
+  `included_directories`; file counts include symlinks and their link-text bytes,
+  and exclude the embedded manifest itself.
+- `exclusion_rules`: `directories`, `files`, `work`, and `protected` rules used.
+- `top_level_entries`: each entry's `included_files`, `included_bytes`,
+  `included_directories`, `excluded_files`, `excluded_bytes`, and
+  `excluded_directories` (number of directory roots skipped).
+  Excluded file/byte counts are null when an excluded directory was not scanned;
+  `excluded_counts` explains this convention. Dry runs traverse excluded trees
+  solely to print exact totals; archive creation avoids that potentially costly
+  traversal.
+
+The ZIP uses DEFLATE and ZIP64, written once to a local temporary file beside
+the fork. After closing it, `testzip()` verifies CRCs, and the entry count and
+sum of uncompressed sizes are checked against the walk totals plus directory
+entries and the embedded manifest. A chunked copy is flushed to `<name>.partial`
+and renamed; SHA-256 of the final destination must match the local ZIP. The
+sidecar contains the embedded manifest plus `sha256`, which cannot be embedded
+in the ZIP it hashes. Verification through the Drive desktop filesystem does
+not independently confirm that Google's servers have received the upload.
+
+`archive-index.csv` is UTF-8 with this header:
+
+```text
+archived_utc,fork,exp_dir,zip_relative_path,files,bytes,sha256,branch,head_sha
+```
+
+`zip_relative_path` is relative to the destination root; `files` and `bytes`
+match the included payload totals. Each verified copy appends one row under an
+advisory index lock. Sidecar/index write failures prevent pruning, as do CRC,
+count, size, or SHA failures. A failed copy may leave a final ZIP for inspection;
+it is never recorded as verified or overwritten on retry.
+
+`--prune` requires the verified ZIP, sidecar and index, and a typed experiment
+folder name unless `--yes`. Before deleting, the command checks that included
+paths and their metadata and the Git-tracked path set have not changed.
+Only entries inside `EXP_DIR` are deleted; tracked files and tracked submodule
+directories are retained. Excluded scratch and nested Git repositories are
+removed as ordinary directories, read-only entries are retried after adding
+owner permissions, and symlinks are unlinked without following them. Reported
+bytes freed are logical file bytes removed, not filesystem allocation changes.
+Tracked names on macOS are matched using normalized spelling and filesystem
+identity, preserving files even when Git and `scandir` use different Unicode forms.
+
+`EXP_DIR/ARCHIVED.json` contains `destination` (absolute ZIP path), `sha256`,
+and `archived_utc`. The command refuses pruning if this marker is Git-tracked.
+`survival status EXP_DIR`, including `--watch`, prints `archived to <path>`
+without requiring the deleted configuration or stage state.
+
 ## State and imports
 
 `state/<stage>.json`: `status`, `config_hash`, `started`, `finished`, `notes`. Status is `pending`, `running`, `completed`, or `failed`; the CLI reports `stale` for completed hashes that differ. Group-only generation also records `group_hashes`.

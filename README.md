@@ -477,7 +477,41 @@ survival dashboard build --experiments experiments.yaml --out dashboard
 
 Open `dashboard/index.html` in a browser. It is a single offline file and works from `file://`.
 
-## 10. Further reading
+## 10. Archiving finished experiments
+
+Set `archive.destination` in the [user tool settings](docs/tool-settings.md),
+or pass an existing destination root with `--dest`:
+
+```sh
+survival archive /path/to/fork/experiments/finished --dest /path/to/Drive/archives --dry-run
+survival archive /path/to/fork/experiments/finished --dest /path/to/Drive/archives --prune
+```
+
+The command writes one ZIP beside the fork, verifies its CRCs, entry count and
+uncompressed size, then copies it in chunks through a `.partial` file into
+`<dest>/<fork>/<fork>__<experiment>__<UTC-date>.zip`. Existing names get `-2`,
+`-3`, etc. The destination SHA-256 must match before local pruning is allowed.
+A manifest sidecar and `archive-index.csv` record the archive and its checksum.
+The local temporary ZIP is removed after the operation.
+
+By default, build caches, checkouts, top-level `work/`, and policy pool `work/`
+directories are excluded. `--include-work` keeps the work directories while
+still excluding regenerable caches inside them. All `generated/` contents are
+preserved. Archive creation prunes excluded directories without traversing them;
+`--dry-run` scans them for exact per-entry file counts and bytes and writes nothing.
+
+`--prune` asks you to type the experiment folder name; `--yes` skips that prompt.
+Pruning removes untracked and ignored files, including excluded scratch, and
+preserves every Git-tracked path. It leaves `ARCHIVED.json`, so
+`survival status <experiment>` prints the archive destination even after state
+and configuration files are removed. Without `--prune`, all local evidence stays.
+Running experiments and held run locks block archiving, including dry runs.
+
+See [Archives](docs/result-formats.md#archives) for the complete layout and
+verification details. A verified file in Google Drive for desktop is verified
+through the local filesystem; this command does not query remote upload status.
+
+## 11. Further reading
 
 Read [docs/design.md](docs/design.md) for configuration details, stage behavior, and generator design.
 

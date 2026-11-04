@@ -9,6 +9,7 @@ from .config import ConfigError, STAGES, load
 from .io import read_json
 from .pipeline import PipelineError, background, run, run_lock, status, stop
 from .display import DisplayConfigError, UTC_DISPLAY, load_display_settings
+from .archive import ArchiveError, archive, archived_status
 
 
 def parser():
@@ -29,6 +30,13 @@ def parser():
     execute.add_argument('--group')
     execute.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
     execute.add_argument('--ready-fd', type=int, help=argparse.SUPPRESS)
+    pack = sub.add_parser('archive', help='Verify an experiment archive, optionally pruning local files')
+    pack.add_argument('exp_dir', type=Path)
+    pack.add_argument('--dest', type=Path, help='Destination root (defaults to archive.destination)')
+    pack.add_argument('--include-work', action='store_true')
+    pack.add_argument('--prune', action='store_true')
+    pack.add_argument('--yes', action='store_true', help='Skip the prune confirmation')
+    pack.add_argument('--dry-run', action='store_true', help='Show file counts and sizes without writing')
     for name in ('show', 'status', 'stop', 'rehash'):
         command = sub.add_parser(name)
         command.add_argument('exp_dir', type=Path)
@@ -75,6 +83,11 @@ def main(argv=None):
             with path.open('x') as stream:
                 stream.write(files('test_survival').joinpath('experiment-template.yaml').read_text())
             print(path)
+        elif args.command == 'archive':
+            archive(args.exp_dir, destination=args.dest or display.archive_destination,
+                    include_work=args.include_work, prune=args.prune, yes=args.yes, dry_run=args.dry_run)
+        elif args.command == 'status' and (message := archived_status(args.exp_dir)):
+            print(message)
         elif args.command == 'policy':
             from .policy.pipeline import command
             command(args, display=display)
@@ -116,7 +129,7 @@ def main(argv=None):
                 else:
                     run(args.exp_dir, config, no_panel=args.no_panel, display=display, **options)
         return 0
-    except (ConfigError, DisplayConfigError, PipelineError, FileExistsError, FileNotFoundError) as exc:
+    except (ConfigError, DisplayConfigError, PipelineError, ArchiveError, FileExistsError, FileNotFoundError) as exc:
         print(f'survival: {exc}', file=sys.stderr)
         return 2
     except KeyboardInterrupt:

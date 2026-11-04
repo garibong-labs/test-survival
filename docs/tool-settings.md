@@ -9,6 +9,9 @@ To override it, create `~/.config/test-survival/config.toml`:
 ```toml
 [display]
 timezone = "Asia/Seoul"
+
+[archive]
+destination = "/Users/donggi/Library/CloudStorage/GoogleDrive-hamjoon@gmail.com/내 드라이브/_KUMaster/졸업논문/experiment-projects"
 ```
 
 Other examples are `"UTC"`, `"America/New_York"`, and `"Asia/Kathmandu"`. Values
@@ -76,6 +79,21 @@ Display settings do not enter the experiment configuration, fingerprints,
 compiler environment, result provenance or resume decision. Changing the display
 zone requires no rehash, migration, cache clearing or experiment rerun. Existing
 records are read as stored and are never rewritten to change their timezone.
+
+## Archive destination
+
+`archive.destination` is an optional nonempty directory path in the same user
+settings file. `survival archive EXP_DIR --dest DIR` overrides it. If neither is
+provided, the command stops with an error. The destination root must already
+exist; the command creates only its fork subdirectory. Paths expand `~` and are
+resolved with `Path.resolve()` and checked with `exists()`, allowing macOS's
+Unicode normalization of Korean Google Drive folder names.
+
+Archive settings follow the same XDG precedence and strict validation as display
+settings. They are loaded once at command startup and never change experiment
+configuration or provenance. `[archive]` supports only `destination`; a missing
+table is valid and does not affect other commands. No user settings file is
+written automatically.
 
 ## Policy coverage JVM heap
 
