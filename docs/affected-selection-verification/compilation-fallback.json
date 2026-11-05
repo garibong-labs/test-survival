@@ -1,0 +1,116 @@
+{
+  "indices": 20,
+  "groups": {
+    "dev": 15,
+    "ouedraogo": 23,
+    "ktester": 131
+  },
+  "compared_method_cells": 3549,
+  "survival_differences": [],
+  "compared_scope_line_cells": 53394,
+  "scope_universe_differences": [],
+  "scope_line_differences": [],
+  "changed_scope_differences": [],
+  "source_files_unchanged": true,
+  "timings": {
+    "legacy": {
+      "mode": "legacy",
+      "tool_head": "e4b32ecbd0264df679324efaa82a33636120db6d",
+      "steps": [
+        {
+          "stage": "prepare-scope",
+          "seconds": 82.239,
+          "exit_code": 0,
+          "log": "/tmp/batch-baseline-comparison/legacy-prepare-scope.log"
+        },
+        {
+          "stage": "import",
+          "seconds": 2.042,
+          "exit_code": 0,
+          "log": "/tmp/batch-baseline-comparison/legacy-import.log"
+        },
+        {
+          "stage": "screen",
+          "seconds": 144.157,
+          "exit_code": 0,
+          "log": "/tmp/batch-baseline-comparison/legacy-screen.log"
+        },
+        {
+          "stage": "control",
+          "seconds": 49.156,
+          "exit_code": 0,
+          "log": "/tmp/batch-baseline-comparison/legacy-control.log"
+        },
+        {
+          "stage": "survive",
+          "seconds": 461.384,
+          "exit_code": 0,
+          "log": "/tmp/batch-baseline-comparison/legacy-survive.log"
+        },
+        {
+          "stage": "cover",
+          "seconds": 468.292,
+          "exit_code": 0,
+          "log": "/tmp/batch-baseline-comparison/legacy-cover.log"
+        },
+        {
+          "stage": "report",
+          "seconds": 1.474,
+          "exit_code": 0,
+          "log": "/tmp/batch-baseline-comparison/legacy-report.log"
+        }
+      ],
+      "seconds": 1208.763
+    },
+    "batch": {
+      "mode": "all",
+      "policy": false,
+      "tool_head": "e03519ed2004414e1be52e2c8f2abe0632ecdc9d",
+      "steps": [
+        {
+          "stage": "prepare-scope",
+          "seconds": 81.391,
+          "exit_code": 0,
+          "log": "/tmp/affected-selection-jsv/all-prepare-scope.log"
+        },
+        {
+          "stage": "import",
+          "seconds": 1.966,
+          "exit_code": 0,
+          "log": "/tmp/affected-selection-jsv/all-import.log"
+        },
+        {
+          "stage": "screen",
+          "seconds": 147.77,
+          "exit_code": 0,
+          "log": "/tmp/affected-selection-jsv/all-screen.log"
+        },
+        {
+          "stage": "control",
+          "seconds": 58.867,
+          "exit_code": 0,
+          "log": "/tmp/affected-selection-jsv/all-control.log"
+        },
+        {
+          "stage": "survive",
+          "seconds": 369.714,
+          "exit_code": 0,
+          "log": "/tmp/affected-selection-jsv/all-survive.log"
+        },
+        {
+          "stage": "cover",
+          "seconds": 1.598,
+          "exit_code": 0,
+          "log": "/tmp/affected-selection-jsv/all-cover.log"
+        },
+        {
+          "stage": "report",
+          "seconds": 1.532,
+          "exit_code": 0,
+          "log": "/tmp/affected-selection-jsv/all-report.log"
+        }
+      ],
+      "seconds": 662.853
+    }
+  }
+}

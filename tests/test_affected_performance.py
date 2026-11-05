@@ -1,0 +1,34 @@
+import importlib.util
+from pathlib import Path
+
+from test_survival.io import read_csv, read_json, write_json
+
+
+def test_per_index_wall_components_deduplicate_shared_snapshot_compiles(tmp_path):
+    spec=importlib.util.spec_from_file_location('affected_performance',Path(__file__).parents[1]/'scripts/affected_selection_performance.py')
+    performance=importlib.util.module_from_spec(spec);spec.loader.exec_module(performance)
+    compile_attempt=dict(log='compile.txt',seconds=2)
+    for mode in ('all','affected'):
+        (tmp_path/f'{mode}-prepare-scope.log').write_text(
+            '2026-01-01T00:00:00+00:00 prepare: started\n'
+            '2026-01-01T00:00:02+00:00 prepare: anchor build ok\n'
+            '2026-01-01T00:00:03+00:00 prepare: baseline selected\n'
+            '2026-01-01T00:00:05+00:00 prepare: build 1/1 ok\n')
+        (tmp_path/f'{mode}-survive.log').write_text(
+            '2026-01-01T00:00:10+00:00 survive: started\n'
+            '2026-01-01T00:00:20+00:00 survive: 1 batch recorded\n')
+        write_json(tmp_path/f'{mode}-timing.json',dict(steps=[dict(stage='control',seconds=12)]))
+        write_json(tmp_path/f'reference-{mode}.json',dict(seconds=10))
+        for index in (0,1):
+            write_json(tmp_path/f'repo/experiments/{mode}/results/baseline-batches/{index}.json',
+                       dict(sha=str(index),compile=[dict(attempts=[compile_attempt])]*3,runs=[dict(seconds=3)],
+                            selection_counts=dict(executed=1,carried=int(mode=='affected' and index==1))))
+    performance.timing(tmp_path)
+    rows=read_csv(tmp_path/'all-per-index-performance.csv')
+    assert float(rows[1]['production_build_seconds'])==2
+    assert float(rows[1]['test_compile_seconds'])==2  # shared by three manifest groups
+    assert float(rows[1]['test_jvm_seconds'])==3
+    assert float(rows[1]['other_seconds'])==5
+    assert float(rows[1]['total_seconds'])==12
+    assert read_csv(tmp_path/'affected-per-index-performance.csv')[1]['ratio']==''
+    assert read_json(tmp_path/'performance-summary.json')['all']['max_ratio']==1.2

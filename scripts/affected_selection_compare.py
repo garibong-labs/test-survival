@@ -55,6 +55,24 @@ def setup(root, project):
 
 def run(root,mode,tool,policy=False):
     exp=root/'repo/experiments'/((mode+'-policies') if policy else mode)
+    label=mode+('-policies' if policy else '')
+    timing_path=root/f'{label}-timing.json'
+    prior=json.loads(timing_path.read_text()) if timing_path.exists() else {}
+    if prior.get('steps') and prior['steps'][-1]['stage']==('run' if policy else 'report') and all(s['exit_code']==0 for s in prior['steps']):
+        print(label,'already measured; preserving original timings',flush=True)
+        return
+    if not policy and mode=='affected' and json.loads((root/'setup.json').read_text())['project']=='dnsjava':
+        # Scope selection is independent of survival.selection. Reuse the first
+        # run's checksummed per-method anchor evidence, without rewriting hashes.
+        # The same Maven volume is required by its existing runner fingerprint.
+        source=root/'repo/experiments/all'
+        config=yaml.safe_load((exp/'experiment.yaml').read_text())
+        config['runner']['docker']['m2_volume']=yaml.safe_load((source/'experiment.yaml').read_text())['runner']['docker']['m2_volume']
+        (exp/'experiment.yaml').write_text(yaml.safe_dump(config,sort_keys=False))
+        cache=source/'results/dev-method-coverage-t'
+        if cache.exists() and not (exp/'results/dev-method-coverage-t').exists():
+            shutil.copytree(cache,exp/'results/dev-method-coverage-t')
+            dump(root/'scope-cache-reuse.json',dict(source=str(cache),sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in cache.iterdir() if p.is_file()}))
     env={**os.environ,'PYTHONPATH':str(tool.resolve()/'src')}
     env.pop('AFFECTED_NO_MODEL_KEY',None);env.pop('BATCH_COMPARISON_NO_MODEL_KEY',None);env.pop('SURVIVAL_JVM_JACOCO',None)
     if policy:
@@ -70,7 +88,6 @@ def run(root,mode,tool,policy=False):
         steps=[('prepare-scope',['run',str(exp),'--until','scope','--no-panel']),
                ('import',['import',str(exp),'--from',str(root/'generated-input'),'--what','generated'])]
         steps += [(s,['run',str(exp),'--stage',s,'--no-panel']) for s in ('screen','control','survive','cover','report')]
-    label=mode+('-policies' if policy else '')
     start=time.monotonic();data=dict(mode=mode,policy=policy,tool_head=subprocess.check_output(['git','-C',str(tool),'rev-parse','HEAD'],text=True).strip(),steps=[])
     for name,args in steps:
         log=root/f'{label}-{name}.log';t=time.monotonic()

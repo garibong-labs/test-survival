@@ -1,0 +1,740 @@
+{
+  "differences": [],
+  "summary": {
+    "all": {
+      "timing": {
+        "mode": "all",
+        "policy": false,
+        "tool_head": "e03519ed2004414e1be52e2c8f2abe0632ecdc9d",
+        "steps": [
+          {
+            "stage": "prepare-scope",
+            "seconds": 81.391,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/all-prepare-scope.log"
+          },
+          {
+            "stage": "import",
+            "seconds": 1.966,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/all-import.log"
+          },
+          {
+            "stage": "screen",
+            "seconds": 147.77,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/all-screen.log"
+          },
+          {
+            "stage": "control",
+            "seconds": 58.867,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/all-control.log"
+          },
+          {
+            "stage": "survive",
+            "seconds": 369.714,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/all-survive.log"
+          },
+          {
+            "stage": "cover",
+            "seconds": 1.598,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/all-cover.log"
+          },
+          {
+            "stage": "report",
+            "seconds": 1.532,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/all-report.log"
+          }
+        ],
+        "seconds": 662.853
+      },
+      "memory": {
+        "peak_rss_bytes": 466026496,
+        "heap_pool_peak_sum_bytes": 137930256,
+        "nonheap_pool_peak_sum_bytes": 114615216
+      },
+      "final": {
+        "environment_reruns": {
+          "dev": 0,
+          "ouedraogo": 0,
+          "ktester": 0
+        },
+        "environment_rerun_unit": "method attempts; derived groups inherit their source observations",
+        "status": "completed",
+        "finished": "2026-11-05T15:56:45.789424+00:00",
+        "denominators": {
+          "dev": 15,
+          "ouedraogo": 23,
+          "ktester": 131
+        },
+        "final_survivors": {
+          "dev": 3,
+          "ouedraogo": 0,
+          "ktester": 49
+        },
+        "model_rounds": {
+          "ouedraogo": {
+            "source": "imported",
+            "source_path": "/private/tmp/affected-selection-jsv/generated-input/generated/ouedraogo",
+            "config_hash": "fa4bb63c6610b6ad54950907c186047d53b6a40d397539c4d0b7943f4b541ec3",
+            "rounds": [
+              {
+                "round": 1,
+                "archived_round": 1,
+                "archived_retry": 0,
+                "directory": "round1",
+                "funnel": {
+                  "stable_runs": 3,
+                  "stable_passed": 23,
+                  "group": "ouedraogo",
+                  "round": "round1",
+                  "files": 25,
+                  "compiled": 2,
+                  "methods": 296,
+                  "stable_3_of_3": 23,
+                  "duplicates": 0,
+                  "kept_this_round": 23,
+                  "total_kept": 23,
+                  "seconds": 9.321,
+                  "per_prompt": {
+                    "ZSL": {
+                      "files": 5,
+                      "compiled": 0,
+                      "methods": 49,
+                      "stable": 0
+                    },
+                    "FSL": {
+                      "files": 5,
+                      "compiled": 1,
+                      "methods": 58,
+                      "stable": 10
+                    },
+                    "CoT": {
+                      "files": 5,
+                      "compiled": 0,
+                      "methods": 70,
+                      "stable": 0
+                    },
+                    "ToT": {
+                      "files": 5,
+                      "compiled": 1,
+                      "methods": 60,
+                      "stable": 13
+                    },
+                    "GToT": {
+                      "files": 5,
+                      "compiled": 0,
+                      "methods": 59,
+                      "stable": 0
+                    }
+                  }
+                },
+                "source": "imported"
+              }
+            ],
+            "stopped": "imported"
+          },
+          "ktester": {
+            "source": "imported",
+            "source_path": "/private/tmp/affected-selection-jsv/generated-input/generated/ktester",
+            "config_hash": "8ba4f1b65605cf88128c71d7240be6b584a021b05f06f010d59d0d7d249da703",
+            "rounds": [
+              {
+                "round": 1,
+                "archived_round": 1,
+                "archived_retry": 0,
+                "directory": "round1",
+                "funnel": {
+                  "stable_runs": 3,
+                  "stable_passed": 131,
+                  "group": "ktester",
+                  "round": "round1",
+                  "files": 64,
+                  "compiled": 39,
+                  "methods": 523,
+                  "stable_3_of_3": 131,
+                  "duplicates": 0,
+                  "kept_this_round": 131,
+                  "total_kept": 131,
+                  "seconds": 46.436,
+                  "per_prompt": {
+                    "KTester": {
+                      "files": 64,
+                      "compiled": 39,
+                      "methods": 523,
+                      "stable": 131,
+                      "duplicates": 0,
+                      "kept": 131
+                    }
+                  },
+                  "developer_denominator": 185,
+                  "ratio_to_dev": 0.7081081081081081
+                },
+                "source": "imported"
+              }
+            ],
+            "stopped": "imported"
+          }
+        },
+        "phase_seconds": {
+          "prepare": 80.622,
+          "scope": 0.651,
+          "generate": 0.0,
+          "screen": 147.524,
+          "control": 58.377,
+          "survive": 368.005,
+          "cover": 1.344
+        },
+        "final_verification": {
+          "nonincreasing": true,
+          "raw_count_matches": true,
+          "missing_survival_records": 0,
+          "missing_coverage_records": 0
+        },
+        "survival_consistency": {
+          "nonincreasing": true,
+          "index_zero_equals_denominators": true,
+          "raw_records": 60,
+          "expected_raw_records": 60,
+          "raw_count_matches": true,
+          "missing_records": [],
+          "build_fail_indices": [],
+          "measured_raw_records": 60,
+          "derived_raw_records": 0,
+          "expected_measured_raw_records": 60,
+          "expected_derived_raw_records": 0,
+          "skipped_indices": [
+            1,
+            3,
+            7,
+            17
+          ]
+        },
+        "coverage_consistency": {
+          "coverage_indices": 16,
+          "production_changes": 11,
+          "identical_executable_line_sets": [
+            0,
+            2,
+            4,
+            5,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            18,
+            19,
+            20
+          ],
+          "missing": [],
+          "zero_executable_change_commits": 3,
+          "unavailable_commits": 0,
+          "totals": {
+            "all": {
+              "executable": null,
+              "dev": null,
+              "ouedraogo": null,
+              "ktester": null
+            },
+            "scope": {
+              "executable": 988,
+              "dev": 399,
+              "ouedraogo": 0,
+              "ktester": 410,
+              "methods_lost_in_listed_commits": {
+                "dev": 12,
+                "ouedraogo": 23,
+                "ktester": 82
+              }
+            },
+            "other": {
+              "executable": null,
+              "dev": null,
+              "ouedraogo": null,
+              "ktester": null
+            }
+          },
+          "baseline": {
+            "src/main/java/com/networknt/schema/AnyOfValidator.java": {
+              "executable": 71,
+              "dev": 0,
+              "ouedraogo": 0,
+              "ktester": 48
+            },
+            "src/main/java/com/networknt/schema/BaseJsonValidator.java": {
+              "executable": 95,
+              "dev": 20,
+              "ouedraogo": 0,
+              "ktester": 35
+            },
+            "src/main/java/com/networknt/schema/CollectorContext.java": {
+              "executable": 82,
+              "dev": 53,
+              "ouedraogo": 0,
+              "ktester": 44
+            },
+            "src/main/java/com/networknt/schema/JsonSchema.java": {
+              "executable": 250,
+              "dev": 166,
+              "ouedraogo": 0,
+              "ktester": 168
+            },
+            "src/main/java/com/networknt/schema/JsonSchemaFactory.java": {
+              "executable": 210,
+              "dev": 157,
+              "ouedraogo": 7,
+              "ktester": 151
+            },
+            "src/main/java/com/networknt/schema/OneOfValidator.java": {
+              "executable": 63,
+              "dev": 50,
+              "ouedraogo": 0,
+              "ktester": 0
+            },
+            "src/main/java/com/networknt/schema/PrefixItemsValidator.java": {
+              "executable": 54,
+              "dev": 5,
+              "ouedraogo": 0,
+              "ktester": 0
+            },
+            "src/main/java/com/networknt/schema/PropertiesValidator.java": {
+              "executable": 78,
+              "dev": 71,
+              "ouedraogo": 0,
+              "ktester": 55
+            },
+            "src/main/java/com/networknt/schema/SpecVersionDetector.java": {
+              "executable": 27,
+              "dev": 27,
+              "ouedraogo": 27,
+              "ktester": 8
+            },
+            "src/main/java/com/networknt/schema/TypeValidator.java": {
+              "executable": 23,
+              "dev": 19,
+              "ouedraogo": 0,
+              "ktester": 21
+            }
+          }
+        },
+        "pushed": false,
+        "selection": "all",
+        "selection_totals": {
+          "dev": {
+            "executed": 103,
+            "carried": 0
+          },
+          "ouedraogo": {
+            "executed": 161,
+            "carried": 0
+          },
+          "ktester": {
+            "executed": 1123,
+            "carried": 0
+          }
+        },
+        "selection_control": {
+          "dev": {
+            "executed": 15,
+            "carried": 0
+          },
+          "ouedraogo": {
+            "executed": 23,
+            "carried": 0
+          },
+          "ktester": {
+            "executed": 131,
+            "carried": 0
+          }
+        },
+        "execution": "batch",
+        "coverage_scope": "scope",
+        "ignored_settings": [
+          "survival.flaky_rerun",
+          "survival.environment_errors"
+        ],
+        "dev_unmapped_excluded": 0,
+        "notes": [
+          "Batch execution: scope-only coverage; all/other partitions unavailable; no coverage XML. Flaky and environment reruns are ignored for batch measurements."
+        ]
+      }
+    },
+    "affected": {
+      "timing": {
+        "mode": "affected",
+        "policy": false,
+        "tool_head": "9f190c7896c667a184c25a131dceff40c3ec6209",
+        "steps": [
+          {
+            "stage": "prepare-scope",
+            "seconds": 106.959,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/affected-prepare-scope.log"
+          },
+          {
+            "stage": "import",
+            "seconds": 2.25,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/affected-import.log"
+          },
+          {
+            "stage": "screen",
+            "seconds": 159.961,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/affected-screen.log"
+          },
+          {
+            "stage": "control",
+            "seconds": 49.726,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/affected-control.log"
+          },
+          {
+            "stage": "survive",
+            "seconds": 434.765,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/affected-survive.log"
+          },
+          {
+            "stage": "cover",
+            "seconds": 1.402,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/affected-cover.log"
+          },
+          {
+            "stage": "report",
+            "seconds": 1.356,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-jsv/affected-report.log"
+          }
+        ],
+        "seconds": 756.436
+      },
+      "memory": {
+        "peak_rss_bytes": 440651776,
+        "heap_pool_peak_sum_bytes": 137832528,
+        "nonheap_pool_peak_sum_bytes": 113945704
+      },
+      "final": {
+        "environment_reruns": {
+          "dev": 0,
+          "ouedraogo": 0,
+          "ktester": 0
+        },
+        "environment_rerun_unit": "method attempts; derived groups inherit their source observations",
+        "status": "completed",
+        "finished": "2026-11-05T16:15:28.249210+00:00",
+        "denominators": {
+          "dev": 15,
+          "ouedraogo": 23,
+          "ktester": 131
+        },
+        "final_survivors": {
+          "dev": 3,
+          "ouedraogo": 0,
+          "ktester": 49
+        },
+        "model_rounds": {
+          "ouedraogo": {
+            "source": "imported",
+            "source_path": "/private/tmp/affected-selection-jsv/generated-input/generated/ouedraogo",
+            "config_hash": "d1809084988fb5e21ea93854c503562187245276d6c6d0bf01333e7696392431",
+            "rounds": [
+              {
+                "round": 1,
+                "archived_round": 1,
+                "archived_retry": 0,
+                "directory": "round1",
+                "funnel": {
+                  "stable_runs": 3,
+                  "stable_passed": 23,
+                  "group": "ouedraogo",
+                  "round": "round1",
+                  "files": 25,
+                  "compiled": 2,
+                  "methods": 296,
+                  "stable_3_of_3": 23,
+                  "duplicates": 0,
+                  "kept_this_round": 23,
+                  "total_kept": 23,
+                  "seconds": 9.321,
+                  "per_prompt": {
+                    "ZSL": {
+                      "files": 5,
+                      "compiled": 0,
+                      "methods": 49,
+                      "stable": 0
+                    },
+                    "FSL": {
+                      "files": 5,
+                      "compiled": 1,
+                      "methods": 58,
+                      "stable": 10
+                    },
+                    "CoT": {
+                      "files": 5,
+                      "compiled": 0,
+                      "methods": 70,
+                      "stable": 0
+                    },
+                    "ToT": {
+                      "files": 5,
+                      "compiled": 1,
+                      "methods": 60,
+                      "stable": 13
+                    },
+                    "GToT": {
+                      "files": 5,
+                      "compiled": 0,
+                      "methods": 59,
+                      "stable": 0
+                    }
+                  }
+                },
+                "source": "imported"
+              }
+            ],
+            "stopped": "imported"
+          },
+          "ktester": {
+            "source": "imported",
+            "source_path": "/private/tmp/affected-selection-jsv/generated-input/generated/ktester",
+            "config_hash": "3c6ce88ad21f6361f69e346af5b938b2c3835fc141f183d42997fada2df8ca1c",
+            "rounds": [
+              {
+                "round": 1,
+                "archived_round": 1,
+                "archived_retry": 0,
+                "directory": "round1",
+                "funnel": {
+                  "stable_runs": 3,
+                  "stable_passed": 131,
+                  "group": "ktester",
+                  "round": "round1",
+                  "files": 64,
+                  "compiled": 39,
+                  "methods": 523,
+                  "stable_3_of_3": 131,
+                  "duplicates": 0,
+                  "kept_this_round": 131,
+                  "total_kept": 131,
+                  "seconds": 46.436,
+                  "per_prompt": {
+                    "KTester": {
+                      "files": 64,
+                      "compiled": 39,
+                      "methods": 523,
+                      "stable": 131,
+                      "duplicates": 0,
+                      "kept": 131
+                    }
+                  },
+                  "developer_denominator": 185,
+                  "ratio_to_dev": 0.7081081081081081
+                },
+                "source": "imported"
+              }
+            ],
+            "stopped": "imported"
+          }
+        },
+        "phase_seconds": {
+          "prepare": 105.815,
+          "scope": 1.043,
+          "generate": 0.0,
+          "screen": 159.731,
+          "control": 49.236,
+          "survive": 431.048,
+          "cover": 1.193
+        },
+        "final_verification": {
+          "nonincreasing": true,
+          "raw_count_matches": true,
+          "missing_survival_records": 0,
+          "missing_coverage_records": 0
+        },
+        "survival_consistency": {
+          "nonincreasing": true,
+          "index_zero_equals_denominators": true,
+          "raw_records": 60,
+          "expected_raw_records": 60,
+          "raw_count_matches": true,
+          "missing_records": [],
+          "build_fail_indices": [],
+          "measured_raw_records": 60,
+          "derived_raw_records": 0,
+          "expected_measured_raw_records": 60,
+          "expected_derived_raw_records": 0,
+          "skipped_indices": [
+            1,
+            3,
+            7,
+            17
+          ]
+        },
+        "coverage_consistency": {
+          "coverage_indices": 16,
+          "production_changes": 11,
+          "identical_executable_line_sets": [
+            0,
+            2,
+            4,
+            5,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            18,
+            19,
+            20
+          ],
+          "missing": [],
+          "zero_executable_change_commits": 3,
+          "unavailable_commits": 0,
+          "totals": {
+            "all": {
+              "executable": null,
+              "dev": null,
+              "ouedraogo": null,
+              "ktester": null
+            },
+            "scope": {
+              "executable": 988,
+              "dev": 399,
+              "ouedraogo": 0,
+              "ktester": 410,
+              "methods_lost_in_listed_commits": {
+                "dev": 12,
+                "ouedraogo": 23,
+                "ktester": 82
+              }
+            },
+            "other": {
+              "executable": null,
+              "dev": null,
+              "ouedraogo": null,
+              "ktester": null
+            }
+          },
+          "baseline": {
+            "src/main/java/com/networknt/schema/AnyOfValidator.java": {
+              "executable": 71,
+              "dev": 0,
+              "ouedraogo": 0,
+              "ktester": 48
+            },
+            "src/main/java/com/networknt/schema/BaseJsonValidator.java": {
+              "executable": 95,
+              "dev": 20,
+              "ouedraogo": 0,
+              "ktester": 35
+            },
+            "src/main/java/com/networknt/schema/CollectorContext.java": {
+              "executable": 82,
+              "dev": 53,
+              "ouedraogo": 0,
+              "ktester": 44
+            },
+            "src/main/java/com/networknt/schema/JsonSchema.java": {
+              "executable": 250,
+              "dev": 166,
+              "ouedraogo": 0,
+              "ktester": 168
+            },
+            "src/main/java/com/networknt/schema/JsonSchemaFactory.java": {
+              "executable": 210,
+              "dev": 157,
+              "ouedraogo": 7,
+              "ktester": 151
+            },
+            "src/main/java/com/networknt/schema/OneOfValidator.java": {
+              "executable": 63,
+              "dev": 50,
+              "ouedraogo": 0,
+              "ktester": 0
+            },
+            "src/main/java/com/networknt/schema/PrefixItemsValidator.java": {
+              "executable": 54,
+              "dev": 5,
+              "ouedraogo": 0,
+              "ktester": 0
+            },
+            "src/main/java/com/networknt/schema/PropertiesValidator.java": {
+              "executable": 78,
+              "dev": 71,
+              "ouedraogo": 0,
+              "ktester": 55
+            },
+            "src/main/java/com/networknt/schema/SpecVersionDetector.java": {
+              "executable": 27,
+              "dev": 27,
+              "ouedraogo": 27,
+              "ktester": 8
+            },
+            "src/main/java/com/networknt/schema/TypeValidator.java": {
+              "executable": 23,
+              "dev": 19,
+              "ouedraogo": 0,
+              "ktester": 21
+            }
+          }
+        },
+        "pushed": false,
+        "selection": "affected",
+        "selection_totals": {
+          "dev": {
+            "executed": 70,
+            "carried": 33
+          },
+          "ouedraogo": {
+            "executed": 81,
+            "carried": 80
+          },
+          "ktester": {
+            "executed": 960,
+            "carried": 163
+          }
+        },
+        "selection_control": {
+          "dev": {
+            "executed": 15,
+            "carried": 0
+          },
+          "ouedraogo": {
+            "executed": 23,
+            "carried": 0
+          },
+          "ktester": {
+            "executed": 131,
+            "carried": 0
+          }
+        },
+        "execution": "batch",
+        "coverage_scope": "scope",
+        "ignored_settings": [
+          "survival.flaky_rerun",
+          "survival.environment_errors"
+        ],
+        "dev_unmapped_excluded": 0,
+        "notes": [
+          "Batch execution: scope-only coverage; all/other partitions unavailable; no coverage XML. Flaky and environment reruns are ignored for batch measurements."
+        ]
+      }
+    }
+  },
+  "source_files_unchanged": true
+}
