@@ -53,6 +53,9 @@ def test_batch_scope_projection_carries_and_resume(tmp_path,monkeypatch,workers)
     jobs=[];setup_worker(monkeypatch,jobs)
     control.run(tmp_path,config);survive.run(tmp_path,config);cover.run(tmp_path,config)
     assert [j['index'] for j in jobs].count(0)==1 and {j['index'] for j in jobs}=={0,2,4,6}
+    assert all(len([t for t in j['methods'] if t['method']=='b'])==1 for j in jobs)
+    if workers==1:
+        assert all(t['method']!='a' for j in jobs if j['index']>2 for t in j['methods'])
     assert read_json(tmp_path/'results/coverage-index-aliases.json')=={'1':0,'3':2}
     rows=read_csv(tmp_path/'results/survival.csv')
     assert [r['dev_alive'] for r in rows]==['2','2','1','1','1','1','1']

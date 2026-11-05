@@ -1,0 +1,9 @@
+{
+  "passed": 792,
+  "skipped": 0,
+  "seconds": 175.82,
+  "java_fixtures": 14,
+  "image": "survival-java:25",
+  "python": "3.12.12",
+  "command": "SURVIVAL_JAVA_TEST_IMAGE=survival-java:25 SURVIVAL_JAVA_TEST_LIBS=/tmp/batch-baseline-java-libs SURVIVAL_REQUIRE_JAVA_TESTS=1 .venv/bin/pytest -q --strict-markers --junitxml=/tmp/batch-final-tests.xml"
+}

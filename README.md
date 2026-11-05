@@ -210,7 +210,9 @@ measurement, including fallback after a failed test JVM. Outcomes are `pass`,
 rules. Coverage uses exact alive-entry sets; skipped commits carry state and
 predecessor coverage aliases. Missing coverage remains unavailable and can be
 repaired by resuming the measuring stage while keeping its recorded survival
-verdict. See [batch result formats](docs/result-formats.md#batch-baseline-results).
+verdict. See [batch result formats](docs/result-formats.md#batch-baseline-results)
+and the [20-commit comparison and Java verification](docs/batch-baseline-verification.md),
+including the observed developer helper-compilation differences.
 
 Start the remaining work in the background:
 
