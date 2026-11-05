@@ -22,6 +22,8 @@ records the implementation decisions and verification evidence instead.
 - `--keep-work` disables release/cleanup in baseline and policy runs, including
   background runs and pools. Pool-local compile caches, generation/policy
   histories and KTester completion records remain in their existing locations.
+  Linux host permission failures retry the same guarded deletion in the configured
+  container, retaining command diagnostics without changing tree permissions.
 - Small failed file subtrees and shared failed policy batches remain whole.
   Successful scratch is deleted after its owning stage succeeds. Retry evidence
   is copied to independent files before a worker clears its original scratch;
@@ -131,7 +133,10 @@ restoration and cleanup files are listed separately from scientific outputs.
 
 An initial interrupted verification attempt exposed a Docker Desktop stale
 host-rename alias during worker cleanup. It failed, was retained for diagnosis,
-and led to independent copy-based retry preservation. Final measurements below
+and led to independent copy-based retry preservation. Linux CI also exposed root-owned gzip files that host users could not read;
+worker JSON/CSV permissions now match the prior readable layout and compressed
+XML retains its original permissions. A real container fixture verifies guarded
+cleanup of container-owned work. Final measurements below
 use the corrected implementation; earlier diagnostic runs are not substituted
 for the final interrupted/resumed verification.
 
@@ -142,7 +147,7 @@ or differing paths, identical compile-event semantics and original command logs.
 This includes the uncompressed dev-scope XML and exact PNG bytes. Baseline final
 survivors are Dev 3/4, Dev-scope 3/4 and synthetic Ouedraogo 1/2. Both reset and
 fill policy outputs are identical across the three runs. The final branch runs
-used runtime commit `5a894a5`; subsequent changes are verification scripts,
+used runtime commit `5ca8763`; subsequent changes are verification scripts,
 tests and documentation only.
 
 Counts are regular files and logical bytes (`stat().st_size`), including hidden
@@ -152,16 +157,16 @@ These are small-fixture measurements, **not estimates for the real experiments**
 | Run | Files | Bytes | Combined wall-clock seconds |
 |---|---:|---:|---:|
 | main | 1,157 | 55,880,704 | 94.628 |
-| final-uninterrupted | 549 | 776,041 | 107.340 |
-| final-resumed | 583 | 820,656 | 107.523 |
+| final-uninterrupted | 549 | 775,716 | 116.875 |
+| final-resumed | 583 | 820,551 | 103.991 |
 
 Uninterrupted reduction: **52.55% fewer files** and **98.61% fewer bytes**.
 
 | Run | Successful scratch removed (files / bytes) | Failed scratch retained (files / bytes) | Protected compile cache (files / bytes) |
 |---|---:|---:|---:|
 | main | not instrumented | not instrumented | 36 / 14,977 |
-| final-uninterrupted | 521 / 54,789,670 | 52 / 203,996 | 56 / 22,967 |
-| final-resumed | 521 / 54,789,668 | 83 / 247,856 | 56 / 22,967 |
+| final-uninterrupted | 521 / 54,789,678 | 52 / 204,007 | 56 / 22,967 |
+| final-resumed | 521 / 54,789,665 | 83 / 247,854 | 56 / 22,967 |
 
 Scratch-removal totals are cumulative successful deletions and exclude released
 checkout trees. Failure totals are measured from retained paths after completion,
@@ -175,8 +180,8 @@ because existing cache identity includes file metadata.
 | Output family (including pool) | Main files / bytes | Uninterrupted files / bytes | Resumed files / bytes |
 |---|---:|---:|---:|
 | checkouts | 92 / 32,837 | 0 / 0 | 0 / 0 |
-| compile-events | 105 / 124,762 | 8 / 49,893 | 8 / 49,914 |
-| compressed text | 48 / 340,346 | 48 / 61,251 | 48 / 61,273 |
+| compile-events | 105 / 124,762 | 8 / 49,888 | 8 / 49,898 |
+| compressed text | 48 / 340,346 | 48 / 61,283 | 48 / 61,286 |
 
 ### Sampled checkout peaks
 
@@ -188,14 +193,14 @@ is taken independently.
 
 | Stage / scope | Main trees / bytes | Uninterrupted trees / bytes | Resumed trees / bytes |
 |---|---:|---:|---:|
-| combined | 7 / 32,284 | 2 / 18,217 | 2 / 18,219 |
-| baseline/prepare | 3 / 21,041 | 2 / 18,217 | 2 / 18,219 |
-| baseline/scope | 3 / 21,041 | 1 / 15,398 | 1 / 15,400 |
-| baseline/screen | 3 / 21,041 | 1 / 15,398 | 1 / 15,400 |
-| baseline/control | 3 / 21,041 | 1 / 15,398 | 1 / 15,400 |
-| baseline/survive | 3 / 21,041 | 2 / 18,217 | 2 / 18,219 |
-| baseline/cover | 3 / 21,041 | 2 / 18,217 | 2 / 18,219 |
-| baseline/report | 3 / 21,041 | 1 / 15,398 | 1 / 15,400 |
+| combined | 7 / 32,284 | 2 / 18,222 | 2 / 18,222 |
+| baseline/prepare | 3 / 21,041 | 2 / 18,222 | 2 / 18,222 |
+| baseline/scope | 3 / 21,041 | 1 / 15,403 | 1 / 15,403 |
+| baseline/screen | 3 / 21,041 | 1 / 15,403 | 1 / 15,403 |
+| baseline/control | 3 / 21,041 | 1 / 15,403 | 1 / 15,403 |
+| baseline/survive | 3 / 21,041 | 2 / 18,222 | 2 / 18,222 |
+| baseline/cover | 3 / 21,041 | 2 / 18,222 | 2 / 18,222 |
+| baseline/report | 3 / 21,041 | 1 / 15,403 | 1 / 15,403 |
 | policy/policy-pools | 1 / 2,818 | 1 / 2,818 | 1 / 2,818 |
 | policy/policy-survive | 4 / 11,243 | 2 / 5,607 | 2 / 5,607 |
 
@@ -203,7 +208,7 @@ is taken independently.
 
 Baseline values come from `final-summary.json.phase_seconds`; report and policy
 values come from stage `started`/`finished` timestamps, checked against run logs.
-The resumed policy-survive value adds the interrupted attempt (8.040 s) and the
+The resumed policy-survive value adds the interrupted attempt (8.411 s) and the
 successful retry. The retained logs show both starts and the stop. Generate is
 an imported completed stage (0.000 s); import/launch/stop overhead is included
 in the combined command wall clock above, not silently assigned to another stage.
@@ -213,17 +218,17 @@ controlled performance benchmark.
 
 | Stage | Main | Uninterrupted | Interrupted/resumed |
 |---|---:|---:|---:|
-| baseline/prepare | 12.773 | 13.493 | 14.296 |
-| baseline/scope | 8.865 | 9.050 | 9.269 |
+| baseline/prepare | 12.773 | 15.037 | 13.793 |
+| baseline/scope | 8.865 | 9.495 | 9.239 |
 | baseline/generate | 0.000 | 0.000 | 0.000 |
-| baseline/screen | 2.503 | 2.690 | 2.363 |
-| baseline/control | 6.300 | 8.440 | 5.614 |
-| baseline/survive | 13.568 | 14.753 | 14.982 |
-| baseline/cover | 26.595 | 31.900 | 33.676 |
-| baseline/report | 0.715 | 0.725 | 0.713 |
-| policy/policy-pools | 10.750 | 12.579 | 11.435 |
-| policy/policy-pool-dev-scope-2 | 10.749 | 12.563 | 11.419 |
-| policy/policy-survive | 11.715 | 12.896 | 14.404 |
+| baseline/screen | 2.503 | 2.640 | 2.516 |
+| baseline/control | 6.300 | 6.584 | 5.620 |
+| baseline/survive | 13.568 | 19.870 | 15.530 |
+| baseline/cover | 26.595 | 37.146 | 29.578 |
+| baseline/report | 0.715 | 0.981 | 0.653 |
+| policy/policy-pools | 10.750 | 11.642 | 11.608 |
+| policy/policy-pool-dev-scope-2 | 10.749 | 11.624 | 11.589 |
+| policy/policy-survive | 11.715 | 12.633 | 14.470 |
 | policy/policy-cover | 0.004 | 0.003 | 0.004 |
 | policy/policy-report | 0.003 | 0.003 | 0.003 |
 
@@ -250,11 +255,14 @@ folders, comparison JSON/diffs, `metrics.json`, and the interrupted-work/hash
 snapshots. The scripts make these checks repeatable without touching production
 experiments. The removed Part 1 document is not republished.
 
-Final local validation: **740 tests passed, no skips**, including all 10 real
-Java integration fixtures (143.21 seconds). The 20 review-notification security
-contract tests also passed, Python compilation passed, and `uv pip check` found
-all seven installed packages compatible. The venv has no pip module, so the
-dependency check used uv's equivalent command.
+Final runtime CI passed: **732 fast tests on Python 3.12 and Python 3.14**, plus
+**11 real Java integration fixtures**, with zero skips/failures in the Java
+report. The [Python workflow](https://github.com/garibong-labs/test-survival/actions/runs/41982284215)
+and [Java workflow](https://github.com/garibong-labs/test-survival/actions/runs/41982284637)
+verify runtime commit `5ca8763`. The 20 notification-security tests, Python
+compilation, and dependency compatibility checks also passed. Local focused
+coverage includes historical main fingerprints/progress, output permissions,
+container-owned cleanup, and immutable pool verification.
 
 ```sh
 SURVIVAL_JAVA_TEST_IMAGE=survival-java:25 \

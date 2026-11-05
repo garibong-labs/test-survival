@@ -32,7 +32,7 @@ def category(name):
     if 'compile-events' in parts:return 'compile lifecycle'
     if ('state' in parts and (set(parts)&{'containers','workers'} or parts[-1] in {'log.txt','run.json','stop.json','stop.lock','run-owner.json'}
                              or parts[-1].startswith('workspace-') or parts[-1].endswith('-error.txt'))):return 'run lifecycle'
-    if 'workspace-identities' in parts or 'workspace-restorations' in parts or parts[-1]=='work-cleanup.json':return 'workspace lifecycle'
+    if 'workspace-identities' in parts or 'workspace-restorations' in parts or 'work-cleanup-commands' in parts or parts[-1]=='work-cleanup.json':return 'workspace lifecycle'
     if 'results' in parts and (parts[-1].endswith('.txt') and 'baseline-reports' not in parts or 'logs' in parts):return 'command logs'
     return 'compare'
 
