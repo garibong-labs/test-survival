@@ -34,6 +34,9 @@ def build(exp,config):
     environment_reruns={g:sum(m.get('environment_reruns',0) for path in raw_paths[g] for m in read_json(path).get('methods',[])) for g in groups}
     verification=dict(nonincreasing=survival['nonincreasing'],raw_count_matches=survival['raw_count_matches'],missing_survival_records=len(survival['missing_records']),missing_coverage_records=len(coverage['missing']))
     summary=dict(environment_reruns=environment_reruns,environment_rerun_unit='method attempts; derived groups inherit their source observations',status='completed' if not survival['missing_records'] and not coverage['missing'] else 'completed-with-unavailable-measurements',finished=now(),denominators=counts,final_survivors=final,model_rounds=rounds,phase_seconds=timings,final_verification=verification,survival_consistency=survival,coverage_consistency=coverage,pushed=False)
+    if config['survival'].get('execution') == 'batch':
+        notes.append('Batch execution: scope-only coverage; all/other partitions unavailable; no coverage XML. Flaky and environment reruns are ignored for batch measurements.')
+        summary.update(execution='batch', coverage_scope='scope', ignored_settings=['survival.flaky_rerun','survival.environment_errors'])
     summary.update(dev_unmapped_excluded=excluded,notes=notes)
     if imported:
         summary['imported_dev_results'] = dict(source=imported['source'], groups=sorted(g for g in imported['groups'] if g in groups),

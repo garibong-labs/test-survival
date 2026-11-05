@@ -57,6 +57,32 @@ class Runs:
         """
         return {ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
 
+    def seed_baseline(self, index, digest):
+        """Import matching batch observations; never treat screening as coverage."""
+        path = self.path(index, digest)
+        if read_json(path) is not None:
+            return
+        observations = {}
+        for group in self.b.groups:
+            raw = self.b.raw(index, group)
+            if raw.get('execution') != 'batch' or raw.get('coverage_version') != COVERAGE_VERSION:
+                continue
+            if raw.get('sha') != self.b.by_index[index]['sha']:
+                raise ValueError('Batch baseline SHA differs at '+str(index))
+            for t in raw.get('methods', []):
+                if t.get('execution_hash') == digest and t.get('state') not in MARKERS and 'lines' in t:
+                    observations[identity(t)] = t
+        if not observations:
+            return
+        methods = []
+        for ident, t in self.catalog[digest].items():
+            observed = observations.get(ident)
+            methods.append({**t, **{k:observed[k] for k in ('state','message','flaky','lines','remeasured_state') if k in observed}}
+                           if observed else dict(t,state='not-selected',flaky=False,lines=[]))
+        self.step(f'run-{digest}-{index}', lambda:write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'],
+                  status='evaluated', coverage_version=COVERAGE_VERSION, coverage_status='complete',
+                  measurement_source='batch baseline', methods=methods)), outputs=[path])
+
     def run_index(self, index, digests, *, alive=None, dead_at=None, label=None, evaluated=None):
         """Measure the required members of `digests` at `index` that have no usable
         row yet, in one worker batch; the other rows of each record are kept
@@ -77,6 +103,7 @@ class Runs:
         reasons = {}
         collected = []
         for h in digests:
+            self.seed_baseline(index, h)
             prior = read_json(self.path(index,h), {})
             state = read_json(self.b.exp/f'state/policy-run-{h}-{index}.json', {})
             if state.get('status') == 'completed' and reusable_run(prior, required_methods=required[h]):
@@ -404,7 +431,7 @@ def survive(b, plan, pools, step):
 GENERATOR_SCRATCH_DIRS = ('temp',)
 
 
-def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
+def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources"):
     """Exclude rejected test candidates and generator scratch files from policy jobs.
 
     `pools` maps (group, index) to the pool's tests; `frozen` maps a group to its
@@ -457,6 +484,6 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
         collect(f'{group}/{index}', group, root, root, tests)
     for group, tests in (frozen or {}).items():
         if tests and baseline is not None and methods.get(group) != 'dev':
-            collect(f'{group}/t', group, Path(baseline), exp/'results/policy/baseline-sources', tests)
+            collect(f'{group}/t', group, Path(baseline), exp/baseline_prefix, tests)
     write_json(exp/'results/policy/excluded-sources.json', summary)
     return excluded

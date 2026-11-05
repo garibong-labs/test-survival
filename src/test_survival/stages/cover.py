@@ -73,7 +73,7 @@ def aggregate(exp,config):
         current=maps[i];previous=maps[aliases.get(str(i-1),i-1)];available=[m for m in current.values() if m is not None]
         row={k:commit[k] for k in ['index','sha','date','subject']}
         for category,changed in [('all',post),('scope',{p for p in post if p[0] in scope}),('other',{p for p in post if p[0] not in scope})]:
-            executable=changed&available[0].keys() if available else None
+            executable=changed&available[0].keys() if available and (config['survival'].get('execution') != 'batch' or category == 'scope') else None
             n=len(executable) if executable is not None else ''
             row[category+'_executable']=n
             for g in groups:
@@ -84,8 +84,9 @@ def aggregate(exp,config):
             row[g+'_lost']=int(curves[i][g+'_lost'])
             before=previous[g]
             row[g+'_pre_image_covered']=sum(before[p] for p in pre&before.keys()) if before is not None else ''
-        if row['all_executable']=='':unavailable+=1
-        elif row['all_executable']==0:zero+=1
+        partition = 'scope' if config['survival'].get('execution') == 'batch' else 'all'
+        if row[partition+'_executable']=='':unavailable+=1
+        elif row[partition+'_executable']==0:zero+=1
         rows.append(row)
     write_csv(exp/'results/changed-lines.csv',rows,list(rows[0]) if rows else ['index'])
     result=dict(coverage_indices=len(indices),production_changes=len(rows),identical_executable_line_sets=identical,missing=missing,zero_executable_change_commits=zero,unavailable_commits=unavailable)
@@ -126,7 +127,11 @@ def run(exp,config):
             if raw.get('status') != 'evaluated':
                 raise RuntimeError('Imported coverage report failed')
             require_record(exp, provenance, f'results/coverage/{i}-{g}-lines.csv')
-    pending = [(i, g) for i in buildable for g in frozen if g not in imported]
+    if config['survival'].get('execution') == 'batch':
+        from .batch import project_coverage
+        for i in buildable:
+            project_coverage(exp, config, i, alive[str(i)])
+    pending = [(i, g) for i in buildable for g in frozen if g not in imported and config['survival'].get('execution') != 'batch']
     for i in buildable:
         if all(g in imported for g in frozen):
             validate_index(exp, i, frozen)

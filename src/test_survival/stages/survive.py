@@ -76,6 +76,9 @@ def aggregate(exp,config):
 
 
 def run(exp,config):
+    if config['survival'].get('execution') == 'batch':
+        from .batch import survive
+        return survive(exp, config)
     from ..dev_results import imported_for, imported_record
     provenance, imported = imported_for(exp, config, 'survive')
     adapter=JavaMavenAdapter(exp,config)

@@ -7,7 +7,7 @@ import shutil
 
 import yaml
 
-from .config import MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate, execution_groups
+from .config import survival_inputs, MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate, execution_groups
 from .io import compressed_result, logical_glob, resolve_path, result_exists, result_hash, now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
 from .rules.dev_denominator import denominator_file, unmapped_note
@@ -92,7 +92,7 @@ def identity(exp, config):
                 commit_shas=[row['sha'] for row in commits], skip_untouched=config['range']['skip_untouched'],
                 dev_tree_sha256=tree_hash(exp/'dev/src-test-t'),
                 measurement_settings=dict(project={k: v for k, v in config['project'].items() if k != 'repo'},
-                                          runner=runner_inputs(config['runner']), survival=config['survival'],
+                                          runner=runner_inputs(config['runner']), survival=survival_inputs(config),
                                           stable_runs=config['dev']['stable_runs'], unmapped=config['dev']['unmapped'],
                                           coverage=config['coverage']))
 

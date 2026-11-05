@@ -129,6 +129,14 @@ def run(w, job):
             state = 'pass' if states and all(s == 'SUCCESSFUL' for s, _ in states) else 'fail' if states else 'absent'
             methods.append(dict(id=t['id'], file_hash=t['file_hash'], execution_hash=t.get('execution_hash', t['file_hash']), **{'class':t['class']}, method=t['method'], state=state,
                                 message='\n'.join(m for s, m in states if s != 'SUCCESSFUL' and m)[:4000], lines=sorted(covered[ident])))
+    if job.get('scope_universe'):
+        output = work/'universe.tsv'
+        analysis = w.execute(['java', '-Xmx'+heap, '-cp', str(helper)+':'+helper_cp,
+                              'PerTestCoverage', '--universe', str(folder/'target/classes'),
+                              str(output), str(scope_file)], folder, work/'universe.txt', w.TIMEOUTS['compile'])
+        if analysis['exit_code'] or analysis.get('timeout'):
+            raise RuntimeError('Cannot enumerate executable scope lines')
+        universe = {(f, int(n)) for line in output.read_text().splitlines() for f,n in [line.split('\t')]}
     missing = any(r['exit_code'] or r.get('timeout') for r in runs)
     w.write_json(w.EXP/job['output'], dict(coverage_status='missing' if missing else 'complete',
                                          coverage_reason='batch JVM failed or timed out' if missing else '',

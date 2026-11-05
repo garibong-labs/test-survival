@@ -219,7 +219,11 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
             path = exp / 'state' / f'{current}.json'
             digest = stage_hash(config, current)
             previous = read_json(path, {})
-            if not force and previous.get('status') == 'completed' and previous.get('config_hash') == digest:
+            batch_current = True
+            if config['survival'].get('execution') == 'batch' and previous.get('status') == 'completed' and previous.get('config_hash') == digest and handlers is None:
+                from .stages.batch import stage_complete
+                batch_current = stage_complete(exp, config, current)
+            if batch_current and not force and previous.get('status') == 'completed' and previous.get('config_hash') == digest:
                 log(exp, f'{current}: already completed; skipped', config)
                 if handlers is None:
                     from .work import cleanup_stage
