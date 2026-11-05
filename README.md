@@ -543,6 +543,8 @@ instead creates a new build record and preserves prior records in
 `results/build-history/`, with separate logs for each replacement attempt.
 Retained legacy checkouts keep their classpaths for later baseline inventory. See
 [checkout lifetime and restoration](docs/result-formats.md#checkout-lifetime-and-restoration).
+Dependency verification stores JSON separately from command diagnostics, including
+Docker Compose startup messages.
 
 Use `survival run EXP_DIR --keep-work` or `survival policy run EXP_DIR --keep-work`
 to retain successful working files for inspection. Default cleanup preserves

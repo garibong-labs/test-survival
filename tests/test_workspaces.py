@@ -11,6 +11,49 @@ from test_survival.io import read_json, write_json
 from test_survival.work import release_checkout, finish_checkouts, finish_work, remove_owned
 
 
+@pytest.mark.parametrize('with_dependency', [False, True])
+def test_dependency_identity_separates_json_from_command_noise(tmp_path, monkeypatch, with_dependency):
+    import hashlib
+    import subprocess
+    import sys
+    config = validate(dict(name='identity', anchor='t', project={'repo': str(tmp_path)}))
+    adapter = JavaMavenAdapter(tmp_path, config)
+    adapter.folder(0).mkdir(parents=True)
+    jar = tmp_path/'dependency.jar'
+    jar.write_bytes(b'dependency content')
+    cp = tmp_path/'work/classpath.txt'
+    cp.write_text(str(jar) if with_dependency else '')
+    def execute(command, folder, log, timeout):
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open('w') as stream:
+            stream.write('Container fixture Creating\nContainer fixture Created\n')
+            stream.flush()
+            result = subprocess.run([sys.executable, *command[1:]], cwd=folder,
+                                    stdout=stream, stderr=subprocess.STDOUT, timeout=timeout)
+        return dict(exit_code=result.returncode)
+    monkeypatch.setattr(adapter.runner, 'execute', execute)
+    directory = tmp_path/'results/identity'
+    expected = [dict(path=str(jar), sha256=hashlib.sha256(jar.read_bytes()).hexdigest())] if with_dependency else []
+    assert adapter.dependency_identity(0, dict(classpath='work/classpath.txt'), directory) == expected
+    assert read_json(directory/'dependencies.json') == expected
+    assert 'Container fixture Created' in (directory/'dependencies.log').read_text()
+
+
+@pytest.mark.parametrize('exit_code', [0, 1])
+def test_dependency_identity_rejects_missing_output_even_with_stale_file(tmp_path, monkeypatch, exit_code):
+    config = validate(dict(name='identity', anchor='t', project={'repo': str(tmp_path)}))
+    adapter = JavaMavenAdapter(tmp_path, config)
+    directory = tmp_path/'results/identity'
+    write_json(directory/'dependencies.json', [])
+    def execute(command, folder, log, timeout):
+        log.write_text('helper did not publish output')
+        return dict(exit_code=exit_code)
+    monkeypatch.setattr(adapter.runner, 'execute', execute)
+    with pytest.raises(RuntimeError, match='Cannot verify workspace dependencies'):
+        adapter.dependency_identity(0, dict(classpath='work/classpath.txt'), directory)
+    assert not (directory/'dependencies.json').exists()
+
+
 def adapter_fixture(tmp_path, monkeypatch):
     config=validate(dict(name='workspace', anchor='t', project={'repo':str(tmp_path)}))
     adapter=JavaMavenAdapter(tmp_path, config)

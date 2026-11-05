@@ -330,6 +330,13 @@ and retains work. Old experiments remain readable; reconstructing an already
 removed legacy workspace without a recorded dependency identity fails closed.
 Report PNG rendering uses the experiment directory and needs no checkout.
 
+Dependency probes write their structured payload to `dependencies.json` and
+command stdout/stderr to `dependencies.log` in the probe diagnostics directory
+(for example, `results/builds/logs/<index>-identity/` or the restoration attempt).
+Docker Compose startup messages remain in the log. The adapter accepts only a
+successful, non-timeout invocation that published a fresh payload; it never
+parses the command log as JSON. Existing dependency identities remain readable.
+
 Changed build inputs invalidate the build instead of restoring it. Before replacing
 the authoritative record, the previous build, dependency identity and any restoration
 state are copied to `results/build-history/<index>/<attempt-id>/{build,identity,workspace-state}.json`

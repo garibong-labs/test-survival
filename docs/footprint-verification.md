@@ -360,3 +360,25 @@ The full local suite passes **768 tests**, including all 11 real Java fixtures.
 The 66 workspace, cleanup and progress tests also pass together, covering legacy
 commit-range invalidation as well as the new cases. Python compilation and
 `git diff --check` pass.
+
+### Docker Compose dependency identity follow-up
+
+A further review finding was reproduced with Docker Compose 5.5.1 and the real
+runner: container startup messages preceded the helper's JSON in the combined
+command log, causing `JSONDecodeError` after a successful helper invocation.
+Dependency probes now publish `dependencies.json` separately from
+`dependencies.log`. Failed/timed-out helpers and missing fresh output are rejected;
+previous output cannot satisfy a later invocation.
+
+Four unit cases exercise noisy command logs with empty/populated classpaths and
+missing output with a stale file. Two real-container cases cover both plain-image
+and Compose runners, each against baseline and nested-pool paths with a dependency
+content hash. Both cases are included in the CI fixture manifest and cannot skip.
+The focused workspace, CI-manifest and real-runner checks pass 51 tests. Only
+disposable fixtures were used; no real experiments or model calls were involved.
+The earlier three-run measurements remain attributed to `65b3466`; they do not
+exercise Compose. The identity JSON content is unchanged; command diagnostics are
+now an additional separate file.
+
+The full local suite passes **774 tests**, including all 13 real-container
+fixtures. Python compilation and `git diff --check` pass.

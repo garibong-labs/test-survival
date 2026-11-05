@@ -369,6 +369,35 @@ def test_direct_scoped_child_keeps_whole_frozen_tree_compilation(tmp_path,monkey
 
 
 @pytest.mark.java_integration
+@pytest.mark.parametrize('mode', ['image', 'compose'])
+def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode):
+    import hashlib
+    from uuid import uuid4
+    import yaml
+    image, _ = java_environment
+    docker = dict(image=image)
+    if mode == 'compose':
+        compose = tmp_path/'compose.yaml'
+        compose.write_text(yaml.safe_dump(dict(name='identity-'+uuid4().hex,
+            services=dict(probe=dict(image=image, network_mode='none')))))
+        docker = dict(compose_files=[str(compose)], service='probe')
+    config = validate(dict(name='identity', anchor='t', project=dict(repo=str(tmp_path)),
+                           runner=dict(docker=docker)))
+    for exp in (tmp_path/'baseline', tmp_path/'baseline/results/policy/pools/dev/2'):
+        adapter = JavaMavenAdapter(exp, config)
+        adapter.folder(0).mkdir(parents=True)
+        jar = exp/'dependency.jar'
+        jar.write_bytes(b'fixture dependency')
+        cp = exp/'work/classpath.txt'
+        cp.write_text(adapter.runner.path(jar))
+        directory = exp/'results/identity'
+        expected = [dict(path=adapter.runner.path(jar), sha256=hashlib.sha256(jar.read_bytes()).hexdigest())]
+        assert adapter.dependency_identity(0, dict(classpath='work/classpath.txt'), directory) == expected
+        assert json.loads((directory/'dependencies.json').read_text()) == expected
+        assert (directory/'dependencies.log').is_file()
+
+
+@pytest.mark.java_integration
 def test_container_owned_scratch_cleanup(tmp_path, java_environment, monkeypatch):
     import yaml
     from test_survival import work

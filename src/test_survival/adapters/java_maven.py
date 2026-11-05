@@ -86,13 +86,18 @@ class JavaMavenAdapter:
             return self._build(index, sha)
 
     def dependency_identity(self, index, record, directory):
-        log = directory/'dependencies.json'
+        directory.mkdir(parents=True, exist_ok=True)
+        output = directory/'dependencies.json'
+        log = directory/'dependencies.log'
+        # Compose progress and stderr belong to diagnostics, never the payload.
+        # Require this invocation to publish its own output, even on a retry.
+        output.unlink(missing_ok=True)
         result = self.runner.execute(['python3', str(Path(__file__).with_name('workspace_identity.py')),
-                                      str(self.exp/record['classpath'])], self.folder(index), log,
+                                      str(self.exp/record['classpath']), str(output)], self.folder(index), log,
                                      self.config['runner']['timeouts']['build'])
-        if result['exit_code']:
+        if result['exit_code'] or result.get('timeout') or not output.is_file():
             raise RuntimeError('Cannot verify workspace dependencies; see '+str(log))
-        return read_json(log)
+        return read_json(output)
 
     def ensure_anchor(self):
         anchor = read_json(self.exp/'results/anchor.json', {})

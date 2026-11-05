@@ -17,4 +17,6 @@ def identity(classpath):
 
 
 if __name__ == '__main__':
-    print(json.dumps(identity(sys.argv[1]), sort_keys=True))
+    # The runner merges stdout/stderr with container startup diagnostics.
+    # Publish structured data separately, only after every dependency is hashed.
+    Path(sys.argv[2]).write_text(json.dumps(identity(sys.argv[1]), sort_keys=True)+'\n', encoding='utf-8')
