@@ -1,0 +1,48 @@
+{
+  "all": {
+    "seconds": 33.19004266592674,
+    "test_compile_seconds": 2.386,
+    "test_jvm_seconds": 23.669,
+    "other_seconds": 7.13504266592674,
+    "reference_seconds": 21.283812999958172,
+    "ratio": 1.559403038637483,
+    "methods": 169,
+    "observations_identical": true,
+    "universe_identical": true,
+    "tool_head": "cfa61708b30d3f3beab675c2ee92b22bfa7540a5",
+    "command": [
+      "/Users/donggi/_projects/experiment-projects/test-survival/.venv/bin/python",
+      "-m",
+      "test_survival.cli",
+      "run",
+      "/private/tmp/affected-selection-jsv-optimized/control-recheck-all",
+      "--stage",
+      "control",
+      "--no-panel"
+    ],
+    "log": "/private/tmp/affected-selection-jsv-optimized/control-recheck-all.log"
+  },
+  "affected": {
+    "seconds": 35.626032792031765,
+    "test_compile_seconds": 2.06,
+    "test_jvm_seconds": 22.924,
+    "other_seconds": 10.642032792031763,
+    "reference_seconds": 24.15301545802504,
+    "ratio": 1.4750138695495565,
+    "methods": 169,
+    "observations_identical": true,
+    "universe_identical": true,
+    "tool_head": "cfa61708b30d3f3beab675c2ee92b22bfa7540a5",
+    "command": [
+      "/Users/donggi/_projects/experiment-projects/test-survival/.venv/bin/python",
+      "-m",
+      "test_survival.cli",
+      "run",
+      "/private/tmp/affected-selection-jsv-optimized/control-recheck-affected",
+      "--stage",
+      "control",
+      "--no-panel"
+    ],
+    "log": "/private/tmp/affected-selection-jsv-optimized/control-recheck-affected.log"
+  }
+}

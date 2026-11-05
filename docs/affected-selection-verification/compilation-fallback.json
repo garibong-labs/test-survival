@@ -65,52 +65,60 @@
     "batch": {
       "mode": "all",
       "policy": false,
-      "tool_head": "e03519ed2004414e1be52e2c8f2abe0632ecdc9d",
+      "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3",
       "steps": [
         {
           "stage": "prepare-scope",
-          "seconds": 81.391,
+          "seconds": 184.598,
           "exit_code": 0,
-          "log": "/tmp/affected-selection-jsv/all-prepare-scope.log"
+          "log": "/tmp/affected-selection-jsv-optimized/all-prepare-scope.log",
+          "tool_head": "b6880b44863aebfa4b8e0b234fc9bb49f462cd12"
         },
         {
           "stage": "import",
-          "seconds": 1.966,
+          "seconds": 3.271,
           "exit_code": 0,
-          "log": "/tmp/affected-selection-jsv/all-import.log"
+          "log": "/tmp/affected-selection-jsv-optimized/all-import.log",
+          "tool_head": "b6880b44863aebfa4b8e0b234fc9bb49f462cd12"
         },
         {
           "stage": "screen",
-          "seconds": 147.77,
+          "seconds": 289.537,
           "exit_code": 0,
-          "log": "/tmp/affected-selection-jsv/all-screen.log"
+          "log": "/tmp/affected-selection-jsv-optimized/all-screen.log",
+          "tool_head": "b6880b44863aebfa4b8e0b234fc9bb49f462cd12"
         },
         {
           "stage": "control",
-          "seconds": 58.867,
+          "seconds": 35.059,
           "exit_code": 0,
-          "log": "/tmp/affected-selection-jsv/all-control.log"
+          "log": "/tmp/affected-selection-jsv-optimized/all-control.log",
+          "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
         },
         {
           "stage": "survive",
-          "seconds": 369.714,
+          "seconds": 286.205,
           "exit_code": 0,
-          "log": "/tmp/affected-selection-jsv/all-survive.log"
+          "log": "/tmp/affected-selection-jsv-optimized/all-survive.log",
+          "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
         },
         {
           "stage": "cover",
-          "seconds": 1.598,
+          "seconds": 1.669,
           "exit_code": 0,
-          "log": "/tmp/affected-selection-jsv/all-cover.log"
+          "log": "/tmp/affected-selection-jsv-optimized/all-cover.log",
+          "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
         },
         {
           "stage": "report",
-          "seconds": 1.532,
+          "seconds": 1.66,
           "exit_code": 0,
-          "log": "/tmp/affected-selection-jsv/all-report.log"
+          "log": "/tmp/affected-selection-jsv-optimized/all-report.log",
+          "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
         }
       ],
-      "seconds": 662.853
+      "resumed_from": "control",
+      "seconds": 802.011
     }
   }
 }

@@ -5,57 +5,65 @@
       "timing": {
         "mode": "all",
         "policy": false,
-        "tool_head": "e03519ed2004414e1be52e2c8f2abe0632ecdc9d",
+        "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3",
         "steps": [
           {
             "stage": "prepare-scope",
-            "seconds": 81.391,
+            "seconds": 184.598,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/all-prepare-scope.log"
+            "log": "/tmp/affected-selection-jsv-optimized/all-prepare-scope.log",
+            "tool_head": "b6880b44863aebfa4b8e0b234fc9bb49f462cd12"
           },
           {
             "stage": "import",
-            "seconds": 1.966,
+            "seconds": 3.271,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/all-import.log"
+            "log": "/tmp/affected-selection-jsv-optimized/all-import.log",
+            "tool_head": "b6880b44863aebfa4b8e0b234fc9bb49f462cd12"
           },
           {
             "stage": "screen",
-            "seconds": 147.77,
+            "seconds": 289.537,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/all-screen.log"
+            "log": "/tmp/affected-selection-jsv-optimized/all-screen.log",
+            "tool_head": "b6880b44863aebfa4b8e0b234fc9bb49f462cd12"
           },
           {
             "stage": "control",
-            "seconds": 58.867,
+            "seconds": 35.059,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/all-control.log"
+            "log": "/tmp/affected-selection-jsv-optimized/all-control.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "survive",
-            "seconds": 369.714,
+            "seconds": 286.205,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/all-survive.log"
+            "log": "/tmp/affected-selection-jsv-optimized/all-survive.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "cover",
-            "seconds": 1.598,
+            "seconds": 1.669,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/all-cover.log"
+            "log": "/tmp/affected-selection-jsv-optimized/all-cover.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "report",
-            "seconds": 1.532,
+            "seconds": 1.66,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/all-report.log"
+            "log": "/tmp/affected-selection-jsv-optimized/all-report.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           }
         ],
-        "seconds": 662.853
+        "resumed_from": "control",
+        "seconds": 802.011
       },
       "memory": {
-        "peak_rss_bytes": 466026496,
-        "heap_pool_peak_sum_bytes": 137930256,
-        "nonheap_pool_peak_sum_bytes": 114615216
+        "peak_rss_bytes": 415944704,
+        "heap_pool_peak_sum_bytes": 113554464,
+        "nonheap_pool_peak_sum_bytes": 108948096
       },
       "final": {
         "environment_reruns": {
@@ -65,7 +73,7 @@
         },
         "environment_rerun_unit": "method attempts; derived groups inherit their source observations",
         "status": "completed",
-        "finished": "2026-11-05T15:56:45.789424+00:00",
+        "finished": "2026-11-05T20:44:23.868514+00:00",
         "denominators": {
           "dev": 15,
           "ouedraogo": 23,
@@ -79,8 +87,8 @@
         "model_rounds": {
           "ouedraogo": {
             "source": "imported",
-            "source_path": "/private/tmp/affected-selection-jsv/generated-input/generated/ouedraogo",
-            "config_hash": "fa4bb63c6610b6ad54950907c186047d53b6a40d397539c4d0b7943f4b541ec3",
+            "source_path": "/private/tmp/affected-selection-jsv-optimized/generated-input/generated/ouedraogo",
+            "config_hash": "d9fd75f488aaf4009fdb79e31b411f3e645ac90961e4f4961e18d0afae70e152",
             "rounds": [
               {
                 "round": 1,
@@ -140,8 +148,8 @@
           },
           "ktester": {
             "source": "imported",
-            "source_path": "/private/tmp/affected-selection-jsv/generated-input/generated/ktester",
-            "config_hash": "8ba4f1b65605cf88128c71d7240be6b584a021b05f06f010d59d0d7d249da703",
+            "source_path": "/private/tmp/affected-selection-jsv-optimized/generated-input/generated/ktester",
+            "config_hash": "b7fd030214ad3854df418240a6fa2e25ebd0c1038d8e5fd8c2b26c22a81b3aae",
             "rounds": [
               {
                 "round": 1,
@@ -181,13 +189,13 @@
           }
         },
         "phase_seconds": {
-          "prepare": 80.622,
-          "scope": 0.651,
+          "prepare": 183.322,
+          "scope": 1.101,
           "generate": 0.0,
-          "screen": 147.524,
-          "control": 58.377,
-          "survive": 368.005,
-          "cover": 1.344
+          "screen": 289.23,
+          "control": 34.287,
+          "survive": 284.283,
+          "cover": 1.39
         },
         "final_verification": {
           "nonincreasing": true,
@@ -372,57 +380,64 @@
       "timing": {
         "mode": "affected",
         "policy": false,
-        "tool_head": "9f190c7896c667a184c25a131dceff40c3ec6209",
+        "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3",
         "steps": [
           {
             "stage": "prepare-scope",
-            "seconds": 106.959,
+            "seconds": 111.274,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/affected-prepare-scope.log"
+            "log": "/tmp/affected-selection-jsv-optimized/affected-prepare-scope.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "import",
-            "seconds": 2.25,
+            "seconds": 1.973,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/affected-import.log"
+            "log": "/tmp/affected-selection-jsv-optimized/affected-import.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "screen",
-            "seconds": 159.961,
+            "seconds": 134.611,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/affected-screen.log"
+            "log": "/tmp/affected-selection-jsv-optimized/affected-screen.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "control",
-            "seconds": 49.726,
+            "seconds": 39.176,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/affected-control.log"
+            "log": "/tmp/affected-selection-jsv-optimized/affected-control.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "survive",
-            "seconds": 434.765,
+            "seconds": 266.283,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/affected-survive.log"
+            "log": "/tmp/affected-selection-jsv-optimized/affected-survive.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "cover",
-            "seconds": 1.402,
+            "seconds": 1.581,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/affected-cover.log"
+            "log": "/tmp/affected-selection-jsv-optimized/affected-cover.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           },
           {
             "stage": "report",
-            "seconds": 1.356,
+            "seconds": 1.416,
             "exit_code": 0,
-            "log": "/tmp/affected-selection-jsv/affected-report.log"
+            "log": "/tmp/affected-selection-jsv-optimized/affected-report.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
           }
         ],
-        "seconds": 756.436
+        "seconds": 556.329
       },
       "memory": {
-        "peak_rss_bytes": 440651776,
-        "heap_pool_peak_sum_bytes": 137832528,
-        "nonheap_pool_peak_sum_bytes": 113945704
+        "peak_rss_bytes": 439533568,
+        "heap_pool_peak_sum_bytes": 114717192,
+        "nonheap_pool_peak_sum_bytes": 109215848
       },
       "final": {
         "environment_reruns": {
@@ -432,7 +447,7 @@
         },
         "environment_rerun_unit": "method attempts; derived groups inherit their source observations",
         "status": "completed",
-        "finished": "2026-11-05T16:15:28.249210+00:00",
+        "finished": "2026-11-05T20:53:40.506600+00:00",
         "denominators": {
           "dev": 15,
           "ouedraogo": 23,
@@ -446,8 +461,8 @@
         "model_rounds": {
           "ouedraogo": {
             "source": "imported",
-            "source_path": "/private/tmp/affected-selection-jsv/generated-input/generated/ouedraogo",
-            "config_hash": "d1809084988fb5e21ea93854c503562187245276d6c6d0bf01333e7696392431",
+            "source_path": "/private/tmp/affected-selection-jsv-optimized/generated-input/generated/ouedraogo",
+            "config_hash": "fe3bc2e0721a6149434a701923eec6809edad06fec5392981fc977f43a2e0a39",
             "rounds": [
               {
                 "round": 1,
@@ -507,8 +522,8 @@
           },
           "ktester": {
             "source": "imported",
-            "source_path": "/private/tmp/affected-selection-jsv/generated-input/generated/ktester",
-            "config_hash": "3c6ce88ad21f6361f69e346af5b938b2c3835fc141f183d42997fada2df8ca1c",
+            "source_path": "/private/tmp/affected-selection-jsv-optimized/generated-input/generated/ktester",
+            "config_hash": "5674ad310934adfb3779302d0f7c69d82cf56b464d0d5e615c8fee1272a95367",
             "rounds": [
               {
                 "round": 1,
@@ -548,13 +563,13 @@
           }
         },
         "phase_seconds": {
-          "prepare": 105.815,
-          "scope": 1.043,
+          "prepare": 110.56,
+          "scope": 0.639,
           "generate": 0.0,
-          "screen": 159.731,
-          "control": 49.236,
-          "survive": 431.048,
-          "cover": 1.193
+          "screen": 134.418,
+          "control": 38.657,
+          "survive": 263.853,
+          "cover": 1.352
         },
         "final_verification": {
           "nonincreasing": true,

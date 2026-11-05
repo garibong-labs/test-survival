@@ -26,6 +26,12 @@ need not be preserved. Dependency-bearing control at t can seed the first segmen
 Fill-boundary executions, per-policy logical decisions, developer-only no-model
 policy comparisons, and conservative execution with missing evidence are accepted.
 Verification must report peak JVM memory as well as counts and timings.
+The later performance addendum requires per-index production-build, test-compile,
+test-JVM, and other wall time. The approximately 1.5× Maven reference target
+applies only to the two baseline equality checks, not regenerated policy tests;
+the user explicitly confirmed this scope. Measure the frozen anchor tests in one
+Surefire JVM with matching JaCoCo settings and report causes for any over-target
+full-execution index.
 
 The public setting is `survival.selection: all | affected`, default `all`.
 Batch baselines and policy survival use affected selection; preparation,

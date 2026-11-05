@@ -1,6 +1,6 @@
 {
   "all": {
-    "reference_seconds": 122.51788800000213,
+    "reference_seconds": 21.283812999958172,
     "full_execution_indices": [
       0,
       2,
@@ -20,12 +20,14 @@
       19,
       20
     ],
-    "max_ratio": 0.48047677739922334,
-    "median_ratio": 0.13596375412543604,
-    "over_target": []
+    "max_ratio": 1.647214246811363,
+    "median_ratio": 0.641557694574127,
+    "over_target": [
+      0
+    ]
   },
   "affected": {
-    "reference_seconds": 128.705308415927,
+    "reference_seconds": 24.15301545802504,
     "full_execution_indices": [
       0,
       4,
@@ -36,8 +38,10 @@
       18,
       19
     ],
-    "max_ratio": 0.386355470586375,
-    "median_ratio": 0.2565151539306244,
-    "over_target": []
+    "max_ratio": 1.6219920890657755,
+    "median_ratio": 0.6623529069404289,
+    "over_target": [
+      0
+    ]
   }
 }

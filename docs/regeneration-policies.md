@@ -96,8 +96,8 @@ composition, coverage and report revisions. Saved plan bytes remain unchanged.
 Enabling regeneration when the saved plan lacks required points or pool entries reports that the
 plan must be rebuilt with `--force`; it does not silently run an incomplete plan.
 
-Policy survival and coverage share one execution pass. Between successive
-regeneration points, commit indices run concurrently with
+Policy survival and coverage share one execution pass. With `selection: all`,
+between successive regeneration points, commit indices run concurrently with
 `runner.workers.survive` workers. The coordinator aggregates those measurements
 in commit order before deciding fill membership at the next transition. Each
 evaluable index submits one worker job containing every method needed across

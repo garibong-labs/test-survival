@@ -127,9 +127,10 @@ run records and carry records remain reusable. Survival, coverage and reports
 refresh through the existing version check. Older pre-version-2 executions are
 still upgraded.
 
-Baseline and policy survival dispatch up to `runner.workers.survive` indices/jobs
-concurrently. Each dispatch uses the failures confirmed by already-completed
-earlier jobs for that group or policy union. A lagging snapshot may request extra
+With `survival.selection: all`, baseline and policy survival dispatch up to
+`runner.workers.survive` indices/jobs concurrently. Each dispatch uses the failures
+confirmed by already-completed earlier jobs for that group or policy union.
+A lagging snapshot may request extra
 methods that an earlier in-flight index will later mark dead. Ordered aggregation
 ignores those extra observations and retains exact alive-entry sets and first
 failures. Policy dispatch stops at regeneration boundaries so reset/fill uses
