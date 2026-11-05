@@ -209,7 +209,7 @@ def cleanup_jobs(exp, config, bases):
 
 def cleanup_stage(exp, config, stage):
     bases = {'scope':['dev-method-coverage-t'], 'generate':['validation','import-repair'],
-             'screen':['validation'], 'control':['phase-control'], 'survive':['phase-A'],
+             'screen':['validation'], 'control':['phase-control', 'baseline-batches'], 'survive':['phase-A', 'baseline-batches'],
              'cover':['phase-B'], 'policy-survive':['policy-survive']}.get(stage, [])
     cleanup_jobs(exp,config,bases)
 

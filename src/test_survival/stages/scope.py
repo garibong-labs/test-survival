@@ -12,7 +12,7 @@ from ..rules.matching import renumber
 
 
 def run(exp, config):
-    from ..dev_results import imported_groups
+    from ..dev_results import imported_groups, check_imported_scope
     imported = imported_groups(exp, config)
     adapter = JavaMavenAdapter(exp, config)
     adapter.ensure_anchor()
@@ -47,6 +47,8 @@ def run(exp, config):
     table(exp/'population/class-survey.csv', survey, ['class','file','m','has_test','d','c'])
     table(exp/'population/accessor-audit.csv', survey, ['class','m','accessors','accessor_fraction','excluded_accessors'])
     chosen, eligible = select_scope(survey, config['scope'])
+    if imported:
+        check_imported_scope(exp, config, chosen)
     selected = set(r['class'] for r in chosen)
     focal = [m for m in inventory['main']['methods'] if m['eligible'] and m['class'] in selected]
     groups=config['dev']['groups'];denominators={};excluded_counts={};observations=[]

@@ -27,6 +27,8 @@ HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE)
 # Main 01ae5d0, before storage/lifecycle-only changes. The two new provenance
 # entries did not exist in that layout. Keep all other components exact.
 PRE_FOOTPRINT = {
+    'policy_coverage.py': '4bef5ce356d3004b00d307b6c34c3e418f9ec02bedb1c4708285aee6181a6f49',
+    'PerTestCoverage.java': '1e940e096effde6bdfd59ea8465ff7728537eda7460cc9b96bf9604d3f65bb76',
     'java_maven.py': 'fbe13ded0601be99ca5684d9a867e4e18f289537b6bfb40fb86dfc3eafb7182a',
     'java_worker.py': 'd62468de6dfa7897deb0bbcce4567063a7e6836494319fa6728b34653ab9475f',
     'compilation.py': 'e76f7debb3201fc4b636479a42ec0f87409061c5fda4a62a95e74a67c1c64320',
@@ -38,7 +40,7 @@ def pre_footprint_provenance(current):
     return {**{k:v for k,v in current.items() if k not in ('io.py', 'compile_events.py')}, **PRE_FOOTPRINT}
 
 
-def survival_provenance_matches(previous, current):
+def _matches(previous, current):
     if previous == current or any(previous == {**current, **era} for era in HISTORICAL):
         return True
     if not PRE_FOOTPRINT.keys() <= current.keys():
@@ -63,3 +65,12 @@ def cached_survival_record(adapter, exp, index, group, methods):
             or not survival_provenance_matches(record['runner_sha256'], adapter.provenance())):
         return None
     return record
+
+
+PRE_BATCH = {'java_maven.py': 'ee9a09ff0719b4ddef84e1197d1dc0c5d1ee6c82c1a7c4f0f469c7f17a5300f1', 'policy_coverage.py': '4bef5ce356d3004b00d307b6c34c3e418f9ec02bedb1c4708285aee6181a6f49', 'PerTestCoverage.java': '1e940e096effde6bdfd59ea8465ff7728537eda7460cc9b96bf9604d3f65bb76'}
+
+
+def survival_provenance_matches(previous, current):
+    # New batch behavior is opt-in. Legacy worker/selection semantics did not
+    # change; compare every unrelated provenance component exactly as before.
+    return _matches(previous, current) or _matches(previous, {**current, **PRE_BATCH})

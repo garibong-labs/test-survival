@@ -8,12 +8,12 @@ from .config import regenerates
 
 def run(b):
     root = b.exp/'results/policy'
-    label = lambda g: g+' (baseline reference)' if not regenerates(b,g) else g
+    label = lambda g, p: g+' (baseline reference)' if not regenerates(b,g,p) else g
     none = root/'none'; none.mkdir(parents=True, exist_ok=True)
     shutil.copy2(b.path/'results/survival.csv',none/'survival.csv')
     shutil.copy2(b.path/'results/first-failures.csv',none/'first-failures.csv')
     changed = read_csv(b.path/'results/changed-lines.csv')
-    reference_groups = [g for g in b.groups if not regenerates(b,g)]
+    reference_groups = [g for g in b.groups if not regenerates(b,g,'none')]
     baseline_coverage = [{**{k:r[k] for k in ('index','sha','date','subject','scope_executable')},
                           **{g+s:r.get('scope_'+g+s,'') for g in b.groups for s in ('_covered','_percent')},
                           **{g+'_reference':'baseline (no regeneration)' for g in reference_groups}} for r in changed]
@@ -29,7 +29,7 @@ def run(b):
         segments = read_json(root/p/'segments.json') if p != 'none' else None
         total = read_json(root/p/'coverage-total.json')
         row = dict(policy=p)
-        table = [f'# {p}: survival by event', '', '| Index | Event | '+ ' | '.join(label(g) for g in b.groups)+' |', '|---:|---|'+ '|'.join('---:' for _ in b.groups)+'|']
+        table = [f'# {p}: survival by event', '', '| Index | Event | '+ ' | '.join(label(g,p) for g in b.groups)+' |', '|---:|---|'+ '|'.join('---:' for _ in b.groups)+'|']
         for r in curves[p]:
             if r.get('event') == 'regenerate' or any(int(r[g+'_lost']) for g in b.groups) or int(r['index']) == 0 or (p != 'none' and any(int(s['start']) == int(r['index']) for gs in segments.values() for s in gs[1:])):
                 cells = []
@@ -73,7 +73,7 @@ def run(b):
     lines = ['# Policy summary', '', '| Policy | Group | Regenerations | Entered after t | Final alive / denominator | Changed lines covered / executable |', '|---|---|---:|---:|---:|---:|']
     for r in summary:
         for g in b.groups:
-            lines.append(f'| {r["policy"]} | {label(g)} | {r[g+"_regenerations"]} | {r[g+"_entered_after_t"]} | {r[g+"_alive"]} / {r[g+"_segment_denominator"]} | {r[g+"_changed_lines_covered"]} / {r[g+"_changed_lines_executable"]} |')
+            lines.append(f'| {r["policy"]} | {label(g,r['policy'])} | {r[g+"_regenerations"]} | {r[g+"_entered_after_t"]} | {r[g+"_alive"]} / {r[g+"_segment_denominator"]} | {r[g+"_changed_lines_covered"]} / {r[g+"_changed_lines_executable"]} |')
     atomic_text(root/'summary.md','\n'.join(lines)+'\n')
     atomic_text(root/'consistency.md','# Consistency\n\n'+'\n'.join(checks)+'\n')
     figure(root,b,curves)

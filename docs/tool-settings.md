@@ -95,9 +95,9 @@ configuration or provenance. `[archive]` supports only `destination`; a missing
 table is valid and does not affect other commands. No user settings file is
 written automatically.
 
-## Policy coverage JVM heap
+## Batch and policy coverage JVM heap
 
-`SURVIVAL_JVM_JACOCO` overrides `runner.jvm.jacoco` for policy coverage JVM
+`SURVIVAL_JVM_JACOCO` overrides `runner.jvm.jacoco` for policy and batch-baseline coverage JVM
 launches (`policy-survive` and pool `policy-cover`) without editing experiment
 configuration. Use a Java heap size such as `3g`:
 
@@ -115,7 +115,8 @@ are recorded in the batch result's `runs` list, with logs under
 `work/policy-survive/<index>/chunks/<chunk>/console.txt`.
 
 The override never enters stage hashes, build fingerprints or the policy digest.
-It does not affect compilation, fallback test launchers or baseline coverage.
+It does not affect compilation, fallback test launchers or legacy baseline coverage. Batch baseline launches use this override and
+record their logs under `work/baseline-batches/<index>/`.
 Policy survival instrumentation is restricted to packages from the saved scope;
 each JVM processes at most eight snapshot groups, sequentially. Failed chunks
 fall back independently, preserving successful chunks' coverage.
@@ -154,3 +155,25 @@ if it is already exported in their launching shell. Exporting it in a different
 shell does not change an already-running process's environment.
 An already-running baseline coordinator also keeps its loaded orchestration
 code; alive-entry dispatch applies when survival starts in a new process.
+
+
+## Baseline execution and screening runs
+
+`survival.execution` accepts `legacy` (default) or `batch`. Batch uses the policy
+worker for control and survival, with scope-only line coverage in the same pass.
+The `cover` stage aggregates existing lines without Java test execution. Batch
+ignores `survival.flaky_rerun` and `survival.environment_errors` for measurement;
+these settings continue to apply to legacy measurement and their existing
+preparation/selection consumers. An omitted execution setting retains legacy
+fingerprints. Changing the mode invalidates control and later stages.
+
+`screen.stable_runs` controls generated-test screening, including generator
+pools. `dev.stable_runs` controls developer stability, including developer pool
+screening after full-suite coverage selection. Neither pool count is fixed at
+three. Defaults remain three for old configurations. Changing a run count is a
+measurement-input change; completed pools are not silently rescreened.
+
+`policies.set[].developer` accepts `regenerate` or `keep`. Omission uses the global
+`policies.regenerate_developer` value. Set `policies.groups: [dev-scope]` (or your
+developer group name) for a developer-only pool exercise; policy run has no
+`--group` flag. Always use a separate policy output directory from its baseline.

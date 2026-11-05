@@ -4,6 +4,9 @@ from ..io import read_json, write_json, atomic_text
 
 
 def run(exp,config):
+    if config['survival'].get('execution') == 'batch':
+        from .batch import control
+        return control(exp, config)
     from ..dev_results import imported_for, imported_record
     provenance, imported = imported_for(exp, config, 'control')
     adapter=JavaMavenAdapter(exp,config)

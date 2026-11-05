@@ -12,7 +12,7 @@ import threading
 from uuid import uuid4
 import xml.etree.ElementTree as ET
 
-from ..config import as_written, canonical_hash, record_runner_inputs
+from ..config import as_written, canonical_hash, record_runner_inputs, survival_inputs
 from ..io import read_json, write_json, write_csv, result_exists
 from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
@@ -361,17 +361,19 @@ class JavaMavenAdapter:
                                'runner':self.provenance() if provenance is None else provenance})
 
     def screen_fingerprints(self, source, repeats, *, provenance=None):
-        from .run_reuse import pre_footprint_provenance
+        from .run_reuse import pre_footprint_provenance, PRE_BATCH
         provenance = self.provenance() if provenance is None else provenance
-        return (self.screen_fingerprint(source, repeats, provenance=provenance),
-                self.screen_fingerprint(source, repeats, provenance=pre_footprint_provenance(provenance)))
+        old = {**provenance, **PRE_BATCH}
+        return tuple(self.screen_fingerprint(source, repeats, provenance=p) for p in
+                     (provenance, pre_footprint_provenance(provenance), old, pre_footprint_provenance(old)))
 
     def screen_file(self, group, round_name, source, repeats, number):
         relative = str(source.relative_to(self.exp))
         output = f'generated/{group}/{round_name}/validation/{number}.json'
-        key, legacy_key = self.screen_fingerprints(source, repeats)
+        keys = self.screen_fingerprints(source, repeats)
+        key = keys[0]
         old = read_json(self.exp/output,{})
-        if old.get('input_sha256') in (key, legacy_key):
+        if old.get('input_sha256') in keys:
             return old
         result = self.worker(dict(action='screen',group=group,round=round_name,file=relative,
                                   technique='KTester' if next(g for g in self.config['generators'] if g['name']==group)['method']=='ktester' else source.parent.name,
@@ -398,7 +400,7 @@ class JavaMavenAdapter:
     def run_fingerprints(self, methods, repeats=1):
         """Current key first, then the pre-policy key of records that hashed operational settings."""
         inputs={'methods':[(r['id'],r.get('execution_hash') or hashlib.sha256((self.exp/r['file']).read_bytes()).hexdigest()) for r in methods],
-                'project':self.config['project'], 'survival':self.config['survival'], 'repeats':repeats}
+                'project':self.config['project'], 'survival':survival_inputs(self.config), 'repeats':repeats}
         return (canonical_hash({**inputs, 'runner':record_runner_inputs(self.config['runner'])}),
                 canonical_hash({**inputs, 'runner':self.config['runner']}))
 

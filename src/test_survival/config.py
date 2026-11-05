@@ -214,7 +214,7 @@ SCHEMA = {
     'generators': Field(list, []),
     'screen': {'stable_runs': integer(3), 'dedup': enum('exact-body', 'exact-body'),
                'matching': enum('none', 'none', 'subsample-to-dev')},
-    'survival': {'definition': enum('cumulative-fixed-denominator', 'cumulative-fixed-denominator'),
+    'survival': {'execution': enum('legacy', 'legacy', 'batch'), 'definition': enum('cumulative-fixed-denominator', 'cumulative-fixed-denominator'),
                  'flaky_rerun': integer(1, 0), 'build_fail': enum('carry-over', 'carry-over'),
                  'environment_errors': {'patterns': Field(list, []), 'max_reruns': integer(3, 0),
                                         'backoff_seconds': Field(float, 5, minimum=0)}},
@@ -499,10 +499,20 @@ def record_runner_inputs(runner):
     return data
 
 
+def survival_inputs(config):
+    """Resolved measurement settings with the historical legacy shape."""
+    result = dict(config['survival'])
+    if result.get('execution', 'legacy') == 'legacy':
+        result.pop('execution', None)
+    return result
+
+
 def result_inputs(config):
     """Hash result-affecting settings, excluding scheduling and host wiring."""
     c = as_written(config)
     c.pop('policies', None)
+    if c.get('survival', {}).get('execution') == 'legacy':
+        c['survival'].pop('execution')
     for g in c.get('dev', {}).get('groups', []):
         if g.get('frozen', True):
             g.pop('frozen', None)
@@ -550,6 +560,8 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
             data['generators'] = selected
     if index >= 3 and 'screen' in c:
         data['screen'] = c['screen']
+    if index == 4 and c.get('survival', {}).get('execution') == 'batch':
+        data['survival'] = {'execution': 'batch'}
     if index >= 5 and 'survival' in c:
         data['survival'] = c['survival']
     if index >= 6 and 'coverage' in c:

@@ -185,6 +185,35 @@ By default, `prepare` stops when a baseline test case cannot map unambiguously t
 
 Use `range.skip_untouched` to skip irrelevant commits for every group while retaining commit indices. Use `survival.environment_errors` to retry failures whose messages match configured patterns.
 
+For a baseline measured through the policy execution path, set:
+
+```yaml
+range: {skip_untouched: main-sources}
+dev: {stable_runs: 1}
+screen: {stable_runs: 1}
+survival: {execution: batch}
+```
+
+`survival.execution` defaults to `legacy`; omitted settings keep existing result
+fingerprints. Batch measures control at t and each evaluable index with the
+shared policy worker: frozen source roots compile once on the successful path,
+and tests run in bounded JVM chunks. Survival and per-test **scope** line hits
+come from the same pass. `cover` only aggregates these records; it does not run
+tests. Batch writes scope line CSVs and raw hits, **no group coverage XML**.
+`changed-lines.csv` retains its columns, with `all` and `other` unavailable
+(empty); scope coverage and coverage at t remain available. Legacy coverage is
+unchanged.
+
+Batch ignores `survival.flaky_rerun` and environment-error reruns during
+measurement, including fallback after a failed test JVM. Outcomes are `pass`,
+`fail`, `absent`, or `compile-fail`. Preparation and screening retain their own
+rules. Coverage uses exact alive-entry sets; skipped commits carry state and
+predecessor coverage aliases. Missing coverage remains unavailable and can be
+repaired by resuming the measuring stage while keeping its recorded survival
+verdict. See [batch result formats](docs/result-formats.md#batch-baseline-results)
+and the [20-commit comparison and Java verification](docs/batch-baseline-verification.md),
+including the observed developer helper-compilation differences.
+
 Start the remaining work in the background:
 
 ```sh
@@ -254,6 +283,10 @@ two minutes with methods done/total, responses so far, and the class under repai
 The panel abbreviates repair class names to fit alongside the metrics or stage
 marks. For older workers without per-method repair records, the active class is
 unknown: their log contains repair starts but cannot establish when a class finished.
+
+Batch progress waits for its measurement inputs before auditing completion.
+Status and progress inspection are read-only, including exclusion-summary
+calculation; only measuring stages publish that summary.
 Watching an already-running experiment only reads its evidence; the periodic
 log lines require the run itself to have started with this version.
 
@@ -350,6 +383,7 @@ changes should go through normal stage invalidation.
 | `model` or other generator settings | generate |
 | `screen` | screen |
 | `survival` | survive |
+| `survival.execution` | control |
 | `coverage` | cover |
 | Other report inputs | report |
 
@@ -424,6 +458,11 @@ survival import /absolute/path/to/target-fork/experiments/weekly --from /absolut
 survival run /absolute/path/to/target-fork/experiments/weekly
 ```
 
+For batch baselines, run the destination through `--until scope` before the
+import instead of `--until prepare`. Batch evidence contains only the resolved
+scope's lines, so both experiments must select the same classes and source
+files. Legacy imports still require only preparation.
+
 Before copying evidence, `dev-results` requires identical project repo paths,
 anchor SHAs, ordered commit SHAs in `results/commits.csv`, `skip_untouched`, and
 `dev/src-test-t` tree hashes (relative file paths and contents). It refuses an
@@ -433,6 +472,10 @@ survival rules, and coverage settings must also match. Scheduling and host wirin
 may differ. Archived generation/report options are not validated; unknown measurement
 options are refused instead of silently assuming compatibility.
 Saved compatibility manifests without `dev.unmapped` are treated as `error`.
+Batch manifests also record the resolved coverage scope; older batch manifests
+without that proof must be reimported. Scope order and survey statistics may
+differ. Scope changes after import, including reselection by the scope stage,
+refuse reuse before imported denominators or coverage are used.
 Changing the policy after import also refuses reuse until compatible evidence is imported
 or the import is detached.
 
@@ -535,7 +578,8 @@ snapshots, shared runs, per-test coverage, and the two validated project plans.
 
 Prepare keeps successful per-index checkouts for survival and coverage. Each is
 released after its last consumer validates the saved results: coverage (including
-skipped-commit predecessor aliases), otherwise survival; policy indices wait for
+skipped-commit predecessor aliases), otherwise survival. Batch survival releases an index after its raw and scope-line
+projections are validated; its cover stage needs no checkout. Policy indices wait for
 their last window/regeneration batch. An uninterrupted run builds each index
 once. Failed or interrupted work stays available. Restoration preserves the original build record/logs and
 stops on a SHA, dependency or build-verdict disagreement. Changing build inputs

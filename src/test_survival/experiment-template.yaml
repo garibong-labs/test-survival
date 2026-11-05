@@ -63,6 +63,7 @@ screen:
   matching: none                # none | subsample-to-dev
 
 survival:
+  execution: legacy             # legacy | batch; batch ignores measurement retries and records scope lines only
   definition: cumulative-fixed-denominator   # only value
   flaky_rerun: 1
   environment_errors:

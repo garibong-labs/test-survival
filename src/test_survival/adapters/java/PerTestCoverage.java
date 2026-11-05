@@ -127,7 +127,32 @@ public final class PerTestCoverage implements TestExecutionListener {
         }
     }
 
+    /** Analyze only to enumerate executable scope lines, including empty groups.
+     * No test discovery, agent, probe dumps, or XML output. */
+    private static void universe(String[] args) throws Exception {
+        Set<String> files = new HashSet<>(Files.readAllLines(Paths.get(args[3])));
+        CoverageBuilder coverage = new CoverageBuilder();
+        Analyzer analyzer = new Analyzer(new org.jacoco.cli.internal.core.data.ExecutionDataStore(), coverage);
+        try (var roots = Files.list(Paths.get(args[1]))) {
+            for (Path root : roots.sorted().toList())
+                if (!root.getFileName().toString().equals("META-INF")) analyzer.analyzeAll(root.toFile());
+        }
+        List<String> lines = new ArrayList<>();
+        for (ISourceFileCoverage file : coverage.getSourceFiles()) {
+            String path = "src/main/java/" + (file.getPackageName().isEmpty() ? "" : file.getPackageName() + "/") + file.getName();
+            if (!files.contains(path)) continue;
+            for (int n = file.getFirstLine(); n <= file.getLastLine(); n++)
+                if (file.getLine(n).getInstructionCounter().getTotalCount() > 0) lines.add(path + "\t" + n);
+        }
+        Collections.sort(lines);
+        Files.write(Paths.get(args[2]), lines);
+    }
+
     public static void main(String[] args) throws Exception {
+        if (args.length == 4 && args[0].equals("--universe")) {
+            universe(args);
+            return;
+        }
         // Each line: output, production classes, selector file, isolated runtime classpath.
         for (String line : Files.readAllLines(Paths.get(args[0]))) {
             String[] p = line.split("\t", -1);

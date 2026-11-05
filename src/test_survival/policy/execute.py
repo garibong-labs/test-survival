@@ -6,10 +6,11 @@ import threading
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv
 from ..rules.survival import FAILURES, dead_method
+from ..rules.coverage import usable_lines
 from ..runner.dispatch import dispatch
 from ..work import release_checkout
 from .artifacts import snapshot
-from .config import COVERAGE_VERSION, MARKERS, active_plan, reusable_run, unmet_rows
+from .config import COVERAGE_VERSION, MARKERS, active_plan, regenerates, reusable_run, unmet_rows
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
 
 
@@ -50,12 +51,39 @@ class Runs:
     def required(self, digest, alive):
         """Members needed at an index: the alive entrants of the executing policies.
 
-        Baseline raw records and pool screening carry pass/fail only, so a method
-        a fill policy carries over, and a pool at its own regeneration commit, are
-        executed like any other member: a policy table needs every surviving
-        method's executed lines at every commit (changed-line coverage).
+        Legacy baseline records and pool screening carry pass/fail only. A
+        policy table needs each surviving member's lines at every commit;
+        matching batch-baseline observations can supply those without execution.
         """
         return {ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
+
+    def seed_baseline(self, index, digest):
+        """Import matching batch verdicts; unusable lines still require repair."""
+        path = self.path(index, digest)
+        if read_json(path) is not None:
+            return
+        observations = {}
+        for group in self.b.groups:
+            raw = self.b.raw(index, group)
+            if raw.get('execution') != 'batch' or raw.get('coverage_version') != COVERAGE_VERSION:
+                continue
+            if raw.get('sha') != self.b.by_index[index]['sha']:
+                raise ValueError('Batch baseline SHA differs at '+str(index))
+            for t in raw.get('methods', []):
+                if t.get('execution_hash') == digest and t.get('state') not in MARKERS:
+                    observations[identity(t)] = t
+        if not observations:
+            return
+        methods = []
+        for ident, t in self.catalog[digest].items():
+            observed = observations.get(ident)
+            methods.append({**t, **{k:observed[k] for k in ('state','message','flaky','lines','remeasured_state') if k in observed}}
+                           if observed else dict(t,state='not-selected',flaky=False,lines=[]))
+        complete = all(usable_lines(t) for t in methods)
+        self.step(f'run-{digest}-{index}', lambda:write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'],
+                  status='evaluated', coverage_version=COVERAGE_VERSION, coverage_status='complete' if complete else 'missing',
+                  coverage_reason='' if complete else 'batch baseline lacks usable per-test coverage',
+                  measurement_source='batch baseline', methods=methods)), outputs=[path])
 
     def run_index(self, index, digests, *, alive=None, dead_at=None, label=None, evaluated=None):
         """Measure the required members of `digests` at `index` that have no usable
@@ -77,6 +105,7 @@ class Runs:
         reasons = {}
         collected = []
         for h in digests:
+            self.seed_baseline(index, h)
             prior = read_json(self.path(index,h), {})
             state = read_json(self.b.exp/f'state/policy-run-{h}-{index}.json', {})
             if state.get('status') == 'completed' and reusable_run(prior, required_methods=required[h]):
@@ -85,7 +114,7 @@ class Runs:
             rows = {identity(t): t for t in prior.get('methods', []) if 'class' in t and 'method' in t} if current else {}
             for ident, t in self.catalog[h].items():
                 row = rows.get(ident)
-                usable = row is not None and row.get('state') not in MARKERS and 'lines' in row
+                usable = row is not None and row.get('state') not in MARKERS and usable_lines(row)
                 if ident not in required[h]:
                     # Not needed here: keep a usable row another batch measured
                     # (the regeneration batch's new entrants), else write a marker.
@@ -100,13 +129,13 @@ class Runs:
                 elif usable or (evaluated is not None and ident in consumed[h] and row is not None and row.get('state') not in MARKERS):
                     kept[h][ident] = row
                 else:
-                    if row is not None and row.get('state') not in MARKERS and ident in consumed[h]:
-                        # The per-file fallback kept this survival verdict when the
-                        # coverage JVM died, and the policies evaluated from it.
-                        # Measuring again refreshes the lines, never the verdict.
+                    if row is not None and row.get('state') not in MARKERS:
+                        # This includes seeded baseline verdicts at regeneration,
+                        # before a later segment consumes them. Coverage repair
+                        # refreshes their lines, never their recorded verdict.
                         verdicts[h][ident] = {k: row[k] for k in ('state', 'message', 'flaky') if k in row}
                     collected.append(t)
-            if any('lines' not in row for row in kept[h].values()):
+            if any(not usable_lines(row) for row in kept[h].values()):
                 reasons[h] = prior.get('coverage_reason', '')
         batch = None
         def measure():
@@ -143,14 +172,15 @@ class Runs:
                 scope = {c['file'] for c in self.b.scope['classes']}
                 observed = [{**t, 'message':t.get('message', '')[:4000], **({'lines':[line for line in t['lines'] if line[0] in scope]} if 'lines' in t else {})}
                             for t in observed]
-                complete = all('lines' in t for t in observed)
+                complete = all(usable_lines(t) for t in observed)
                 # Reasons are derived from the final rows, kept or measured, so a
                 # rewrite carries a disagreement or a non-executing remeasure over.
                 disagreed = [t for t in observed if t.get('remeasured_state') in ('pass', 'fail') and t['remeasured_state'] != t.get('state')]
                 parts = []
                 if not complete:
+                    unexecuted = [str(t['remeasured_state']) for t in observed if t.get('remeasured_state') not in (None, 'pass', 'fail')]
                     parts.append(raw.get('coverage_reason') or reasons.get(digest, '')
-                                 or (f'remeasure did not execute {len(unsettled)} passing method(s): '+', '.join(sorted(set(unsettled))) if unsettled else 'missing per-test coverage'))
+                                 or (f'remeasure did not execute {len(unexecuted)} method(s): '+', '.join(sorted(set(unexecuted))) if unexecuted else 'missing per-test coverage'))
                 if disagreed:
                     parts.append(f'remeasure disagreed with the recorded verdict for {len(disagreed)} method(s)')
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
@@ -169,16 +199,15 @@ class Runs:
         return {p for p in self.excluded if any((exp/p).resolve().is_relative_to(r) for r in roots)}
 
     def track_missing(self, index, digest, saved):
-        """Keep `missing` in step with the record on disk: a lineless observation
-        is listed with the record's reason, and a later measurement that gives it
-        lines clears it. Marker rows are not measurements in either direction."""
+        """List unusable coverage with its reason until a usable retry clears it.
+        Marker rows are not measurements in either direction."""
         reason = saved.get('coverage_reason') or 'missing per-test coverage'
         for t in saved.get('methods', []):
             ref = self.catalog[digest].get(identity(t))
             if ref is None or t.get('state') in MARKERS:
                 continue
             k = (index, key(ref))
-            if 'lines' in t:
+            if usable_lines(t):
                 self.missing.pop(k, None)
             else:
                 self.missing[k] = reason
@@ -299,7 +328,7 @@ def survive(b, plan, pools, step):
     current = {p:{g:segment(1,0,tests,[]) for g,tests in frozen.items()} for p in policies}
     segments = {p:{g:[s] for g,s in gs.items()} for p,gs in current.items()}
     alive = {p:{g:{key(t) for t in s['tests']} for g,s in gs.items()} for p,gs in current.items()}
-    points = {p:{(x['group'],x['index']) for x in plan['points'] if x['trigger']==policy['trigger'] and x['index'] is not None} for p,policy in policies.items()}
+    points = {p:{(x['group'],x['index']) for x in plan['points'] if x['trigger']==policy['trigger'] and x['index'] is not None and regenerates(b,x['group'],policy)} for p,policy in policies.items()}
     curves = {p:[] for p in policies}; failures = {p:[] for p in policies}; alive_at = {p:{} for p in policies}
     entering_at = {p:{} for p in policies}
     def row_for(commit, p, event, stats):
@@ -404,7 +433,14 @@ def survive(b, plan, pools, step):
 GENERATOR_SCRATCH_DIRS = ('temp',)
 
 
-def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
+def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources"):
+    """Calculate exclusions and publish their summary at a measuring site."""
+    excluded, summary = screening_exclusion_details(exp, pools, frozen, baseline, methods, baseline_prefix)
+    write_json(exp/'results/policy/excluded-sources.json', summary)
+    return excluded
+
+
+def screening_exclusion_details(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources"):
     """Exclude rejected test candidates and generator scratch files from policy jobs.
 
     `pools` maps (group, index) to the pool's tests; `frozen` maps a group to its
@@ -419,8 +455,8 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
     Scratch subtrees are excluded because a snapshot copies every sibling of a
     kept test: without this the whole-root compile fails at every index and an
     unparsable attempt can abort the per-file fallback. Pool artifacts on disk
-    and their stored hashes are not modified; a per-tree summary goes to
-    results/policy/excluded-sources.json.
+    and their stored hashes are not modified. Return exclusions and their
+    per-tree summary without writing either; the measuring caller publishes it.
     """
     if (pools or frozen) and methods is None:
         raise ValueError('screening_exclusions: methods (group -> generation method) is required')
@@ -457,6 +493,5 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None):
         collect(f'{group}/{index}', group, root, root, tests)
     for group, tests in (frozen or {}).items():
         if tests and baseline is not None and methods.get(group) != 'dev':
-            collect(f'{group}/t', group, Path(baseline), exp/'results/policy/baseline-sources', tests)
-    write_json(exp/'results/policy/excluded-sources.json', summary)
-    return excluded
+            collect(f'{group}/t', group, Path(baseline), exp/baseline_prefix, tests)
+    return excluded, summary

@@ -39,6 +39,10 @@ def build(exp,config):
     totals={}
     for category in ['all','scope','other']:
         lines += ['## '+category.capitalize()+' files','','| Index | Subject | Executable lines | '+' | '.join(labels[g]+' covered' for g in groups)+' | '+' | '.join(labels[g]+' lost' for g in groups)+' |','|---:|---|---:|'+'---:|'*(2*len(groups))]
+        if config['survival'].get('execution') == 'batch' and category != 'scope':
+            lines.append('Unavailable: batch execution measures scope files only.')
+            totals[category] = dict(executable=None, **{g:None for g in groups})
+            continue
         visible=[r for r in rows if r[category+'_executable'] not in ['',0]]
         for row in visible:
             n=row[category+'_executable'];cells=[row['index'],md(row['subject']),str(n)]
@@ -56,10 +60,12 @@ def build(exp,config):
     atomic_text(exp/'results/table3-changed-line-coverage.md','\n'.join(lines)+'\n')
     notify(exp)
     lines=['# Table 4. Exposure versus break','','Exposure is coverage at c−1 of at least one executable pre-image changed line. Break is any cumulative first failure at c. Pure insertions are unexposed.','','| Exposure / break | '+' | '.join(labels[g] for g in groups)+' |','|---|'+'---:|'*len(groups)]
+    if config['survival'].get('execution') == 'batch':
+        lines.insert(3, 'Batch exposure uses scope files only.')
     exposure={g:Counter() for g in groups}
     for row in rows:
         for g in groups:
-            pre=row[g+'_pre_image_covered'];post=row['all_'+g+'_covered']
+            pre=row[g+'_pre_image_covered'];post=row[('scope_' if config['survival'].get('execution') == 'batch' else 'all_')+g+'_covered']
             if pre=='' or post=='':exposure[g]['unavailable']+=1
             else:exposure[g][(pre>0,row[g+'_lost']>0)]+=1
     for label,key in [('Exposed / lost',(True,True)),('Exposed / no loss',(True,False)),('Unexposed / lost',(False,True)),('Unexposed / no loss',(False,False)),('Unavailable','unavailable')]:

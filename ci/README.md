@@ -45,7 +45,7 @@ python ci/java_fixture.py libraries /tmp/survival-java-libs
 SURVIVAL_JAVA_TEST_IMAGE=survival-java-ci:fixture \
 SURVIVAL_JAVA_TEST_LIBS=/tmp/survival-java-libs \
 SURVIVAL_REQUIRE_JAVA_TESTS=1 \
-python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py --junitxml=java-results.xml
+python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py --junitxml=java-results.xml
 python ci/java_fixture.py report java-results.xml
 ```
 

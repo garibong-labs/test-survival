@@ -1,5 +1,6 @@
 """Compute changed-scope-line coverage from survival evidence; never launch Java."""
 from ..io import result_exists, read_csv, read_json, write_csv, write_json
+from ..rules.coverage import usable_lines
 from .config import regenerates
 from .segments import execution_id, identity
 
@@ -19,7 +20,7 @@ def run(b, step):
         # or not the index changes scope lines, and this stage adds its own.
         missing = list(read_csv(missing_path)) if missing_path.exists() else []
         batch_missing = {(int(r['index']),r['group']):r['reason'] for r in missing}
-        references = [g for g in b.groups if not regenerates(b,g)]
+        references = [g for g in b.groups if not regenerates(b,g,p)]
         for change_row in changes:
             index = int(change_row['index'])
             if not change_row.get('scope_executable') or int(change_row['scope_executable']) == 0 or not b.evaluable(index):
@@ -51,7 +52,7 @@ def run(b, step):
                         found = [r for r in raw.get('methods', []) if identity(r) == identity(t)]
                         if not found or 'lines' not in found[0]:
                             reasons.add(raw.get('coverage_reason') or 'missing per-test coverage')
-                        elif found[0].get('remeasured_state') not in (None, 'pass', 'fail'):
+                        elif not usable_lines(found[0]):
                             # The member ran when the policies evaluated it, but the
                             # measurement that gave the row its (empty) lines did not
                             # execute it: unavailable, not zero.

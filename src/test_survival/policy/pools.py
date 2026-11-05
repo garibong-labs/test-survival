@@ -12,7 +12,7 @@ from ..config import canonical_hash, generator_config
 from ..io import read_csv, read_json, write_csv, write_json
 from ..rules.dev_denominator import denominator, frozen_method
 from ..stages.generate import run as generate
-from ..stages.screen import screen_round
+from ..stages.screen import screen_round, normalize_funnel
 from ..importer import rounds
 from .artifacts import snapshot
 from .config import active_plan, regenerates
@@ -42,8 +42,6 @@ def pool_config(b, point):
     """Use identical runner settings for pool execution and host cleanup retries."""
     config = deepcopy(b.execution_config)
     config['anchor'] = point['sha']
-    config['screen']['stable_runs'] = 3
-    config['dev']['stable_runs'] = 3
     config['runner']['reuse'] = {'checkouts':None, 'classpath_cache':None}
     g = next((g for g in config['generators'] if g['name'] == point['group']), None)
     if g is not None:
@@ -85,7 +83,7 @@ def build_pool(b, point, dev_target):
         for directory in rounds(exp/'generated'/group):
             kept, _ = screen_round(exp, config, g, directory, kept)
         method = g['method']
-        write_json(exp/'funnel.json', [read_json(d/'funnel.json') for d in rounds(exp/'generated'/group)])
+        write_json(exp/'funnel.json', [normalize_funnel(read_json(d/'funnel.json')) for d in rounds(exp/'generated'/group)])
     else:
         method = 'dev'
         members = []
@@ -107,16 +105,16 @@ def build_pool(b, point, dev_target):
                                  {c.rsplit('.',1)[-1] for c in main['classes']})
             ids = {(r['class'],r['method']) for r in chosen}
             selected = [t for t in members if (t['class'],t['method']) in ids]
-        # Strict 3/3: no flaky rescue in pool screening.
+        # Every configured screening run must pass; no flaky rescue.
         record = adapter.worker(dict(action='run', index=0, sha=point['sha'], group=group, phase='policy-screen', methods=selected,
-                                     repeats=3, retry=False, environment_retry=False, input_sha256=canonical_hash(selected),
+                                     repeats=config['dev']['stable_runs'], retry=False, environment_retry=False, input_sha256=canonical_hash(selected),
                                      runner_sha256=adapter.provenance(), output='results/dev-screen.json', work='work/dev-screen'))
         seen = set(); kept = []
         for t in record['methods']:
             if t['state'] == 'pass' and t['body_hash'] not in seen:
                 kept.append(t); seen.add(t['body_hash'])
         write_json(exp/'per-test-coverage.json', full)
-        write_json(exp/'funnel.json', dict(discovered=len(members), selected=len(selected), stable_3_of_3=sum(t['state']=='pass' for t in record['methods']), kept=len(kept)))
+        write_json(exp/'funnel.json', dict(discovered=len(members), selected=len(selected), stable_runs=config['dev']['stable_runs'], stable_passed=sum(t['state']=='pass' for t in record['methods']), kept=len(kept)))
     # Sources already live beneath the new experiment; normalize all references to its root.
     prefix = str(exp.relative_to(b.exp))
     pool = snapshot(exp, b.exp, kept, group=group, method=method, scope=b.scope['classes'], prefix=prefix)
@@ -136,6 +134,8 @@ def matching_target(b, plan, group, index, pools):
         relevant = [p for p in plan['points'] if p['trigger'] == policy['trigger'] and p['index'] is not None]
         if not any(p['group'] == group and p['index'] == index for p in relevant):
             continue
+        if not regenerates(b, dev, policy):
+            targets.append(len(b.frozen[dev])); continue
         preceding = sorted({p['index'] for p in relevant if p['group'] == dev and p['index'] < index})
         if not preceding:
             targets.append(len(b.frozen[dev])); continue

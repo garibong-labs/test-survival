@@ -14,6 +14,15 @@ from ..rules.dev_denominator import frozen_method,denominator_file,validate_deri
 FIELDS=['file','class','method','kind','body_hash','round','technique']
 
 
+def normalize_funnel(funnel):
+    """Read old three-run funnels without rewriting their source artifacts."""
+    if funnel is None:
+        return None
+    if 'stable_3_of_3' in funnel:
+        return {'stable_runs':3, 'stable_passed':funnel['stable_3_of_3'], **funnel}
+    return dict(funnel)
+
+
 def classification(text):
     diagnostics = re.split(r'(?m)(?=^.*\.java:\d+: error:)', text)
     first = next((d for d in diagnostics if re.match(r'^.*\.java:\d+: error:', d)), None)
@@ -56,7 +65,7 @@ def screen_round(exp,config,g,directory,prior=()):
             seen.add(row['body_hash']);kept.append(row)
     ndev=len(read_csv(exp/'dev/dev-denominator.csv'))
     excluded=read_json(exp/'results/anchor.json',{}).get('dev_unmapped_excluded',0)
-    funnel=dict(group=g['name'],round=directory.name,files=len(sources),compiled=sum(bool(r['compile']) and r['compile']['exit_code']==0 for r in records),methods=sum(len(r['methods']) for r in records),stable_3_of_3=stable,duplicates=duplicate,kept_this_round=stable-duplicate,total_kept=len(kept),developer_denominator=ndev,ratio_to_dev=len(kept)/ndev if ndev else None,per_prompt={})
+    funnel=dict(group=g['name'],round=directory.name,files=len(sources),compiled=sum(bool(r['compile']) and r['compile']['exit_code']==0 for r in records),methods=sum(len(r['methods']) for r in records),stable_runs=config['screen']['stable_runs'],stable_passed=stable,duplicates=duplicate,kept_this_round=stable-duplicate,total_kept=len(kept),developer_denominator=ndev,ratio_to_dev=len(kept)/ndev if ndev else None,per_prompt={})
     funnel.update(dev_unmapped_excluded=excluded,notes=[unmapped_note(excluded)] if excluded else [])
     for tech in ['KTester'] if g['method']=='ktester' else ['ZSL','FSL','CoT','ToT','GToT']:
         selected=[r for r in records if g['method']=='ktester' or Path(r['file']).parent.name==tech]

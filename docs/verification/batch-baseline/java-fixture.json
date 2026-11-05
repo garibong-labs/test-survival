@@ -1,0 +1,95 @@
+{
+  "passed": true,
+  "pool_methods": 4,
+  "funnel": {
+    "discovered": 4,
+    "selected": 4,
+    "stable_runs": 1,
+    "stable_passed": 4,
+    "kept": 4
+  },
+  "timings": [
+    {
+      "step": "prepare",
+      "seconds": 25.499
+    },
+    {
+      "step": "import",
+      "seconds": 0.173
+    },
+    {
+      "step": "screen",
+      "seconds": 2.652
+    },
+    {
+      "step": "control",
+      "seconds": 8.319
+    },
+    {
+      "step": "survive",
+      "seconds": 11.972
+    },
+    {
+      "step": "cover",
+      "seconds": 0.172
+    },
+    {
+      "step": "report",
+      "seconds": 1.015
+    },
+    {
+      "step": "policy-plan",
+      "seconds": 0.173
+    },
+    {
+      "step": "policy-pools",
+      "seconds": 15.731
+    },
+    {
+      "step": "policy-run",
+      "seconds": 15.666
+    },
+    {
+      "step": "interrupt-control",
+      "seconds": 15.743
+    },
+    {
+      "step": "live-status",
+      "seconds": 0.124
+    },
+    {
+      "step": "stop",
+      "seconds": 0.272
+    },
+    {
+      "step": "stopped-status",
+      "seconds": 0.073
+    },
+    {
+      "step": "resume-survive",
+      "seconds": 14.451
+    },
+    {
+      "step": "resume-cover",
+      "seconds": 0.173
+    },
+    {
+      "step": "resumed-status",
+      "seconds": 0.072
+    },
+    {
+      "step": "policy-resume",
+      "seconds": 0.233
+    }
+  ],
+  "tool_head": "ab2bd3d",
+  "checks": [
+    "developer pool built with stable_runs=1",
+    "reset segments opened and executed at 2 and 3",
+    "keep policy retained one baseline segment",
+    "stop/status/resume exercised on a live batch",
+    "resumed survival/first-failures/changed-lines byte-identical",
+    "completed pools unchanged on policy resume",
+    "batch coverage has no XML and blank all/other columns"
+  ]
+}

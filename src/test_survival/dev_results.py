@@ -7,7 +7,7 @@ import shutil
 
 import yaml
 
-from .config import MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate, execution_groups
+from .config import survival_inputs, MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate, execution_groups
 from .io import compressed_result, logical_glob, resolve_path, result_exists, result_hash, now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
 from .rules.dev_denominator import denominator_file, unmapped_note
@@ -80,6 +80,23 @@ def tree_hash(root):
                            for p in sorted(root.rglob('*')) if p.is_file()})
 
 
+def resolved_scope(classes):
+    """Only the resolved instrumentation boundary affects batch line evidence."""
+    if not isinstance(classes, list) or any(not isinstance(row, dict) or
+            any(not isinstance(row.get(key), str) or not row[key] for key in ('class', 'file')) for row in classes):
+        raise PipelineError('dev-results requires a resolved coverage scope; run through --until scope before importing batch results')
+    pairs = sorted({(row['class'], row['file']) for row in classes})
+    return [{'class': name, 'file': file} for name, file in pairs]
+
+
+def check_imported_scope(exp, config, classes):
+    """Scope can be reselected after import; check before reusing denominators."""
+    record = load_provenance(exp)
+    if record and config['survival'].get('execution') == 'batch':
+        if resolved_scope(classes) != record['compatibility'].get('resolved_scope'):
+            raise PipelineError(f'dev-results refused: resolved coverage scope differs{DETACH}')
+
+
 def identity(exp, config):
     anchor = read_json(exp/'results/anchor.json', {})
     commits_path = exp/'results/commits.csv'
@@ -88,13 +105,16 @@ def identity(exp, config):
     commits = read_csv(commits_path)
     if any(not row.get('sha') or row.get('index') != str(i) for i, row in enumerate(commits, 1)):
         raise PipelineError(f'dev-results requires an indexed commit sha sequence: {commits_path}')
-    return dict(project_repo=str(Path(config['project']['repo']).resolve()), anchor_sha=anchor['sha'],
+    result = dict(project_repo=str(Path(config['project']['repo']).resolve()), anchor_sha=anchor['sha'],
                 commit_shas=[row['sha'] for row in commits], skip_untouched=config['range']['skip_untouched'],
                 dev_tree_sha256=tree_hash(exp/'dev/src-test-t'),
                 measurement_settings=dict(project={k: v for k, v in config['project'].items() if k != 'repo'},
-                                          runner=runner_inputs(config['runner']), survival=config['survival'],
+                                          runner=runner_inputs(config['runner']), survival=survival_inputs(config),
                                           stable_runs=config['dev']['stable_runs'], unmapped=config['dev']['unmapped'],
                                           coverage=config['coverage']))
+    if config['survival'].get('execution') == 'batch':
+        result['resolved_scope'] = resolved_scope(read_json(exp/'population/scope.json', {}).get('classes'))
+    return result
 
 
 DETACH = '; remove the dev-results entry from state/import.json to measure these groups afresh'
@@ -115,7 +135,7 @@ def check_identity(actual, expected, *, advice=''):
     expected = {**expected, 'measurement_settings': {'unmapped': 'error', **expected.get('measurement_settings', {})}}
     labels = dict(project_repo='project repo', anchor_sha='anchor sha', commit_shas='commit sha sequence',
                   skip_untouched='skip_untouched', dev_tree_sha256='dev/src-test-t tree hash',
-                  measurement_settings='result-affecting measurement settings')
+                  measurement_settings='result-affecting measurement settings', resolved_scope='resolved coverage scope')
     for key, label in labels.items():
         if actual.get(key) != expected.get(key):
             detail = _divergence(actual.get(key), expected.get(key)) if key == 'measurement_settings' else ''

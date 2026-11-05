@@ -26,6 +26,13 @@ Headers below follow the archived experiment and are checked by `tests/test_form
 
 Both `dev-baseline` and `dev-results` imports include `dev/dev-unmapped-excluded.csv` in `state/import.json` file checksums when the source has it, remove stale destination audits when absent, and immediately refresh the anchor count and deviation note. Imported audit bytes are verified before baseline reuse. `dev-results` compatibility records store the resolved policy as `measurement_settings.unmapped`; an omitted field in an older manifest means `error`.
 
+Batch `dev-results` compatibility additionally stores `resolved_scope`: sorted,
+distinct `{class, file}` pairs from `population/scope.json`. Both experiments
+must have resolved scope before importing. This proof is checked before copying,
+on subsequent reuse, and against any newly selected scope before retaining
+imported denominators. Batch manifests missing it require reimport; legacy
+compatibility records and layouts remain unchanged.
+
 `dev/dev-denominator.csv`: `class,method,kind`.
 
 `population/class-survey.csv`: `class,file,m,has_test,d,c` where `m` is the focal method count, `has_test` `yes`/`no`, `d` the dedicated-test method count, `c` the number of commits in range that change the class.
@@ -75,6 +82,65 @@ Tables. Match the hand-run files exactly in structure, including title lines, co
 - `consistency.md`: the JSON block `{nonincreasing, index_zero_equals_denominators, raw_records, expected_raw_records, raw_count_matches, missing_records, build_fail_indices}`, the coverage sentence, and the `## <N>-group checks` table with rows `Fixed denominator`, `Final survivors`, `Survival records`, `Coverage records`, `Matching executable universes`.
 
 Group display names in tables: `dev` → `Dev`, `ktester` → `KTester`, `ouedraogo` → `Ouédraogo`, `ouedraogo-adj` → `Ouédraogo (adjusted)`, `ouedraogo-adj2` → `Ouédraogo (adjusted 2)`. Put the mapping in configuration as an optional `display` key on each generator entry, defaulting to the name.
+
+## Batch baseline results
+
+With `survival.execution: batch`, the baseline keeps survival/failure/denominator
+and report formats, with these explicit differences:
+
+- `results/baseline-batches/<index>.json.gz` stores the shared observation grid,
+  input and runner identities, coverage schema, scope executable `universe`,
+  `compile` attempts, chunk `runs`, fallback `files`, and canonical methods.
+  `<index>-measurement.json` retains the worker's latest measurement evidence.
+- Group raw/control records add `execution: batch`, `batch_input_sha256`,
+  `measurement_source`, `coverage_version`, `coverage_status`, `coverage_reason`,
+  and ignored retry settings. Methods retain baseline IDs and add source,
+  resource and execution hashes plus `lines: [[file, line], ...]`. Missing
+  `lines` means unavailable; an empty list means no measured hits. Previously
+  lost methods use `state: dead` and no new execution evidence.
+- Batch outcomes are `pass`, `fail`, `absent`, `compile-fail`, with `flaky: false`.
+  JVM-failure fallback disables both retry mechanisms. Remeasuring missing hits
+  preserves consumed verdicts and records `remeasured_state` on disagreements.
+  Repairs with `remeasured_state: absent` or `compile-fail` remain unavailable
+  and are retried on resume; an empty line list alone does not make them usable.
+  Policy imports and shared-run caches apply the same rule. They retain the
+  recorded survival verdict while repairing coverage, including previously
+  seeded records that incorrectly claimed `coverage_status: complete`.
+- Local derived groups inherit their parent's observations, including when the
+  parent is imported. Chained derivations preserve per-test lines and verdicts
+  without executing the child independently; imported files remain unchanged.
+- `results/coverage/<index>-<group>-lines.csv.gz` contains only executable scope
+  source lines. Empty test groups still get the scope executable universe and
+  uncovered rows. There is **no** `results/coverage/<index>-<group>.xml` (or gzip
+  XML) in batch mode, and no retained per-member probes for later XML creation.
+  Coverage-scoped developer selection at t remains its separate existing stage.
+- `raw-coverage` records are projections of the original batch, not second runs.
+  `phase: B` identifies the consumer, with exact alive-entry method membership.
+  A failed coverage observation uses `status: coverage-missing` and no line CSV.
+- `changed-lines.csv` keeps the legacy header. All `all_*` and `other_*` values
+  are empty/unavailable; `scope_*` values are populated where measured. Exposure
+  counts and table 4 use scope pre-images. Skipped predecessors use the existing
+  `coverage-index-aliases.json`; build failures remain unavailable.
+- Coverage aggregation and reports never execute Java tests. Index zero's hits
+  come from batch control; other indices' hits come from survival. Ordered
+  projection removes speculative executions outside the exact alive-entry set.
+- Batch control and survival publish `results/policy/excluded-sources.json`,
+  the per-tree counts of kept, rejected and scratch sources. Status, progress
+  and completed-stage audits calculate exclusions without publishing evidence,
+  even when the summary is absent. Audits wait for the resolved scope, anchor,
+  frozen denominators and (for survival) commit sequence/path records.
+- The final summary includes `execution: batch`, `coverage_scope: scope` and
+  `ignored_settings`. Scope-only measurement does not itself mark a run partial;
+  genuinely missing scope measurements do. `phase_seconds.cover` is aggregation
+  time. All/other report sections explicitly say unavailable.
+
+Legacy mode is the default and retains full-production line maps and XML. The
+new mode does not migrate finished legacy experiments or accept their lineless
+raw records as batch measurements. Per-index batch input identities include the
+implementation, scope, selected sources/helpers/resources, runner and settings.
+Status and resume retain the existing run lock and worker/container ownership;
+failed or interrupted batch scratch is retained. Successful checkouts release
+after durable group projections validate, before the non-executing cover stage.
 
 ## Archives
 
@@ -213,7 +279,7 @@ state, stage hashes, or execution provenance.
 
 `generated/<group>/rounds.json`: `source: imported` and `source_path` for imported data, or `config_hash` for new generation; `rounds` contains `round`, `directory`, `funnel`, and optional `model_calls`/`source`; `stopped` records the stop reason. Imported directories each get an independent ordinal `round`; `archived_round` and `archived_retry` retain the original numbering, with legacy `roundN-retry` mapping to archived retry 1.
 
-Funnel JSON records `group`, `round`, `files`, `compiled`, `methods`, `stable_3_of_3`, `duplicates`, `kept_this_round`, `total_kept`, `developer_denominator`, `ratio_to_dev`, `per_prompt`. The legacy `stable_3_of_3` name means all configured screening runs. Compile-failure records contain `file`, `category`, and `diagnostic`.
+Funnel JSON records `group`, `round`, `files`, `compiled`, `methods`, `stable_runs`, `stable_passed`, `duplicates`, `kept_this_round`, `total_kept`, `developer_denominator`, `ratio_to_dev`, `per_prompt`. The stable count means methods passing every configured screening run. Readers accept old `stable_3_of_3` counts; new funnels explicitly state the run count. Developer pool funnels use the same two fields alongside `discovered`, `selected`, and `kept`. Reading old funnels does not rewrite their source files. Compile-failure records contain `file`, `category`, and `diagnostic`.
 
 ## Dashboard mappings
 
