@@ -65,7 +65,10 @@ def test_histories_cache_generated_and_completion_preserved(tmp_path):
 def test_resumed_worker_preserves_interrupted_attempt(tmp_path):
     config=fixture(tmp_path)
     retain_previous_work(tmp_path,'work/phase-A/2/dev')
-    assert not (tmp_path/'work/phase-A/2/dev').exists()
+    assert (tmp_path/'work/phase-A/2/dev').exists()
+    # The worker clears the original tree; the snapshot has independent inodes.
+    import shutil
+    shutil.rmtree(tmp_path/'work/phase-A/2/dev')
     attempts=list((tmp_path/'work/failed-attempts/phase-A/2/dev').glob('*/0/classes/T.class'))
     assert len(attempts)==1 and attempts[0].read_bytes()==b'class'
     finish_work(tmp_path,config)

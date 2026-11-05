@@ -196,7 +196,11 @@ def retain_previous_work(exp, relative):
     # Parent chain is validated before moving; run ownership excludes other writers.
     if any(p.is_symlink() for p in [root, *root.parents] if p != exp.parent and p.is_relative_to(exp)):
         raise RuntimeError('Refusing symlink scratch')
-    root.rename(target)
+    # Docker Desktop may retain a guest dentry after a host rename. Moving
+    # would let the next worker's rmtree reach the moved evidence (or fail on
+    # its stale name). Copy to independent inodes; the worker owns clearing
+    # the unchanged original directory after this durable snapshot is complete.
+    shutil.copytree(root, target)
     write_json(target.with_suffix('.json'),dict(original=str(relative),reason='retained before retry',**counts))
 
 

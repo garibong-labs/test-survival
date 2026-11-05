@@ -338,10 +338,11 @@ retain their original diagnostics for later classification. Baseline failed
 file subtrees remain whole; shared failed policy batches remain whole because
 multiple methods can share their compilation and coverage evidence.
 
-On a worker retry, existing scratch is retained under
+On a worker retry, existing scratch is copied to independent files under
 `work/failed-attempts/<original-work-relative-path>/<attempt-id>/`, with a sibling
 JSON record identifying the original path. A resumed worker does not erase its
-interrupted attempt. These histories are not removed on successful completion.
+interrupted attempt. Copying avoids Docker Desktop stale-directory aliases after
+a host rename; the worker then clears only the original directory. These histories are not removed on successful completion.
 
 `results/work-cleanup.json` records cumulative `removed_files`, `removed_bytes`
 (logical bytes), and `retained_failures` keyed by relative work path with current
