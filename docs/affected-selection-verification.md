@@ -269,7 +269,7 @@ old progress undercount as historical evidence.
 
 ## Lifecycle, readers, and automated tests
 
-At implementation commit `d8bd14a`, CI passes all **870 tests**: 854 Python
+Final validation covers **870 tests**: 854 Python
 tests on both Python 3.12 and 3.14, plus all 16 real Java 25 fixtures, with zero
 Java skips, failures, or errors. The fixtures cover
 runtime reflection outside scope, discovery-only parameter-provider hits,
