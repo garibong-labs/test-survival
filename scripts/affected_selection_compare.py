@@ -131,7 +131,7 @@ def run(root,mode,tool,policy=False,*,prepare_tool=None,resume=False,resume_from
 
 
 def compare(root,policy=False):
-    from test_survival.io import read_json,read_csv,logical_glob,result_exists
+    from test_survival.io import read_json,read_csv,write_csv,logical_glob,result_exists
     exps={m:root/'repo/experiments'/(m+'-policies' if policy else m) for m in ('all','affected')}
     differences=[]
     def diff(kind,identity,left,right):
@@ -212,6 +212,29 @@ def compare(root,policy=False):
             diff(name,'table',read_csv(exps['all']/'results'/name),read_csv(exps['affected']/'results'/name))
         for path in logical_glob(exps['all']/'results/coverage','*-lines.csv'):
             diff('scope-lines',path.name,read_csv(path),read_csv(exps['affected']/'results/coverage'/path.name))
+        # Additional diagnostic: selection can shift initializer attribution
+        # between methods even when every required group line union is equal.
+        line_differences=[]
+        for event in curves['all']:
+            index=int(event['index'])
+            if index and event['evaluated']!='yes':continue
+            for group in groups:
+                observed={}
+                for mode,exp in exps.items():
+                    path=exp/f'results/{"raw" if index else "control"}/{index}-{group}.json'
+                    derived=exp/f'results/raw-derived/{index}-{group}.json'
+                    if index and result_exists(derived):path=derived
+                    observed[mode]={t['id']:t for t in read_json(path)['methods'] if t['state']!='dead'}
+                for ident in observed['all'].keys() & observed['affected'].keys():
+                    rows={m:observed[m][ident] for m in exps}
+                    lines={m:{tuple(line) for line in rows[m].get('lines',[])} for m in exps}
+                    for file,line in sorted(lines['all'] ^ lines['affected']):
+                        line_differences.append(dict(index=index,group=group,id=ident,
+                            action=rows['affected'].get('selection_action','executed'),file=file,line=line,
+                            all=(file,line) in lines['all'],affected=(file,line) in lines['affected']))
+        line_differences.sort(key=lambda r:(r['index'],r['group'],r['id'],r['file'],r['line']))
+        write_csv(root/'method-line-differences.csv',line_differences,
+                  ['index','group','id','action','file','line','all','affected'])
     summary={}
     for m,e in exps.items():
         batches=e/('results/policy/batches' if policy else 'results/baseline-batches')

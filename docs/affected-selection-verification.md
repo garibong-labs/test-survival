@@ -137,19 +137,21 @@ snapshots, rather than a stock target-project test-suite timing.
 
 ## Lifecycle, readers, and automated tests
 
-All **858 tests passed**, including all 16 real Java integration fixtures,
-in 213.83 s. The fixtures cover runtime reflection outside scope, test-helper
-bytecode closure and source constants, nested classes, unknown mappings,
-selection triggers and non-triggers, endpoint renames, segment/control history,
-carried lines, invalid origins, iterative compilation beyond 100 errors,
+At implementation commit `6adc038`, CI passes all **864 tests**: 848 Python
+tests on both Python 3.12 (42.50 s) and 3.14 (37.28 s), plus all 16 real Java 25
+fixtures (158.29 s), with zero Java skips, failures, or errors. The fixtures cover
+runtime reflection outside scope, discovery-only parameter-provider hits,
+test-helper bytecode closure and source constants, nested classes, unknown
+mappings, selection triggers and non-triggers, endpoint renames, segment/control
+history, carried lines, invalid origins, iterative compilation beyond 100 errors,
 concurrent resource-isolated chunks, and nonzero JVM memory evidence.
-Two subsequent timing fixtures pass, checking shared-compilation
-deduplication, component reconciliation, full-execution ratio eligibility, and
-both measurements at a policy regeneration boundary.
-A harness regression also verifies that DNS retains its original retry
-settings. The current **861-test** suite passes CI: 845 Python tests on both
-Python 3.12 and 3.14, and all 16 Java 25 fixtures. The Java workflow explicitly
-includes the new affected-selection fixtures and rejects missing/skipped cases.
+
+The performance fixtures check shared-compilation deduplication, wall component
+reconciliation, full-execution ratio eligibility, and both measurements at a
+policy regeneration boundary. Harness regressions preserve the DNS retry
+settings and prior successful preparation timings when resuming an interrupted
+comparison. The Java workflow explicitly includes the affected-selection
+fixtures and rejects missing/skipped cases.
 
 The [affected lifecycle fixture](affected-selection-verification/lifecycle.json)
 uses real Docker workers, `survival stop`, status while running/stopped, and
