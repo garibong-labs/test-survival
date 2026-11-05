@@ -37,8 +37,10 @@ def test_target_configuration_and_fallback(baseline):
     with pytest.raises(ConfigError,match='developer'):validate(result)
 
 
-def test_developer_pool_opens_and_executes_segment_with_keep_reference(baseline,monkeypatch):
+@pytest.mark.parametrize('stable_runs',[1,3])
+def test_developer_pool_opens_and_executes_segment_with_keep_reference(baseline,monkeypatch,stable_runs):
     exp,config,_=baseline;b=Baseline(exp,mixed(config));p=build_plan(b)
+    b.execution_config['dev']['stable_runs']=stable_runs
     write_json(exp/'state/run.json',dict(status='running',run_id='fixture'))
     jobs=[]
     def build(self,index,sha):
@@ -59,8 +61,11 @@ def test_developer_pool_opens_and_executes_segment_with_keep_reference(baseline,
     built=pools.run(b,p,Steps(b,p))
     assert len(built['dev-scope',2])==2
     assert any(j['action']=='policy-cover' and j['full_suite'] for j in jobs)
-    assert any(j['phase']=='policy-screen' and j['repeats']==3 for j in jobs if 'phase' in j)
+    assert any(j['phase']=='policy-screen' and j['repeats']==stable_runs for j in jobs if 'phase' in j)
     assert (exp/'results/policy/pools/dev-scope/2/pool.json').exists()
+    funnel=read_json(exp/'results/policy/pools/dev-scope/2/funnel.json')
+    assert funnel['stable_runs']==stable_runs and funnel['stable_passed']==2
+    assert 'stable_3_of_3' not in funnel
     execute.survive(b,p,built,Steps(b,p));cover.run(b,None);report.run(b)
     for name in ('release-reset','half-reset'):
         assert len(read_json(exp/f'results/policy/{name}/segments.json')['dev-scope'])==2

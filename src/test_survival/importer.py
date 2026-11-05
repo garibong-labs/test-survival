@@ -61,7 +61,8 @@ def import_experiment(exp, source, what, *, display=None):
                             copy(f,dest/f.relative_to(src))
                     entries=[]
                     for ordinal,directory in enumerate(rounds(dest),1):
-                        funnel=read_json(directory/'funnel.json')
+                        from .stages.screen import normalize_funnel
+                        funnel=normalize_funnel(read_json(directory/'funnel.json'))
                         if funnel is None:
                             raise FileNotFoundError(directory/'funnel.json')
                         n,retry=round_key(directory)
