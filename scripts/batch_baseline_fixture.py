@@ -61,14 +61,19 @@ def main(root):
         while not (interrupted/'work/baseline-batches/2/batches.tsv').exists():
             if child.poll() is not None or time.monotonic()>deadline:raise RuntimeError('No live batch to interrupt')
             time.sleep(.1)
+        call('live-status',['status',interrupted,'--no-panel'])
         call('stop',['stop',interrupted]);child.wait(timeout=30)
+        call('stopped-status',['status',interrupted,'--no-panel'])
     call('resume-survive',['run',interrupted,'--stage','survive','--no-panel'])
     call('resume-cover',['run',interrupted,'--stage','cover','--no-panel'])
+    call('resumed-status',['status',interrupted,'--no-panel'])
     for name in ('survival.csv','first-failures.csv','changed-lines.csv'):
         assert (baseline/'results'/name).read_bytes()==(interrupted/'results'/name).read_bytes(),name
     sys.path.insert(0,str(code/'src'))
     from test_survival.io import read_json,read_csv
-    from test_survival.stages.batch import identity
+    assert read_json(interrupted/'state/survive.json')['status']=='completed'
+    assert 'running' in (root/'live-status.log').read_text()
+    assert 'stopped' in (root/'stopped-status.log').read_text()
     for name in ('release-reset','half-reset','half-fill'):
         segments=read_json(policy/f'results/policy/{name}/segments.json')['dev-scope']
         assert len(segments)==(1 if name=='half-fill' else 2)

@@ -50,10 +50,9 @@ class Runs:
     def required(self, digest, alive):
         """Members needed at an index: the alive entrants of the executing policies.
 
-        Baseline raw records and pool screening carry pass/fail only, so a method
-        a fill policy carries over, and a pool at its own regeneration commit, are
-        executed like any other member: a policy table needs every surviving
-        method's executed lines at every commit (changed-line coverage).
+        Legacy baseline records and pool screening carry pass/fail only. A
+        policy table needs each surviving member's lines at every commit;
+        matching batch-baseline observations can supply those without execution.
         """
         return {ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
 

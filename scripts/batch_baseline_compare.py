@@ -78,8 +78,120 @@ def run(root, mode, tool):
     print(json.dumps(data),flush=True)
 
 
+def compare(root):
+    from test_survival.io import read_json, read_csv, result_exists
+    from test_survival.config import load, group_names
+    exps={mode:root/'repo/experiments'/mode for mode in ('legacy','batch')}
+    configs={m:load(e) for m,e in exps.items()}
+    groups=group_names(configs['legacy'])
+    frozen={m:read_json(e/'results/frozen-denominators.json') for m,e in exps.items()}
+    assert frozen['legacy']==frozen['batch'], 'Frozen populations differ'
+    for g,tests in frozen['legacy'].items():
+        for t in tests:
+            assert (exps['legacy']/t['file']).read_bytes()==(exps['batch']/t['file']).read_bytes(), t['file']
+    curves={m:read_csv(e/'results/survival.csv') for m,e in exps.items()}
+    assert [r['sha'] for r in curves['legacy']]==[r['sha'] for r in curves['batch']]
+    scope={c['file'] for c in read_json(exps['batch']/'population/scope.json')['classes']}
+    normalized=lambda state:'fail' if state in ('error','timeout','fail') else state
+    states={m:{g:{t['id']:'pass' for t in frozen[m][g]} for g in groups} for m in exps}
+    differences=[]; method_cells=0
+    for index,(left,right) in enumerate(zip(curves['legacy'],curves['batch'])):
+        assert left['evaluated']==right['evaluated'], ('eligibility',index)
+        for mode,e in exps.items():
+            if index==0 or curves[mode][index]['evaluated']!='yes':continue
+            for group in groups:
+                raw=read_json(e/f'results/raw/{index}-{group}.json')
+                for t in raw['methods']:
+                    if states[mode][group][t['id']]=='pass':states[mode][group][t['id']]=normalized(t['state'])
+        for group in groups:
+            for ident,value in states['legacy'][group].items():
+                method_cells+=1
+                if value!=states['batch'][group][ident]:
+                    differences.append(dict(index=index,group=group,id=ident,legacy=value,batch=states['batch'][group][ident]))
+    coverage_diffs=[]; universe_diffs=[]; coverage_cells=0
+    indices=[int(r['index']) for r in read_csv(exps['legacy']/'results/coverage-commits.csv')]
+    assert indices==[int(r['index']) for r in read_csv(exps['batch']/'results/coverage-commits.csv')]
+    assert read_json(exps['legacy']/'results/coverage-index-aliases.json')==read_json(exps['batch']/'results/coverage-index-aliases.json')
+    for i in indices:
+        for g in groups:
+            maps={}
+            for mode,e in exps.items():
+                path=e/f'results/coverage/{i}-{g}-lines.csv'
+                maps[mode]={(r['file'],int(r['line'])):r['covered'] for r in read_csv(path) if r['file'] in scope} if result_exists(path) else None
+            if maps['legacy'] is None or maps['batch'] is None:
+                if maps['legacy']!=maps['batch']:universe_diffs.append(dict(index=i,group=g,reason='availability differs'))
+                continue
+            if maps['legacy'].keys()!=maps['batch'].keys():
+                universe_diffs.append(dict(index=i,group=g,legacy_only=sorted(maps['legacy'].keys()-maps['batch'].keys()),batch_only=sorted(maps['batch'].keys()-maps['legacy'].keys())))
+            for (f,n) in sorted(maps['legacy'].keys()|maps['batch'].keys()):
+                coverage_cells+=1
+                a=maps['legacy'].get((f,n));b=maps['batch'].get((f,n))
+                if a!=b:coverage_diffs.append(dict(index=i,group=g,file=f,line=n,legacy=a,batch=b))
+    changed={m:read_csv(e/'results/changed-lines.csv') for m,e in exps.items()}
+    assert len(changed['legacy'])==len(changed['batch'])
+    assert not list((exps['batch']/'results/coverage').glob('*.xml*'))
+    changed_diffs=[]
+    for a,b in zip(changed['legacy'],changed['batch']):
+        assert a['index']==b['index']
+        for k in a:
+            if k.startswith('scope_') and a[k]!=b[k]:changed_diffs.append(dict(index=int(a['index']),column=k,legacy=a[k],batch=b[k]))
+        assert all(v=='' for k,v in b.items() if k.startswith(('all_','other_')))
+    inputs=read_json(root/'source-hashes.json')
+    for item in inputs.values():
+        for name,digest in item['files'].items():
+            assert hashlib.sha256((Path(item['source'])/name).read_bytes()).hexdigest()==digest, 'Finished source changed'
+    result=dict(indices=len(curves['legacy'])-1,groups={g:len(ts) for g,ts in frozen['legacy'].items()},
+                compared_method_cells=method_cells,survival_differences=differences,compared_scope_line_cells=coverage_cells,
+                scope_universe_differences=universe_diffs,scope_line_differences=coverage_diffs,changed_scope_differences=changed_diffs,
+                source_files_unchanged=True,timings={m:read_json(root/f'{m}-timing.json') for m in exps})
+    dump(root/'comparison.json',result)
+    print(json.dumps({k:(len(v) if k.endswith('differences') else v) for k,v in result.items() if k!='timings'},indent=2))
+
+
+def policies(root, tool):
+    """Exercise developer pools only; no generator or model calls."""
+    exp=root/'repo/experiments/policies'
+    cfg=yaml.safe_load((root/'repo/experiments/batch/experiment.yaml').read_text())
+    cfg['name']='batch-baseline-comparison-policies'
+    cfg['policies']=dict(baseline='experiments/batch',regenerate_developer=False,
+        groups=['dev'],releases=['batch-comparison-release'],threshold=.5,
+        max_threshold_triggers=1,concurrency={'dev_selection':1},set=[
+            dict(name='release-reset',trigger='release',action='reset',developer='regenerate'),
+            dict(name='half-reset',trigger='threshold',action='reset',developer='regenerate'),
+            dict(name='half-fill',trigger='threshold',action='fill',developer='keep')])
+    contents=yaml.safe_dump(cfg,sort_keys=False)
+    path=exp/'experiment.yaml'
+    if path.exists() and path.read_text()!=contents:
+        raise RuntimeError('Refusing to overwrite policy configuration')
+    exp.mkdir(parents=True,exist_ok=True);path.write_text(contents)
+    env={**os.environ,'PYTHONPATH':str(tool.resolve()/'src')}
+    env.pop('BATCH_COMPARISON_NO_MODEL_KEY',None)
+    steps=[]
+    for label,args in [('plan',['policy','plan',str(exp)]),('pools',['policy','run',str(exp),'--until','pools'])]:
+        start=time.monotonic()
+        with (root/f'policy-{label}.log').open('w') as stream:
+            subprocess.run([sys.executable,'-m','test_survival.cli',*args],env=env,
+                           stdout=stream,stderr=subprocess.STDOUT,check=True,timeout=1800)
+        steps.append(dict(stage=label,seconds=round(time.monotonic()-start,3)))
+    plan=json.loads((exp/'results/policy/plan.json').read_text())
+    funnels=[]
+    for point in plan['pools']:
+        assert point['group']=='dev'
+        folder=exp/f'results/policy/pools/dev/{point["index"]}'
+        funnel=json.loads((folder/'funnel.json').read_text())
+        assert funnel['stable_runs']==cfg['dev']['stable_runs']
+        assert (folder/'pool.json').exists()
+        funnels.append(dict(index=point['index'],**funnel))
+    assert funnels, 'Expected at least the release pool'
+    dump(root/'policy-verification.json',dict(steps=steps,funnels=funnels,plan=plan,
+         tool_head=subprocess.check_output(['git','-C',str(tool),'rev-parse','HEAD'],text=True).strip()))
+    print(root/'policy-verification.json')
+
+
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('action',choices=['setup','legacy','batch']);p.add_argument('--root',type=Path,default=Path('/tmp/batch-baseline-comparison'));p.add_argument('--tool',type=Path,default=Path(__file__).resolve().parents[1]);p.add_argument('--source',type=Path,default=Path.home()/'_projects/experiment-projects/json-schema-validator');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('action',choices=['setup','legacy','batch','compare','policies']);p.add_argument('--root',type=Path,default=Path('/tmp/batch-baseline-comparison'));p.add_argument('--tool',type=Path,default=Path(__file__).resolve().parents[1]);p.add_argument('--source',type=Path,default=Path.home()/'_projects/experiment-projects/json-schema-validator');a=p.parse_args()
     a.root.mkdir(parents=True,exist_ok=True)
     if a.action=='setup':setup(a.root,a.source)
+    elif a.action=='compare':compare(a.root)
+    elif a.action=='policies':policies(a.root,a.tool)
     else:run(a.root,a.action,a.tool)
