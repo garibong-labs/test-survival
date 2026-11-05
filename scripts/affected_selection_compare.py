@@ -38,8 +38,6 @@ def setup(root, project):
         original['model']=dict(provider='openrouter',name=original['model']['name'],env_file=None,env_key='AFFECTED_NO_MODEL_KEY')
         original['runner']['docker'].pop('mounts',None);original['runner']['docker'].pop('env_file',None)
         original['runner']['workers']={'build':1,'survive':1,'cover':1}
-        original['survival']['flaky_rerun']=0
-        original['survival']['environment_errors']={'patterns':[],'max_reruns':0,'backoff_seconds':0}
         src=source_exp/'generated/ouedraogo';target=root/'generated-input/generated/ouedraogo'
         shutil.copytree(src,target)
         dump(root/'source-hashes.json',{'ouedraogo':{'source':str(src),'files':{str(p.relative_to(src)):hashlib.sha256(p.read_bytes()).hexdigest() for p in src.rglob('*') if p.is_file()}}})

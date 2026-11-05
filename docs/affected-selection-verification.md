@@ -80,6 +80,13 @@ The reference timings below are provisional: they overlapped DNS anchor
 selection. They will be replaced by quiet-host measurements after the ongoing
 baseline and policy runs finish.
 
+The DNS check preserves the original configuration's flaky rerun and
+`java.net.BindException` environment retry settings. An initial harness version
+incorrectly disabled both, following the JSV comparison settings. That attempt
+was stopped during anchor scope selection and retained at
+`/tmp/affected-selection-dns`; it contributes no reported equality or timing
+result. The corrected fresh run is at `/tmp/affected-selection-dns-exact`.
+
 The 1.5× target applies to the two baseline checks, as clarified by the user;
 regenerated policy snapshots do not use a reference at the original t.
 For JSV, the anchor references execute all **169 frozen methods** in a single
