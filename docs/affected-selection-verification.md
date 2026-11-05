@@ -113,6 +113,8 @@ The intervals come from durable timestamped commit-completion logs; final
 stage-wide aggregation and cleanup after the last commit are not assigned to
 that commit. Control uses its complete recorded stage wall time. Workers are
 one, so chunk/commit intervals do not overlap.
+One-off denominator selection, generated-test import, and screening remain in
+the stage totals; they are not repeated per-index survival costs.
 
 See [ratio summary](affected-selection-verification/jsv-performance-summary.json)
 and the exact [all](affected-selection-verification/jsv-reference-all.json) and
