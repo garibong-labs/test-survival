@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import struct
 
+RECORD_VERSION = 2  # Includes production hits from pre-plan test discovery.
+
 
 class Reader:
     def __init__(self, data): self.data, self.at = data, 0
@@ -53,9 +55,10 @@ def class_inventory(root):
             for item in [class_info(p)]}
 
 
-def source_inventory(w, root, folder, work, label):
+def source_inventory(w, root, folder, work, label, helper_classes=None):
     output = work/(label+'-sources.tsv')
-    result = w.execute(['java', '-Xmx'+w.JVM['javac'], str(w.HELPERS/'DependencySources.java'), str(root)],
+    entry = ['-cp', str(helper_classes), 'DependencySources'] if helper_classes else [str(w.HELPERS/'DependencySources.java')]
+    result = w.execute(['java', '-Xmx'+w.JVM['javac'], *entry, str(root)],
                        folder, output, w.TIMEOUTS['compile'])
     if result['exit_code'] or result.get('timeout'): raise ValueError('Cannot parse dependency sources')
     names = defaultdict(set); identifiers = defaultdict(set)
@@ -68,10 +71,11 @@ def source_inventory(w, root, folder, work, label):
 
 
 class Dependencies:
-    def __init__(self, w, folder, work):
+    def __init__(self, w, folder, work, helper_classes=None):
         self.w, self.folder, self.work = w, folder, work
+        self.helper_classes = helper_classes
         self.production = class_inventory(folder/'target/classes')
-        declarations, _ = source_inventory(w, folder/'src/main/java', folder, work, 'production')
+        declarations, _ = source_inventory(w, folder/'src/main/java', folder, work, 'production', helper_classes)
         self.by_simple = defaultdict(set)
         for file, names in declarations.items():
             for name in names: self.by_simple[name].add('src/main/java/'+file)
@@ -85,7 +89,7 @@ class Dependencies:
     def snapshot(self, classes, root):
         if classes not in self.snapshots:
             graph = class_inventory(classes)
-            _, identifiers = source_inventory(self.w, root, self.folder, self.work, 'test-'+str(len(self.snapshots)))
+            _, identifiers = source_inventory(self.w, root, self.folder, self.work, 'test-'+str(len(self.snapshots)), self.helper_classes)
             self.snapshots[classes] = (graph, identifiers)
         return self.snapshots[classes]
 
@@ -123,4 +127,4 @@ class Dependencies:
                 unbounded |= not (root/source).is_file()
             for name in identifiers.get(source, ()):
                 files.update(self.by_simple.get(name, ()))
-        return dict(version=1, selection='affected', files=sorted(files), unbounded=bool(unbounded))
+        return dict(version=RECORD_VERSION, selection='affected', files=sorted(files), unbounded=bool(unbounded))

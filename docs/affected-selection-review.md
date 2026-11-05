@@ -156,6 +156,11 @@ snapshot. A bounded per-container class-hit set can retain this information;
 it does not require retaining production line coverage. Missing or incomplete
 probe collection must never become a bounded empty dependency set.
 
+Implementation note: Vintage parameter providers can run before the plan-start
+reset. The listener preserves those discovery class hits and conservatively
+attaches them to the snapshot's selected methods. The line reset stays unchanged;
+discovery lines are not added to method coverage.
+
 ### Static bytecode references
 
 After successful compilation, analyze the **actual compiled snapshot output**
@@ -229,9 +234,9 @@ dependency-file count, and L existing scope-line evidence per method.
 |---|---|---|
 | Broader runtime instrumentation | Extra class transformation and probe writes outside scope; scan up to O(P) probes per invocation | Agent probe arrays plus transient dump O(P), hit names O(C); only O(D) dependency paths and existing O(L) lines persist per method. No retained matrix of probes by method. |
 | Production inventory and binary/source map | O(source + class bytes) per changed production tree | O(C) map, shared across methods; durable compact mapping/context metadata. |
-| Static graph | O(B + E) per compiled snapshot; memoized reachability per test class | O(test classes + E), bounded to the active snapshot/chunk; not a graph per method. |
+| Static graph | O(B + E) parsing per compiled snapshot, then reachability traversal per selected method | O(test classes + E), shared across methods within the worker; not a graph per method. |
 | Compilation fallback | One full-root attempt on success; on failure, successively smaller root compilations, at most one failed removal round per initial file | One active compiler/output at a time; persist round logs and per-file errors. May save repeated per-file fallback compiles, but cascades can require several rounds. Measure rather than assume a speedup. |
-| Source identifiers | O(S) once per frozen tree, then matching/reachability joins | Distinct identifier sets cached by source hash; union files stored, not repeated source text. |
+| Source identifiers | O(S) per compiled snapshot in a worker, then matching/reachability joins | Distinct identifier sets shared within the worker; union files stored, not repeated source text. No persistent cross-commit source cache. |
 | Selection | One Git endpoint diff per distinct `(last executed SHA, current SHA)`, then set intersections; one context extraction per commit | O(changed paths + active methods' D); direct pointers avoid chains proportional to commit count. |
 | Build context | Artifact metadata lookup per commit and structural comparisons of changed POMs under the approved conservative rule | Small ordered artifact list per commit and cached endpoint POM comparisons. No effective-model extraction. |
 
@@ -245,11 +250,13 @@ and peak memory in scratch verification before claiming a speedup.
 
 Part 2 implementation note: profiling found repeated directory traversal and
 class-file reads in this analysis path. The listener now reads class bytes once
-per isolated snapshot loader and retains only binaries whose `SourceFile` is
+per JVM and retains only binaries whose `SourceFile` is
 in scope for survival line analysis. Nested and sibling classes in the same
 source file stay together. Full-suite pool coverage caches all production class
-bytes. This adds heap proportional to those retained binaries, bounded by the
-existing snapshot chunks, and removes repeated filesystem reads. Runtime class
+bytes. Isolated snapshot loaders share only immutable class bytes, not loaded
+classes or execution state. This adds heap proportional to those retained
+binaries, bounded by the existing snapshot chunks, and removes repeated
+filesystem reads. Runtime class
 hits still inspect all instrumented production probes independently of this
 line-analysis cache.
 

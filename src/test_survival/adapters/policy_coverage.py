@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 
 from .snapshot_compile import compile_snapshot, filtered_roots
+from .dependencies import RECORD_VERSION
 
 
 COVERAGE_VERSION = 3  # Retry legacy missing records with bounded instrumentation.
@@ -41,14 +42,19 @@ def run(w, job):
     agent = w.EXP/f'work/libs/org.jacoco.agent-{version}-runtime.jar'
     cli = w.EXP/f'work/libs/org.jacoco.cli-{version}-nodeps.jar'
     helper = work/'helper'; helper.mkdir()
+    tool_helper = work/'tool-helper'; tool_helper.mkdir()
     helper_cp = cp+':'+str(cli)+':'+str(agent)
-    compiled = w.execute(['javac', '-cp', helper_cp, '-d', str(helper), str(w.HELPERS/'PerTestCoverage.java')], folder, work/'helper.txt', w.TIMEOUTS['compile'])
+    helper_sources = ['PerTestCoverage.java','SourceInventory.java','DependencySources.java','SnapshotCompiler.java']
+    compiled = w.execute(['javac', '-cp', helper_cp, '-d', str(tool_helper), *[str(w.HELPERS/name) for name in helper_sources]], folder, work/'helper.txt', w.TIMEOUTS['compile'])
     if compiled['exit_code']:
         raise RuntimeError('Cannot compile per-test coverage launcher')
+    # Compile tools once per batch, without exposing analysis/compiler helpers
+    # on the frozen tests' runtime classpath.
+    for path in tool_helper.glob('PerTestCoverage*.class'): shutil.copy2(path, helper/path.name)
     if job.get('survival') and job.get('selection') == 'affected':
         from .dependencies import Dependencies
         try:
-            dependencies = Dependencies(w, folder, work)
+            dependencies = Dependencies(w, folder, work, tool_helper)
         except (OSError, ValueError, RuntimeError) as exc:
             dependency_error = str(exc)
     dependency_inputs = {}
@@ -64,7 +70,7 @@ def run(w, job):
             selected = [w.EXP/t['file'] for t in job['methods']
                         if w.EXP/t.get('source_root', str(Path(t['file']).parent)) == root]
             snapshots[root] = compile_snapshot(w, root, selected, work/'snapshots'/str(len(snapshots)), cp, folder,
-                                               full_suite=True, selected_only=job.get('selection') == 'affected')
+                                               full_suite=True, selected_only=job.get('selection') == 'affected', helper_classes=tool_helper)
         classes, compiled = snapshots[root]
         compile_runs.append(compiled)
         retained = []
@@ -168,7 +174,7 @@ def run(w, job):
             methods.append(dict(id=t['id'], file_hash=t['file_hash'], execution_hash=t.get('execution_hash', t['file_hash']), **{'class':t['class']}, method=t['method'], state=state,
                                 message='\n'.join(m for s, m in states if s != 'SUCCESSFUL' and m)[:4000], lines=sorted(covered[ident])))
             if job.get('survival') and job.get('selection') == 'affected':
-                record = dict(version=1, selection='affected', files=[], unbounded=True, reason=dependency_error or 'missing execution')
+                record = dict(version=RECORD_VERSION, selection='affected', files=[], unbounded=True, reason=dependency_error or 'missing execution')
                 if dependencies is not None and states and ident not in runtime_missing:
                     try:
                         classes, root, source = dependency_inputs[(t['class'],t['method'],t.get('execution_hash',t['file_hash']))]
@@ -185,7 +191,7 @@ def run(w, job):
         universe = {(f, int(n)) for line in output.read_text().splitlines() for f,n in [line.split('\t')]}
     if job.get('survival') and job.get('selection') == 'affected':
         for t in methods:
-            t.setdefault('dependency_record', dict(version=1, selection='affected', files=[], unbounded=True, reason='no instrumented execution'))
+            t.setdefault('dependency_record', dict(version=RECORD_VERSION, selection='affected', files=[], unbounded=True, reason='no instrumented execution'))
     missing = any(r['exit_code'] or r.get('timeout') for r in runs)
     w.write_json(w.EXP/job['output'], dict(coverage_status='missing' if missing else 'complete',
                                          coverage_reason='batch JVM failed or timed out' if missing else '',

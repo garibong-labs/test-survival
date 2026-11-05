@@ -7,10 +7,11 @@ import shutil
 STRATEGY = 'remove-error-files-v1'
 
 
-def test_source_files(w, root, folder, part):
+def test_source_files(w, root, folder, part, helper_classes=None):
     """Inventory test declarations without resolving their production references."""
     inventory = part/'inventory.tsv'
-    parsed = w.execute(['java', '-Xmx'+w.JVM['javac'], str(w.HELPERS/'SourceInventory.java'), str(root), 'auto'],
+    entry = ['-cp', str(helper_classes), 'SourceInventory'] if helper_classes else [str(w.HELPERS/'SourceInventory.java')]
+    parsed = w.execute(['java', '-Xmx'+w.JVM['javac'], *entry, str(root), 'auto'],
                        folder, inventory, w.TIMEOUTS['compile'])
     # Syntax errors still produce partial inventory. Include every discovered test
     # and let the diagnostic compiler classify broken sources, rather than aborting.
@@ -26,7 +27,7 @@ def test_source_files(w, root, folder, part):
     return {classes[c] for c in tests if c in classes}
 
 
-def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full_suite=False, whole=None, selected_only=False):
+def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full_suite=False, whole=None, selected_only=False, helper_classes=None):
     """One retry sequence per root. Failed outputs are never supplied to a JVM.
 
     selected_only retains non-test helpers, and javac may discover referenced
@@ -41,7 +42,7 @@ def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full
     all_sources = sorted(root.rglob('*.java'))
     chosen = set(all_sources)
     if selected_only:
-        chosen = (chosen - test_source_files(w, root, folder, part)) | {p.resolve() for p in selected}
+        chosen = (chosen - test_source_files(w, root, folder, part, helper_classes)) | {p.resolve() for p in selected}
     removed = {}; attempts = []; classes = part/'classes-0'
     while chosen:
         number = len(attempts)
@@ -50,7 +51,8 @@ def compile_snapshot(w, root, selected, part, cp, folder, *, compiler=None, full
         args.write_text('\n'.join(str(scratch/p.relative_to(root)) for p in sorted(chosen))+'\n')
         diagnostic_path = part/f'compile-{number}.errors.tsv'
         log = part/f'compile-{number}.txt'
-        command = ['java', '-Xmx'+w.JVM['javac'], str(w.HELPERS/'SnapshotCompiler.java'), str(args), str(diagnostic_path),
+        entry = ['-cp', str(helper_classes), 'SnapshotCompiler'] if helper_classes else [str(w.HELPERS/'SnapshotCompiler.java')]
+        command = ['java', '-Xmx'+w.JVM['javac'], *entry, str(args), str(diagnostic_path),
                    '-Xmaxerrs', '2147483647', '-cp', cp, '-sourcepath', str(scratch), '-d', str(classes)]
         result = w.execute(command, folder, log, w.TIMEOUTS['compile'])
         errors = {}

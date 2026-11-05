@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 
 from .io import read_json
 from .rules.coverage import usable_lines
+from .adapters.dependencies import RECORD_VERSION
 
 FIELDS = ('selection_action', 'carried_from_index', 'last_executed_index', 'last_executed_sha', 'dependency_record')
 
@@ -30,7 +31,7 @@ def reason(row, index, sha, context, changed, compiler_changed, *, start=0):
     if not row or row.get('state') != 'pass' or not usable_lines(row): return 'missing observation'
     deps = row.get('dependency_record', {})
     previous = row.get('last_executed_index')
-    if (deps.get('version') != 1 or deps.get('selection') != 'affected' or previous is None
+    if (deps.get('version') != RECORD_VERSION or deps.get('selection') != 'affected' or previous is None
             or previous < start or previous >= index or not row.get('last_executed_sha')):
         return 'missing segment dependencies'
     if row.get('remeasured_state') not in (None, row.get('state')): return 'disagreeing repair'

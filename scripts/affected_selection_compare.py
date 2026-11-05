@@ -51,7 +51,8 @@ def setup(root, project):
     dump(root/'setup.json',dict(project=project,original_source=str(source),created=time.time()))
 
 
-def run(root,mode,tool,policy=False,*,prepare_tool=None,resume=False):
+def run(root,mode,tool,policy=False,*,prepare_tool=None,resume=False,resume_from=None):
+    resume=resume or resume_from is not None
     exp=root/'repo/experiments'/((mode+'-policies') if policy else mode)
     label=mode+('-policies' if policy else '')
     timing_path=root/f'{label}-timing.json'
@@ -67,6 +68,7 @@ def run(root,mode,tool,policy=False,*,prepare_tool=None,resume=False):
     if waiting:time.sleep(2)  # The owning harness writes timings after CLI exit.
     prior=json.loads(timing_path.read_text()) if timing_path.exists() else {}
     if prior.get('steps') and prior['steps'][-1]['stage']==('run' if policy else 'report') and all(s['exit_code']==0 for s in prior['steps']):
+        if resume_from:raise SystemExit('Use a fresh root to remeasure a completed comparison')
         print(label,'already measured; preserving original timings',flush=True)
         return
     if resume and prior:
@@ -101,6 +103,10 @@ def run(root,mode,tool,policy=False,*,prepare_tool=None,resume=False):
     start=time.monotonic();retained=0
     data=dict(mode=mode,policy=policy,tool_head=subprocess.check_output(['git','-C',str(tool),'rev-parse','HEAD'],text=True).strip(),steps=[])
     previous={s['stage']:s for s in prior.get('steps',[])} if resume else {}
+    if resume_from:
+        names=[name for name,args in steps]
+        previous={name:s for name,s in previous.items() if name in names[:names.index(resume_from)]}
+        data['resumed_from']=resume_from
     for name,args in steps:
         if name in previous and previous[name]['exit_code']==0:
             saved={**previous[name],'tool_head':previous[name].get('tool_head',prior['tool_head'])}
@@ -227,7 +233,9 @@ if __name__=='__main__':
     p.add_argument('--tool',type=Path,default=Path(__file__).resolve().parents[1])
     p.add_argument('--prepare-tool',type=Path,help='Optional pinned tool for reusable preparation/scope evidence')
     p.add_argument('--resume',action='store_true',help='Keep successfully timed steps of an interrupted run')
+    p.add_argument('--resume-from',choices=['prepare-scope','import','screen','control','survive','cover','report','plan','run'],
+                   help='Resume an unfinished comparison from this stage, archiving earlier attempts')
     a=p.parse_args();a.root.mkdir(parents=True,exist_ok=True)
     if a.action=='setup':setup(a.root,a.project)
     elif a.action.endswith('compare'):compare(a.root,a.action.startswith('policy-'))
-    else:run(a.root,a.action.removeprefix('policy-'),a.tool,a.action.startswith('policy-'),prepare_tool=a.prepare_tool,resume=a.resume)
+    else:run(a.root,a.action.removeprefix('policy-'),a.tool,a.action.startswith('policy-'),prepare_tool=a.prepare_tool,resume=a.resume,resume_from=a.resume_from)

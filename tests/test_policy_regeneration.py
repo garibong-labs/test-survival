@@ -36,17 +36,21 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
     def execute(command, cwd, log, timeout):
         calls.append(command); log.parent.mkdir(parents=True,exist_ok=True); log.write_text('')
         failed = False
-        if any(a.endswith('SnapshotCompiler.java') for a in command):
+        if command[0] == 'javac':
+            classes = Path(command[command.index('-d')+1])
+            for name in ('PerTestCoverage','SourceInventory','DependencySources','SnapshotCompiler'):
+                (classes/(name+'.class')).write_bytes(b'fixture helper')
+        elif 'SnapshotCompiler' in command or any(a.endswith('SnapshotCompiler.java') for a in command):
             import base64
-            n = next(i for i,a in enumerate(command) if a.endswith('SnapshotCompiler.java'))
+            n = next(i for i,a in enumerate(command) if a == 'SnapshotCompiler' or a.endswith('SnapshotCompiler.java'))
             sources = [Path(line) for line in Path(command[n+1]).read_text().splitlines()]
             assert all('???' not in p.read_text() for p in sources)
             failed = scenario == 'compile-failure' and any(p.name == 'Bad.java' for p in sources)
             log.write_text('Bad compile' if failed else '')
             errors = [(str(p), 'Bad compile') for p in sources if failed and p.name == 'Bad.java']
             Path(command[n+2]).write_text('\n'.join('\t'.join(base64.b64encode(v.encode()).decode() for v in pair) for pair in errors))
-        elif 'SourceInventory.java' in ' '.join(command):
-            source = Path(command[next(i for i, a in enumerate(command) if str(a).endswith('SourceInventory.java'))+1])
+        elif 'SourceInventory' in command or 'SourceInventory.java' in ' '.join(command):
+            source = Path(command[next(i for i, a in enumerate(command) if a == 'SourceInventory' or str(a).endswith('SourceInventory.java'))+1])
             assert not (source/'Rejected.java').exists()
             log.write_text('\n'.join(f'C\t{p.stem}\tclass\ttrue\t{p.stem}\t{p}\n'+
                                       (f'M\t{p.stem}\tworks\tplain' if p.stem != 'Helper' else '') for p in source.glob('*.java')))
@@ -81,7 +85,10 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
     policy_coverage.run(w,job)
     result=read_json(tmp_path/'result.json')
     assert len([c for c in calls if 'PerTestCoverage' in c]) == 1
-    assert len([c for c in calls if any(a.endswith('SnapshotCompiler.java') for a in c)]) == (2 if scenario == 'compile-failure' else 1)
+    assert len([c for c in calls if c[0] == 'java' and ('SnapshotCompiler' in c or any(a.endswith('SnapshotCompiler.java') for a in c))]) == (2 if scenario == 'compile-failure' else 1)
+    assert len([c for c in calls if c[0] == 'javac']) == 1
+    assert not any((tmp_path/'work/job/helper'/(name+'.class')).exists()
+                   for name in ('SourceInventory','DependencySources','SnapshotCompiler'))
     assert original == {p:p.read_bytes() for p in root.iterdir()}
     if scenario in ('jvm-failure','timeout'):
         assert result['coverage_status']=='missing' and len(fallback_calls)==2

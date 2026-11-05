@@ -13,7 +13,7 @@ from test_junit4 import java_environment
 
 def observation():
     return dict(state='pass', lines=[['src/main/java/p/A.java',4]], last_executed_index=0, last_executed_sha='t',
-                selection_action='executed',dependency_record=dict(version=1,selection='affected',unbounded=False,
+                selection_action='executed',dependency_record=dict(version=2,selection='affected',unbounded=False,
                 files=['src/main/java/p/A.java'],context=dict(known=True,entries=[['g','a','1','','jar']])))
 
 
@@ -28,6 +28,7 @@ def observation():
     ({},[],True,'compiler POM changed'),
     ({'dependency_record':{}},[],False,'missing segment dependencies'),
     ({'dependency_record':{'version':1,'selection':'all'}},[],False,'missing segment dependencies'),
+    ({'dependency_record':{'version':1,'selection':'affected'}},[],False,'missing segment dependencies'),
     ({'remeasured_state':'fail'},[],False,'disagreeing repair'),
 ])
 def test_selection_triggers(change,paths,compiler,expected):
@@ -249,7 +250,7 @@ def test_baseline_control_carries_lines_and_resume_validates_origin(tmp_path, mo
         raw=worker(self,job)
         for t in raw['methods']:
             t['state']='pass'
-            t['dependency_record']=dict(version=1,selection='affected',unbounded=False,files=['src/main/java/A.java'])
+            t['dependency_record']=dict(version=2,selection='affected',unbounded=False,files=['src/main/java/A.java'])
         return raw
     monkeypatch.setattr(JavaMavenAdapter,'worker',instrumented)
     monkeypatch.setattr(Selector,'context',lambda *args:dict(known=True,entries=[]))
@@ -291,10 +292,18 @@ records=json.loads((w.HELPERS/'classpath-artifacts.json').read_text())
 cp=':'.join([str(classes),*['/libs/'+n for n in w.runner_test_jars(records)]])
 w.classpath=lambda _: (exp,cp);w.jacoco_version=lambda _: '0.8.14'
 methods=[]
-for i in range(4):
+for i in range(6):
  source=exp/f'tests/{i}';source.mkdir(parents=True)
  (source/'Helper.java').write_text('class Helper { static int value() { return p.Constant.VALUE; } }')
  (source/'T.java').write_text('class T { @org.junit.jupiter.api.Test void works() throws Exception { org.junit.jupiter.api.Assertions.assertEquals(1,p.A.call()); org.junit.jupiter.api.Assertions.assertEquals(2,Helper.value()); org.junit.jupiter.api.Assertions.assertEquals(3,Class.forName("outside.Hidden").getMethod("call").invoke(null)); org.junit.jupiter.api.Assertions.assertEquals("'+str(i)+'",java.nio.file.Files.readString(java.nio.file.Path.of("src/test/resources/id"))); Thread.sleep(200); } }')
+ if i>=4:
+  # Vintage calls the reflected provider during discovery, before plan start.
+  # No Hidden class identifier or bytecode reference can supply this dependency.
+  (source/'T.java').write_text("""@org.junit.runner.RunWith(org.junit.runners.Parameterized.class) public class T {
+ @org.junit.runners.Parameterized.Parameters public static Object[][] data() throws Exception { return new Object[][] {{Class.forName("outside.Hidden").getMethod("call").invoke(null)}}; }
+ public T(Object value) { org.junit.Assert.assertEquals(3,value); }
+ @org.junit.Test public void works() { org.junit.Assert.assertEquals(1,p.A.call()); org.junit.Assert.assertEquals(2,Helper.value()); }
+}""")
  resources=exp/f'resources/{i}/resources';resources.mkdir(parents=True);(resources/'id').write_text(str(i))
  methods.append(dict(id=str(i),file=f'tests/{i}/T.java',source_root=f'tests/{i}',resource_root=f'resources/{i}',file_hash=str(i),execution_hash=str(i),**{'class':'T'},method='works'))
 execute=w.execute;lock=threading.Lock();active=peak=0

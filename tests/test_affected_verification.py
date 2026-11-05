@@ -55,3 +55,30 @@ def test_resume_preserves_successful_stage_wall_time_and_log(tmp_path, monkeypat
     assert result['seconds']>=12
     assert len(commands)==6 and commands[0][3]=='import'
     assert list(tmp_path.glob('all-timing.before-resume-*.json'))
+
+
+def test_resume_from_retimes_control_but_keeps_preparation(tmp_path, monkeypatch):
+    import json
+    scripts=Path(__file__).parents[1]/'scripts'
+    monkeypatch.syspath_prepend(str(scripts))
+    spec=importlib.util.spec_from_file_location('affected_compare_retime',scripts/'affected_selection_compare.py')
+    compare=importlib.util.module_from_spec(spec);spec.loader.exec_module(compare)
+    steps=[]
+    for stage,seconds,code in [('prepare-scope',12,0),('import',1,0),('screen',2,0),('control',80,0),('survive',5,-9)]:
+        log=tmp_path/f'all-{stage}.log';log.write_text('old '+stage)
+        steps.append(dict(stage=stage,seconds=seconds,exit_code=code,log=str(log)))
+    timing=tmp_path/'all-timing.json';timing.write_text(json.dumps(dict(tool_head='old',steps=steps)))
+    commands=[]
+    class Child:
+        def wait(self,timeout):return 0
+    def launch(command,**kwargs):
+        commands.append(command);kwargs['stdout'].write('new measurement');return Child()
+    monkeypatch.setattr(subprocess,'Popen',launch)
+    monkeypatch.setattr(subprocess,'check_output',lambda *args,**kwargs:'new\n')
+    compare.run(tmp_path,'all',tmp_path/'tool',resume_from='control')
+    result=json.loads(timing.read_text())
+    assert [s['seconds'] for s in result['steps'][:3]]==[12,1,2]
+    assert result['steps'][3]['seconds']<80 and result['steps'][3]['tool_head']=='new'
+    assert len(commands)==4 and commands[0][-3:]==['--stage','control','--no-panel']
+    archived=list(tmp_path.glob('all-control.before-resume-*.log'))
+    assert len(archived)==1 and archived[0].read_text()=='old control'

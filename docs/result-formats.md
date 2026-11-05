@@ -150,7 +150,7 @@ Fresh batch method rows add `selection_action: executed | carried`,
 that observation's state and scope `lines`. Dead/not-selected inventory markers
 and unevaluated commit markers are excluded from execution counts.
 
-Affected actual executions add a `dependency_record` containing `version: 1`,
+Affected actual executions add a `dependency_record` containing `version: 2`,
 `selection: affected`, sorted module-relative production `files`, `unbounded`, and
 `context`. Dependencies union runtime production class hits, compiled test-tree
 references (stopping at production classes), and production simple names found as
@@ -160,6 +160,9 @@ classes or incomplete analysis are conservatively unbounded. Only dependency
 file sets and existing scope lines persist; no full-production line coverage,
 probe dumps, or XML are added by selection. Legacy/all rows without dependencies
 remain readable observations and cannot authorize an affected carry.
+Version 2 also retains production class hits from pre-plan discovery, such as
+Vintage parameter providers. Prototype version-1 dependencies stay readable
+but require execution before they can authorize another carry.
 
 `results/selection-context/<index>.json` records the commit SHA, coordinate-list
 version, `known`, and the ordered resolved third-party classpath entries
