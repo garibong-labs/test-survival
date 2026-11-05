@@ -23,14 +23,19 @@ records the implementation decisions and verification evidence instead.
 - Later consumers restore a released workspace via checkout/build. Original
   build records/logs remain authoritative. Restoration writes separate
   diagnostics and stops on SHA, dependency-content identity or verdict mismatch.
+  Anchor readiness revalidates failed/running restorations even when classes
+  remain; ready legacy trees retain their existing compatibility behavior.
   Old experiments without identity records remain readable and are not pruned;
   restoration of a missing legacy workspace without an identity fails closed.
 - `--keep-work` disables release/cleanup in baseline and policy runs, including
   background runs and pools. Pool-local compile caches, generation/policy
   histories and KTester completion records remain in their existing locations.
-  Linux host permission failures retry the same guarded deletion in the configured
-  container, retaining command diagnostics without changing tree permissions.
+  Linux host permission failures retry the same guarded deletion in the effective
+  pool/generator container, including pools without a local YAML file. Retries
+  retain command diagnostics without changing tree permissions.
 - Small failed file subtrees and shared failed policy batches remain whole.
+  Failed developer tests retain their shared suite classes and compile logs even
+  when whole-suite compilation succeeded.
   Successful scratch is deleted after its owning stage succeeds. Retry evidence
   is copied to independent files before a worker clears its original scratch;
   sibling job input/log files are preserved too. This avoids stale directory
@@ -73,13 +78,13 @@ The execution sequence is:
 git worktree add --detach /private/tmp/footprint-main 01ae5d006bd4e900fe3e708eee28895fed9d4276
 PYTHONPATH=/private/tmp/footprint-main/src .venv/bin/python -m test_survival.cli run /tmp/footprint-e2e/target/experiments/baseline --until scope --no-panel
 docker run --rm -v footprint-e2e-m2:/from:ro -v footprint-e2e-seed:/to survival-java:25 sh -c 'cp -a /from/. /to/'
-.venv/bin/python scripts/footprint_run.py /private/tmp/footprint-main last-consumer-main
-.venv/bin/python scripts/footprint_run.py . last-consumer-uninterrupted
-.venv/bin/python scripts/footprint_run.py . last-consumer-resumed --interrupt
-.venv/bin/python scripts/footprint_compare.py last-consumer-main last-consumer-uninterrupted /private/tmp/footprint-main .
-.venv/bin/python scripts/footprint_compare.py last-consumer-main last-consumer-resumed /private/tmp/footprint-main .
-.venv/bin/python scripts/footprint_compare.py last-consumer-uninterrupted last-consumer-resumed . .
-.venv/bin/python scripts/footprint_metrics.py last-consumer-main last-consumer-uninterrupted last-consumer-resumed
+.venv/bin/python scripts/footprint_run.py /private/tmp/footprint-main review-main
+.venv/bin/python scripts/footprint_run.py . review-uninterrupted
+.venv/bin/python scripts/footprint_run.py . review-resumed --interrupt
+.venv/bin/python scripts/footprint_compare.py review-main review-uninterrupted /private/tmp/footprint-main .
+.venv/bin/python scripts/footprint_compare.py review-main review-resumed /private/tmp/footprint-main .
+.venv/bin/python scripts/footprint_compare.py review-uninterrupted review-resumed . .
+.venv/bin/python scripts/footprint_metrics.py review-main review-uninterrupted review-resumed
 ```
 
 The harness retains prior experiments and snapshots completed runs outside the
@@ -155,7 +160,8 @@ or differing paths, identical compile-event semantics and original command logs.
 This includes the uncompressed dev-scope XML and exact PNG bytes. Baseline final
 survivors are Dev 3/4, Dev-scope 3/4 and synthetic Ouedraogo 1/2. Both reset and
 fill policy outputs are identical across the three runs. The final branch runs
-used runtime commit `c80b1f6`; the subsequent commit updates this report only.
+used commit `65b3466` (runtime fixes in `b1f75e9`, followed by a Linux fixture
+setup correction). The subsequent commit updates this report only.
 
 Counts are regular files and logical bytes (`stat().st_size`), including hidden
 files, locks, preserved caches and failed scratch. Directories are not counted.
@@ -165,22 +171,22 @@ resume overhead; Maven-volume seeding and final evidence copying are outside it.
 
 | Run | Files | Bytes | Combined wall-clock seconds | Restorations |
 |---|---:|---:|---:|---:|
-| last-consumer-main | 1,157 | 55,880,976 | 98.224 | 0 |
-| last-consumer-uninterrupted | 499 | 758,547 | 95.578 | 0 |
-| last-consumer-resumed | 536 | 804,153 | 101.275 | 0 |
+| review-main | 1,157 | 55,880,708 | 90.858 | 0 |
+| review-uninterrupted | 511 | 766,079 | 93.414 | 0 |
+| review-resumed | 545 | 810,889 | 93.122 | 0 |
 
-Uninterrupted reduction: **56.87% fewer files** and **98.64% fewer bytes**.
+Uninterrupted reduction: **55.83% fewer files** and **98.63% fewer bytes**.
 
 | Run | Successful scratch removed (files / bytes) | Failed scratch retained (files / bytes) | Protected compile cache (files / bytes) |
 |---|---:|---:|---:|
-| last-consumer-main | not instrumented | not instrumented | 36 / 14,977 |
-| last-consumer-uninterrupted | 521 / 54,789,574 | 52 / 203,999 | 36 / 14,977 |
-| last-consumer-resumed | 521 / 54,789,577 | 86 / 248,311 | 36 / 14,977 |
+| review-main | not instrumented | not instrumented | 36 / 14,977 |
+| review-uninterrupted | 509 / 54,782,667 | 64 / 210,912 | 36 / 14,977 |
+| review-resumed | 509 / 54,782,667 | 95 / 254,753 | 36 / 14,977 |
 
 Scratch-removal totals are cumulative successful deletions and exclude released
 checkout trees. Failure totals are measured from retained paths after completion,
 including retry snapshots/job logs and shared runtime evidence. The resumed run
-keeps 31 interrupted work files plus its saved job input/log and snapshot record;
+keeps 28 interrupted work files plus its saved job input/log and snapshot record;
 38 pre-existing original build/pool artifacts also pass the resume hash check.
 No checkout directories remain after either final branch run. Compile caches
 remain, including the pool-local cache. The uninterrupted run has zero
@@ -190,9 +196,9 @@ failed attempts, across both experiments and their pools.
 
 | Output family (including pool) | Main files / bytes | Uninterrupted files / bytes | Resumed files / bytes |
 |---|---:|---:|---:|
-| checkouts | 92 / 32,831 | 0 / 0 | 0 / 0 |
-| compile-events | 105 / 124,760 | 8 / 49,972 | 8 / 49,986 |
-| compressed text | 48 / 340,349 | 48 / 61,393 | 48 / 61,392 |
+| checkouts | 92 / 32,837 | 0 / 0 | 0 / 0 |
+| compile-events | 105 / 124,767 | 8 / 50,002 | 8 / 50,003 |
+| compressed text | 48 / 340,348 | 48 / 61,433 | 48 / 61,410 |
 
 ### Sampled checkout peaks
 
@@ -204,14 +210,14 @@ is taken independently.
 
 | Stage / scope | Main trees / bytes | Uninterrupted trees / bytes | Resumed trees / bytes |
 |---|---:|---:|---:|
-| combined | 7 / 32,278 | 3 / 21,035 | 3 / 21,035 |
-| baseline/prepare | 3 / 21,035 | 3 / 21,035 | 3 / 21,035 |
-| baseline/scope | 3 / 21,035 | 3 / 21,035 | 3 / 21,035 |
-| baseline/screen | 3 / 21,035 | 3 / 21,035 | 3 / 21,035 |
-| baseline/control | 3 / 21,035 | 3 / 21,035 | 3 / 21,035 |
-| baseline/survive | 3 / 21,035 | 3 / 21,035 | 3 / 21,035 |
-| baseline/cover | 3 / 21,035 | 3 / 21,035 | 3 / 21,035 |
-| baseline/report | 3 / 21,035 | 1 / 15,398 | 1 / 15,398 |
+| combined | 7 / 32,284 | 3 / 21,037 | 3 / 21,041 |
+| baseline/prepare | 3 / 20,403 | 3 / 21,037 | 3 / 21,041 |
+| baseline/scope | 3 / 21,041 | 3 / 21,037 | 3 / 21,041 |
+| baseline/screen | 3 / 21,041 | 3 / 21,037 | 3 / 21,041 |
+| baseline/control | 3 / 21,041 | 3 / 21,037 | 3 / 21,041 |
+| baseline/survive | 3 / 21,041 | 3 / 21,037 | 3 / 21,041 |
+| baseline/cover | 3 / 21,041 | 3 / 21,037 | 3 / 21,041 |
+| baseline/report | 3 / 21,041 | 1 / 15,400 | 1 / 15,404 |
 | policy/policy-pools | 1 / 2,818 | 1 / 2,818 | 1 / 2,818 |
 | policy/policy-survive | 4 / 11,243 | 2 / 5,607 | 2 / 5,607 |
 
@@ -219,7 +225,7 @@ is taken independently.
 
 Baseline values come from `final-summary.json.phase_seconds`; report and policy
 values come from stage `started`/`finished` timestamps, checked against run logs.
-The resumed policy-survive value adds the interrupted attempt (7.704 s) and the
+The resumed policy-survive value adds the interrupted attempt (7.134 s) and the
 successful retry. The retained logs show both starts and the stop. Generate is
 an imported completed stage (0.000 s); import/launch/stop overhead is included
 in the combined command wall clock above, not silently assigned to another stage.
@@ -229,35 +235,27 @@ controlled performance benchmark.
 
 | Stage | Main | Uninterrupted | vs main | Interrupted/resumed | vs main |
 |---|---:|---:|---:|---:|---:|
-| baseline/prepare | 13.425 | 13.832 | +3.0% | 14.434 | +7.5% |
-| baseline/scope | 9.589 | 9.280 | -3.2% | 9.154 | -4.5% |
+| baseline/prepare | 12.564 | 13.176 | +4.9% | 12.300 | -2.1% |
+| baseline/scope | 8.939 | 8.845 | -1.1% | 9.062 | +1.4% |
 | baseline/generate | 0.000 | 0.000 | n/a | 0.000 | n/a |
-| baseline/screen | 2.302 | 2.252 | -2.2% | 2.688 | +16.8% |
-| baseline/control | 5.197 | 5.479 | +5.4% | 5.861 | +12.8% |
-| baseline/survive | 13.031 | 13.050 | +0.1% | 13.120 | +0.7% |
-| baseline/cover | 28.156 | 25.787 | -8.4% | 27.402 | -2.7% |
-| baseline/report | 0.658 | 0.624 | -5.2% | 0.667 | +1.4% |
-| policy/policy-pools | 11.130 | 10.675 | -4.1% | 12.788 | +14.9% |
-| policy/policy-pool-dev-scope-2 | 11.128 | 10.659 | -4.2% | 12.773 | +14.8% |
-| policy/policy-survive | 14.033 | 13.649 | -2.7% | 14.219 | +1.3% |
-| policy/policy-cover | 0.003 | 0.004 | +33.3% | 0.004 | +33.3% |
-| policy/policy-report | 0.003 | 0.004 | +33.3% | 0.003 | +0.0% |
-
-The previous early-release implementation added 46% to survive and 40% to cover
-in the earlier verification. With the final-consumer boundary, this fresh pair
-measures **survive +0.15% and cover -8.41%** versus main, with zero restorations.
-Checkout retention through prepare increases the branch's sampled peak from the
-previous two trees to three; both branch runs still finish with zero checkouts.
-No performance threshold or extrapolation to the real projects is inferred from
-these single fixture runs.
+| baseline/screen | 2.287 | 2.379 | +4.0% | 2.404 | +5.1% |
+| baseline/control | 5.255 | 5.171 | -1.6% | 5.123 | -2.5% |
+| baseline/survive | 12.667 | 12.693 | +0.2% | 12.219 | -3.5% |
+| baseline/cover | 26.459 | 26.104 | -1.3% | 25.182 | -4.8% |
+| baseline/report | 0.732 | 0.750 | +2.5% | 0.574 | -21.6% |
+| policy/policy-pools | 10.479 | 11.031 | +5.3% | 10.440 | -0.4% |
+| policy/policy-pool-dev-scope-2 | 10.478 | 11.015 | +5.1% | 10.424 | -0.5% |
+| policy/policy-survive | 10.679 | 12.553 | +17.5% | 14.876 | +39.3% |
+| policy/policy-cover | 0.003 | 0.003 | +0.0% | 0.003 | +0.0% |
+| policy/policy-report | 0.005 | 0.003 | -40.0% | 0.004 | -20.0% |
 
 ### Validation and limits
 
-The main reference ran in 98.224 seconds, so no fixture reduction was required.
+The main reference ran in 90.858 seconds, so no fixture reduction was required.
 All three pairwise comparisons pass using the committed comparator. Original
 command logs remain identical after UUID filename normalization. No restoration
-was needed in any of these runs; unit fixtures still verify restoration guards
-for SHA, verdict and dependency identity mismatches.
+was needed in these runs; unit fixtures verify SHA/verdict/dependency mismatch
+guards and repeat anchor readiness checks after failed or interrupted restoration.
 The resumed-only `state/stop.lock` is an expected persistent lifecycle lock and
 is inventoried separately. Status/show, dashboard and policy baseline readers
 also loaded the plain main experiment with the new code; unit fixtures exercise
@@ -275,19 +273,28 @@ folders, comparison JSON/diffs, `metrics.json`, and the interrupted-work/hash
 snapshots. The scripts make these checks repeatable without touching production
 experiments. The removed Part 1 document is not republished.
 
-The full local suite passed **747 tests**, including all **11 real Java fixtures**.
-Runtime commit `c80b1f6` also passed **736 fast tests on Python 3.12 and Python 3.14**
-in the [Python workflow](https://github.com/garibong-labs/test-survival/actions/runs/41985617605),
-and all 11 Java fixtures with no skips in the
-[Java workflow](https://github.com/garibong-labs/test-survival/actions/runs/41985617601).
-The 20 notification-security tests and Python compilation checks passed.
-New regressions cover prepare retention, shared coverage planning with predecessor
-aliases, one build per index across survive/cover and policy windows/regeneration,
-failure retention, and restoration counting inside pools. The 36 non-imported
-stage timing records agree with their run-log timestamps.
+### Review regression checks
 
-```sh
-SURVIVAL_JAVA_TEST_IMAGE=survival-java:25 \
-SURVIVAL_JAVA_TEST_LIBS=/private/tmp/footprint-e2e/main/experiments/baseline/work/libs \
-SURVIVAL_REQUIRE_JAVA_TESTS=1 .venv/bin/pytest -q --strict-markers
-```
+The three review findings are covered by focused fixtures: rejected/interrupted
+anchor classes must re-enter build validation while ready legacy trees remain
+usable; pool cleanup must use the effective runner, including generator Docker
+overrides, without requiring local YAML; failed developer tests must retain the
+shared suite classes and compiler log even when suite compilation succeeded.
+The real Docker cleanup fixture now includes a nested pool. Linux CI verifies
+root-owned build output, with the checkout marker created by the host first,
+matching production order. Both checkout and successful scratch cleanup pass.
+
+**741 non-Java tests and all 11 Java fixtures pass** (752 total), with zero Java
+skips. Commit `65b3466` passed the
+[Python 3.12/3.14 workflow](https://github.com/garibong-labs/test-survival/actions/runs/41995691571)
+and [Java workflow](https://github.com/garibong-labs/test-survival/actions/runs/41995691554).
+One local compiler-session stress attempt failed its byte-equality assertion;
+the unchanged stress test passed on rerun and in Linux CI. Python compilation
+and whitespace checks also passed.
+
+The revised failure-retention rule keeps 12 additional shared-suite files in the
+uninterrupted fixture compared with the prior boundary-verification run. These
+are protected debugging artifacts, not scientific output changes. Earlier run
+evidence remains under `last-consumer-*`; the tables above use the new `review-*`
+runs. No checkout release boundary, compression or compile-journal behavior was
+changed by these review fixes.
