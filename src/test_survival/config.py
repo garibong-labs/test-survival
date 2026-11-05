@@ -403,6 +403,8 @@ def validate(data):
             if source in seen:raise ConfigError(f'dev.groups[{i}].derive_from: dependency cycle')
             seen.add(source);source=links[source]
     c['dev']['groups']=resolved
+    if c['survival']['selection'] == 'affected' and c['survival']['execution'] != 'batch' and not data.get('policies'):
+        raise ConfigError('survival.selection: affected requires survival.execution: batch for a baseline')
     _strings(c['survival']['environment_errors']['patterns'],'survival.environment_errors.patterns')
     generators = []
     for i, raw in enumerate(c['generators']):

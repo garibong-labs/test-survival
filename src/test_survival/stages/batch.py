@@ -70,6 +70,16 @@ class Measurements:
         self.unique = {identity(t):t for g,ts in self.tests.items()
                        if g not in self.imported and g not in self.derived for t in ts}
 
+    def valid_origin(self, row, *, historical=False):
+        if row.get('selection_action') != 'carried': return True
+        origin = read_json(self.exp/f'results/baseline-batches/{row.get("carried_from_index")}.json', {})
+        sources = {identity(t):t for t in origin.get('methods', [])}
+        source = sources.get(identity(row), {})
+        return ((historical or origin.get('input_sha256') == self.digest)
+                and source.get('selection_action') == 'executed'
+                and all(source.get(n) == row.get(n) for n in
+                        ('state','lines','dependency_record','last_executed_sha','last_executed_index')))
+
     def cached(self, index, sha, dead, *, require_lines=True, historical=False):
         raw = read_json(self.exp/f'results/baseline-batches/{index}.json', {})
         if ((not historical and raw.get('input_sha256') != self.digest) or raw.get('sha') != sha
@@ -80,14 +90,8 @@ class Measurements:
             return None
         if any(rows[k]['state'] == 'dead' and k not in dead for k in rows):
             return None
-        for k, row in rows.items():
-            if row.get('selection_action') == 'carried':
-                origin = read_json(self.exp/f'results/baseline-batches/{row.get("carried_from_index")}.json', {})
-                sources = {identity(t):t for t in origin.get('methods', [])}
-                source = sources.get(k, {})
-                if (origin.get('input_sha256') != self.digest or source.get('selection_action') != 'executed'
-                        or any(source.get(n) != row.get(n) for n in ('state','lines','dependency_record','last_executed_sha','last_executed_index'))):
-                    return None
+        if any(not self.valid_origin(row, historical=historical) for row in rows.values()):
+            return None
         if require_lines and not complete_lines(raw, dead):
             return None
         return raw
@@ -103,7 +107,7 @@ class Measurements:
             row = old.get(k)
             if k in dead:
                 kept[k] = row if row and row.get('state') != 'dead' and usable_lines(row) else dead_method(t, dead[k])
-            elif row and row.get('state') != 'dead' and usable_lines(row):
+            elif row and row.get('state') != 'dead' and usable_lines(row) and self.valid_origin(row):
                 kept[k] = row
             elif self.selector and index and not self.selector.decision(self.history.get(k), index, sha, context):
                 kept[k] = carry(self.history[k])

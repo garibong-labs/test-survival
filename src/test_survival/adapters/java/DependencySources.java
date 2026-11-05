@@ -22,7 +22,12 @@ class DependencySources {
                 new TreeScanner<Void, Void>() {
                     public Void visitIdentifier(IdentifierTree t, Void v) { identifiers.add(t.getName().toString()); return super.visitIdentifier(t,v); }
                     public Void visitMemberSelect(MemberSelectTree t, Void v) { identifiers.add(t.getIdentifier().toString()); return super.visitMemberSelect(t,v); }
-                    public Void visitClass(ClassTree t, Void v) { if (!t.getSimpleName().toString().isEmpty()) names.add(t.getSimpleName().toString()); return super.visitClass(t,v); }
+                    public Void visitClass(ClassTree t, Void v) { if (!t.getSimpleName().toString().isEmpty()) names.add(t.getSimpleName().toString()); identifiers.add(t.getSimpleName().toString()); return super.visitClass(t,v); }
+                    public Void visitMethod(MethodTree t, Void v) { identifiers.add(t.getName().toString()); return super.visitMethod(t,v); }
+                    public Void visitVariable(VariableTree t, Void v) { identifiers.add(t.getName().toString()); return super.visitVariable(t,v); }
+                    public Void visitTypeParameter(TypeParameterTree t, Void v) { identifiers.add(t.getName().toString()); return super.visitTypeParameter(t,v); }
+                    public Void visitMemberReference(MemberReferenceTree t, Void v) { identifiers.add(t.getName().toString()); return super.visitMemberReference(t,v); }
+                    public Void visitLabeledStatement(LabeledStatementTree t, Void v) { identifiers.add(t.getLabel().toString()); return super.visitLabeledStatement(t,v); }
                 }.scan(unit, null);
                 for (String name : names) System.out.println("C\t" + file + "\t" + name);
                 for (String name : identifiers) System.out.println("I\t" + file + "\t" + name);

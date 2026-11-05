@@ -135,7 +135,7 @@ def survive(b, plan, pools, step):
     points = {p:{(x['group'],x['index']) for x in plan['points'] if x['trigger']==policy['trigger']
                  and x['index'] is not None and regenerates(b,x['group'],policy)} for p,policy in policies.items()}
     curves = defaultdict(list); failures = defaultdict(list); alive_at = defaultdict(dict)
-    missing = defaultdict(dict); ledger = defaultdict(list)
+    missing = defaultdict(dict); ledger = defaultdict(list); selection_at = defaultdict(dict)
     def emit(commit,p,event,stats):
         row = {k:commit[k] for k in ('index','sha','date','subject','evaluated')}; row['event'] = event
         for g in b.groups: row.update({g+'_'+k:v for k,v in stats[g].items()})
@@ -143,6 +143,10 @@ def survive(b, plan, pools, step):
     def record(p,g,index,rows,event):
         useful = [r for r in rows if r['state'] not in ('dead','not-selected')]
         ledger[p].append(dict(index=index,group=g,event=event,**counts(useful)))
+        for row in useful:
+            k = (index,g,key(row))
+            prior = selection_at[p].get(k)
+            if prior is None or row.get('selection_action') == 'executed': selection_at[p][k] = row
         if any(not usable_lines(r) for r in useful): missing[p][index,g] = 'missing usable per-test coverage'
     for commit in b.curves:
         index = int(commit['index']); evaluable = index > 0 and b.evaluable(index)
@@ -191,6 +195,8 @@ def survive(b, plan, pools, step):
         write_csv(directory/'survival.csv',curves[p],list(curves[p][0]))
         write_csv(directory/'first-failures.csv',failures[p],['index','sha','group','segment','id','kind','flaky'])
         write_csv(directory/'coverage-missing.csv',[dict(index=i,sha=b.by_index[i]['sha'],group=g,reason=r) for (i,g),r in sorted(missing[p].items())],['index','sha','group','reason'])
-        write_json(directory/'selection-counts.json',ledger[p])
-        write_json(directory/'final-summary.json',dict(selection='affected',selection_totals={g:{a:sum(r[a] for r in ledger[p] if r['group']==g) for a in ('executed','carried')} for g in b.groups}))
+        write_json(directory/'selection-phases.json',ledger[p])
+        totals = [dict(index=i,group=g,**counts([r for (n,group,k),r in selection_at[p].items() if n==i and group==g])) for i,g in sorted({(n,group) for n,group,k in selection_at[p]})]
+        write_json(directory/'selection-counts.json',totals)
+        write_json(directory/'final-summary.json',dict(selection='affected',selection_totals={g:{a:sum(r[a] for r in totals if r['group']==g) for a in ('executed','carried')} for g in b.groups}))
     write_json(b.exp/'results/policy/needed-runs.json',[dict(execution_hash=h,index=i) for h,i in sorted(runs.needed)])

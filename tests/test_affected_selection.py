@@ -242,3 +242,67 @@ def test_baseline_control_carries_lines_and_resume_validates_origin(tmp_path, mo
     raw=read_json(tmp_path/'results/baseline-batches/0.json');raw['methods'][0]['lines']=[]
     write_json(tmp_path/'results/baseline-batches/0.json',raw,compress=True)
     assert not batch.stage_complete(tmp_path,config,'survive')
+    survive.run(tmp_path,config)
+    repaired=read_json(tmp_path/'results/raw/6-dev.json')['methods'][0]
+    assert repaired['lines']==[]
+    assert batch.stage_complete(tmp_path,config,'survive')
+
+
+@pytest.mark.java_integration
+def test_broad_runtime_hits_parallel_chunks_and_memory(tmp_path,java_environment):
+    image,libs=java_environment; root=Path(__file__).parents[1]
+    script=r'''
+from pathlib import Path
+import json,subprocess,sys,threading
+sys.path.insert(0,'/package')
+from adapters import java_worker as w,policy_coverage
+exp=Path('/out');w.EXP=exp;w.SHARED=exp;w.HELPERS=Path('/package/adapters/java')
+w.JVM={'javac':'256m','jacoco':'256m','launcher':'256m'};w.TIMEOUTS={'compile':60,'test_class':60}
+(exp/'work').mkdir();(exp/'work/libs').symlink_to('/libs')
+main=exp/'src/main/java';(main/'p').mkdir(parents=True);(main/'outside').mkdir()
+(main/'p/A.java').write_text('package p; public class A { public static int call() { return 1; } }')
+(main/'p/Constant.java').write_text('package p; public class Constant { public static final int VALUE=2; }')
+(main/'outside/Hidden.java').write_text('package outside; public class Hidden { public static int call() { return 3; } }')
+classes=exp/'target/classes';classes.mkdir(parents=True)
+subprocess.run(['javac','-d',str(classes),*[str(p) for p in main.rglob('*.java')]],check=True)
+records=json.loads((w.HELPERS/'classpath-artifacts.json').read_text())
+cp=':'.join([str(classes),*['/libs/'+n for n in w.runner_test_jars(records)]])
+w.classpath=lambda _: (exp,cp);w.jacoco_version=lambda _: '0.8.14'
+methods=[]
+for i in range(4):
+ source=exp/f'tests/{i}';source.mkdir(parents=True)
+ (source/'Helper.java').write_text('class Helper { static int value() { return p.Constant.VALUE; } }')
+ (source/'T.java').write_text('class T { @org.junit.jupiter.api.Test void works() throws Exception { org.junit.jupiter.api.Assertions.assertEquals(1,p.A.call()); org.junit.jupiter.api.Assertions.assertEquals(2,Helper.value()); org.junit.jupiter.api.Assertions.assertEquals(3,Class.forName("outside.Hidden").getMethod("call").invoke(null)); org.junit.jupiter.api.Assertions.assertEquals("'+str(i)+'",java.nio.file.Files.readString(java.nio.file.Path.of("src/test/resources/id"))); Thread.sleep(200); } }')
+ resources=exp/f'resources/{i}/resources';resources.mkdir(parents=True);(resources/'id').write_text(str(i))
+ methods.append(dict(id=str(i),file=f'tests/{i}/T.java',source_root=f'tests/{i}',resource_root=f'resources/{i}',file_hash=str(i),execution_hash=str(i),**{'class':'T'},method='works'))
+execute=w.execute;lock=threading.Lock();active=peak=0
+barrier=threading.Barrier(2)
+def measured(command,cwd,log,timeout):
+ global active,peak
+ is_test='PerTestCoverage' in command and '--universe' not in command
+ if is_test:
+  with lock: active+=1;peak=max(peak,active)
+  barrier.wait(timeout=30)
+ try: return execute(command,cwd,log,timeout)
+ finally:
+  if is_test:
+   with lock: active-=1
+w.execute=measured;policy_coverage.MAX_SNAPSHOT_GROUPS=1
+policy_coverage.run(w,dict(index=0,sha='t',selection='affected',chunk_workers=2,methods=methods,survival=True,scope_universe=True,
+ scope_files=['src/main/java/p/A.java'],scope_classes=['p.A'],work='job',output='result.json'))
+result=json.loads((exp/'result.json').read_text())
+assert peak==2,peak
+for t in result['methods']:
+ assert t['state']=='pass',t
+ assert not t['dependency_record']['unbounded'],t
+ assert t['dependency_record']['files']==['src/main/java/outside/Hidden.java','src/main/java/p/A.java','src/main/java/p/Constant.java'],t
+ assert all(f=='src/main/java/p/A.java' for f,n in t['lines']),t
+for run in result['runs']:
+ assert run['memory']['peak_rss_bytes']>0 and run['memory']['heap_pool_peak_sum_bytes']>0,run
+assert not list((exp/'job').rglob('*.exec'))
+assert not list((exp/'job').rglob('*.xml'))
+'''
+    r=subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival')+':/package:ro',
+                      '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script],
+                      capture_output=True,text=True,timeout=240)
+    assert r.returncode==0,r.stdout+r.stderr

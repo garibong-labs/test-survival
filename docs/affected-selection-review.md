@@ -13,7 +13,19 @@ helpers fallback with iterative removal of javac-error source files, compiling
 the remaining root together. This applies to both batch baseline and policy
 execution, for fresh `all` and `affected` runs. It supersedes this review's
 original selected-source-closure proposal and resolves the compilation design
-decision previously left open. The Part 1 stopping point remains in effect.
+decision previously left open. Part 1 was subsequently approved; the decisions below govern Part 2.
+
+**Approved Part 2 decisions (superseding earlier alternatives):** affected
+compiles executed test files plus non-test helpers, while all compiles the eligible
+root; both use iterative error-file removal. Affected indices run in order with
+concurrent chunks bounded by `runner.workers.survive`. Compiler invalidation uses
+repository POM parent versions, compiler-plugin configuration, and properties
+matching compiler/release/source/target/java.version, without an effective Maven
+model. Historical evidence must remain readable, but exact resume fingerprints
+need not be preserved. Dependency-bearing control at t can seed the first segment.
+Fill-boundary executions, per-policy logical decisions, developer-only no-model
+policy comparisons, and conservative execution with missing evidence are accepted.
+Verification must report peak JVM memory as well as counts and timings.
 
 The public setting is `survival.selection: all | affected`, default `all`.
 Batch baselines and policy survival use affected selection; preparation,
@@ -29,7 +41,7 @@ All paths below are repository-relative unless identified as experiment paths.
 
 | Layer | Current implementation | Affected-selection insertion point |
 |---|---|---|
-| Batch baseline | [`stages/batch.py`](../src/test_survival/stages/batch.py): `catalog`, `Measurements.measure/cached/project`, `control`, `survive` | Partition the chronological alive entrants into execute/carry before building the worker's `methods`; merge carried evidence with returned observations before group projection. `control` measures t; the first evaluable commit after t still runs every entrant. |
+| Batch baseline | [`stages/batch.py`](../src/test_survival/stages/batch.py): `catalog`, `Measurements.measure/cached/project`, `control`, `survive` | Partition the chronological alive entrants into execute/carry before building the worker's `methods`; merge carried evidence with returned observations before group projection. `control` measures t; its dependency-bearing execution may seed carrying at the first later index. |
 | Policy survival | [`policy/execute.py`](../src/test_survival/policy/execute.py): `Runs.register/seed_baseline/run_index/prefetch`, `survive` | Compute demand per policy/group/segment, then deduplicate the required executions by snapshot identity and method. Preserve a logical selection decision per consumer even when physical execution is shared. |
 | Shared worker | [`adapters/java_worker.py`](../src/test_survival/adapters/java_worker.py) routes `policy-survive` to [`adapters/policy_coverage.py`](../src/test_survival/adapters/policy_coverage.py): `run(w, job)` with `job['survival']=True` | Both callers use this worker. Add an opt-in dependency collection contract and return build-context identity with observations. There are not separate Java baseline and policy engines to extend. |
 | Frozen sources | Baseline `catalog()` and [`policy/artifacts.py`](../src/test_survival/policy/artifacts.py): `snapshot`, `tree_hash` | Retain `execution_hash`, source-tree and resource-tree hashes. Identify a method by `(execution_hash, class, method)`, not its possibly reused class name or storage path. |
@@ -47,7 +59,9 @@ policy coverage gets the baseline's durable universe instead.
 
 For each snapshot root with execution demand at the current index:
 
-1. Compile the whole eligible frozen root once, with `-Xmaxerrs` high enough to
+1. In all mode compile the whole eligible frozen root once. In affected mode,
+   start with executed test files plus non-test helpers and allow javac to resolve
+   referenced test-tree sources. In both modes use `-Xmaxerrs` high enough to
    avoid javac's default diagnostic cap (use the maximum supported value and
    verify a fixture with more than 100 errors). Preserve the complete diagnostic
    stream and each diagnostic's source-file association.
@@ -99,14 +113,13 @@ between snapshot roots and their distinct classloaders. Completed pool and
 measurement artifacts remain immutable; the changed algorithm applies to new
 compilations, not an automatic repair of finished experiments.
 
-The addendum deliberately allows compilation of unselected files within a root
-that has an executed method. It supersedes the earlier requirement to compile
-only executed tests' source closures at that granularity. The optimization still
-skips an entire snapshot root when none of its methods execute, and carried
-methods keep their recorded state even if their files are removed while compiling
-the root for another method. Record those removals as compile evidence; they are
-not new observations of carried methods. Equality checks must detect any resulting
-disagreement rather than silently overriding a carry decision.
+The approved affected compile set includes executed test files and non-test
+helpers, rather than every unselected test in the root. Referenced test sources
+remain available to javac until removed by an error diagnostic. All mode starts
+with the eligible whole root. A root with no executed methods is not compiled.
+Carried methods keep their recorded state; compilation removals are evidence,
+not executions of unselected methods. Equality checks validate the requested
+all/affected verdict parity under these boundaries.
 
 ## 2. Dependency production and cost
 
@@ -162,7 +175,7 @@ references; unresolved project/test-tree references make the result unbounded.
 existing compiled-reference graph. `SourceInventory.java` alone is likewise
 insufficient. Neither should be represented as already providing this feature.
 
-The accepted fallback compiles a whole root and iteratively removes error files;
+The accepted fallback iteratively removes error files from the mode-specific input set;
 it does not require a source dependency graph to prune helpers before compiling.
 Build the static dependency graph from the final successful output, retaining
 the removal map so missing project/test-tree references are not misclassified as
@@ -268,32 +281,24 @@ the **final classpath actually supplied to the worker**, and retain:
    Do not infer classifier/type from a filename alone or treat the configured
    `pom.xml` dependencies as the resolved list. Record content/path evidence
    separately for provenance, without confusing it with the requested key.
-2. Effective production compiler settings from the selected Maven compiler
-   execution: release, or source/target when release is absent, plus the
-   toolchain/JDK supplying defaults. Account for inherited plugin configuration,
-   active profiles, properties, and command-line overrides. A plain POM regex
-   or one `maven.compiler.release` property lookup is insufficient. Capture
-   effective model/compiler invocation diagnostics during preparation; verify
-   them against the real build. Classfile major versions alone cannot identify
-   the source level or distinguish `--release` from `-target`.
-3. Effective test compiler settings from the actual direct-javac command and
-   runner JDK. A change in Maven `testRelease` alone has no effect on the current
-   direct compiler and must not be reported as a changed test compiler level.
-   If a later implementation starts honoring that option, record that semantic
-   change explicitly rather than introducing it as incidental selection work.
+2. Instead of extracting an effective Maven model or compiler levels, compare
+   every repository `pom.xml` between the last-execution and current SHA. Execute
+   on a change to a parent version, compiler-plugin configuration, or property
+   whose name contains `compiler`, `release`, `source`, `target`, or `java.version`.
+   Include profile/execution settings and parse XML structurally. Cosmetic and
+   unrelated POM changes alone are not triggers; unknown XML/diff evidence is.
+   This conservative rule covers both production and test compilation as approved.
 
-If a coordinate or compiler level cannot be resolved reliably, flag the context
-as unknown and execute conservatively. Never compare two unknown values as equal.
+Unknown coordinates force execution; two unknown contexts are never equal.
 Resolve once per evaluable commit before selection, even if every method might
-be carried; no snapshot compilation is needed to obtain this context. Use a
-separate resolver action so calling the test worker is not necessary.
+be carried. A separate resolver action requires no test snapshot compilation.
 
 For affected mode, bypass or strengthen the module-POM-only cache: resolving
 afresh once per built commit is the simplest correct first version. Persist the
 resolved list for subsequent method decisions. Recheck that the list supplied
 to the JVM matches the selection context; if it changed, invalidate the carry
 decisions and execute the affected demand. A cosmetic POM change with identical
-resolved entries and compiler settings is not a trigger. A parent-POM change
+resolved entries and relevant compiler POM fields is not a trigger. A parent-POM change
 that changes a dependency is a trigger even if the module POM is unchanged.
 
 Keep these new records separate from authoritative restoration identities and
@@ -332,9 +337,9 @@ For every alive entrant at an evaluable index:
 
 1. Execute without an eligible earlier affected record in this segment, with
    an unbounded record, or with missing/invalid dependency/context evidence.
-   The first evaluation after t executes even if control at t collected hits.
+   A dependency-bearing control execution at t is eligible for this segment.
 2. Compare current context with that last execution's context; any changed
-   resolved entry/order or effective compiler level requires execution.
+   resolved entry/order or relevant compiler POM field requires execution.
 3. Diff the endpoint SHAs, not adjacent evaluated indices. Use
    `git diff --no-ext-diff --no-renames --name-only -z <last_sha> <sha_i>` and
    normalize repository paths against the module. Disabling rename detection
@@ -353,8 +358,8 @@ Deaths remain cumulative; a later raw marker is not a new first failure.
 are known, and policy `prefetch` runs a fixed-composition window ahead of its
 consumer. Affected selection needs ordered publication and dependency updates.
 For the initial implementation, serialize measurement indices in affected mode
-while preserving parallel builds, independent pool work, and within-index
-batching. Keep current `all` scheduling. Record the effective scheduling choice
+while preserving parallel builds and independent pool work. Run JVM chunks at
+one index concurrently, up to `runner.workers.survive`, with isolated resources. Keep current `all` scheduling. Record the effective scheduling choice
 in comparison evidence. A later parallel implementation must wait for a method's
 preceding decision or prove it independent; it cannot silently use stale records
 and claim to execute only affected tests.
@@ -370,7 +375,7 @@ is distinct from compiling a test snapshot.
 
 | Situation | Required handling |
 |---|---|
-| Initial baseline segment | Measure control at t normally. Start selection history at the first later evaluable index; legacy/all records cannot authorize carrying. |
+| Initial baseline segment | Measure control at t normally. Control dependencies may seed selection history; legacy/all records cannot authorize carrying. |
 | Policy segment 1 and `none` | Current policy code reads baseline verdicts/coverage directly. Preserve that reference behavior. To compare selection modes from the beginning, use the matching all/affected batch baselines; an affected policy over an all/legacy baseline does not retroactively select its segment 1. |
 | Reset | New segment membership invalidates prior-segment selection eligibility, even when file bytes and execution hash recur. Pool screening is not an eligible survival execution. Execute new entrants at the regeneration commit. |
 | Fill | `composition: carried` and `carried_alive` mean surviving members retained in the new composition, not methods skipped by selection. Under the literal “current segment” rule, retained survivors also need a measurement at the new boundary before later carrying. A real, compatible execution already performed at that same boundary can initialize the new segment; a row carried from an older index cannot. |
@@ -429,42 +434,16 @@ batch `all`/`other` changed-line columns: they remain unavailable, as merged in
 and zero-versus-unavailable distinctions. Read compressed logical artifacts
 through `io.read_json/read_csv/result_exists/resolve_path/logical_glob`.
 
-Fingerprint work must cover more than the new schema default:
-
-- In `config.py`, strip omitted/default `selection: all` at `survival_inputs`
-  and `result_inputs` boundaries, including resolved configuration copies.
-  Add affected identity at control and later stages, not generation/screening.
-- `Measurements.digest` hashes the entire `batch.py` file and runner provenance.
-  Editing that file alone changes compatibility for completed batch experiments.
-  Separate stable historical observation identity from the new selector and
-  compilation implementation, with explicit, pinned compatibility rules.
-  Do not simply bump a global version and demand that completed runs be rerun.
-- `JavaMavenAdapter.provenance()` includes Java helpers, worker, cache, and
-  compilation files. Add narrowly verified historical mappings for every
-  changed component to `run_reuse.py`; preserve exact checks of unrelated files.
-  Historical compatibility proves old observations, never new dependencies.
-  The accepted fallback intentionally changes fresh `all` outcomes: record a
-  compiler-strategy revision on new evidence and do not claim old fallback
-  results were produced by the new algorithm. Keep finished fingerprints and
-  recorded verdicts intact; use fresh scratch runs for correction verification.
-- Separate dependency schema/version from `COVERAGE_VERSION=3`; existing usable
-  line evidence does not become obsolete just because it lacks dependency sets.
-  Extend field-copy allowlists in baseline `measure/project`, derived records,
-  and policy `seed_baseline`, otherwise new metadata will silently disappear.
-- `Baseline.execution_config` currently comes from the baseline YAML, overriding
-  only runner worker counts from the policy invocation. Explicitly propagate
-  the policy invocation's `survival.selection`; do not silently inherit affected
-  mode or lose the requested override. Its default remains `all`.
-- `Steps.digest` currently spans pools and survival together. Give affected
-  execution a distinct downstream identity without changing completed pool
-  fingerprints. Keep `digest_options`/`digest_plan` and saved plans compatible
-  when only execution selection changes. Use separate scratch output roots for
-  comparisons rather than mutating a completed all experiment in place.
-
-Pin regression fixtures to actual merged-head hashes, including batch/import
-and policy records. Verify unchanged default hashes, reuse and status after
-the implementation changes; testing two new configuration dictionaries against
-each other is insufficient evidence of historical compatibility.
+Compatibility is a reader contract, not a historical resume-hash migration.
+Finished experiments remain readable through status, show, report consumers, and
+policy baseline readers. Preserve their artifacts and recorded verdicts. Fresh
+runs record the new compilation strategy, selection setting, and dependency
+schema; do not pretend old compile failures came from the corrected algorithm.
+No additional pinned historical hash mappings are required by the approved scope.
+Current-run resume still checks implementation/source identity, carry origins,
+usable lines, and completed projections. Policy invocation selection must override
+the baseline setting for new segment execution. Completed pools remain reusable
+within that run and are not rebuilt for coverage repair.
 
 ## 7. Conflicts and alternatives requiring attention in Part 2
 
@@ -474,7 +453,7 @@ each other is insufficient evidence of historical compatibility.
    all-helpers fallback or implement the previously proposed source closure.
    Healthy reflection-only helpers stay compiled; broken helpers and tests are
    removed individually with evidence. This is an authorized fresh-run behavior
-   change to `all`, while completed fingerprints/results remain preserved.
+   change to `all`, while completed results remain readable and unchanged.
    Verify the three documented JSV developer methods against legacy and then
    compare corrected batch `all` against corrected batch `affected`. Neither
    equal aggregate counts nor a known cause excuses a remaining method/line
@@ -494,7 +473,7 @@ each other is insufficient evidence of historical compatibility.
    physical execution hash and needlessly duplicating Java work.
 4. **Context evidence and cache coverage.** Existing POM hashes, dependency-byte
    hashes, and javac commands do not supply the full selection context. Add the
-   resolver and effective compiler evidence described above; do not use every
+   resolved-classpath evidence and conservative POM comparison described above; do not use every
    POM edit as a shortcut trigger. Unverifiable contexts execute conservatively.
 5. **Parallel windows.** Current speculative dispatch cannot always know the
    last actual execution. Serialize affected commit measurement first, document
@@ -511,9 +490,9 @@ each other is insufficient evidence of historical compatibility.
 
 ## 8. Verification plan after confirmation
 
-No checks in this section have been run. Part 1 ends with this document committed
-and pushed. Implementation, experiments, documentation changes elsewhere, and
-opening the single implementation PR wait for confirmation.
+This section records the accepted verification plan. Part 1 was committed and
+pushed before approval; Part 2 now implements and verifies it. Actual results
+belong in the affected-selection verification report, not implied by this plan.
 
 Unit and Java fixtures should cover every selection trigger and its non-trigger:
 runtime classes outside scope; transitive test helpers without production graph
@@ -583,7 +562,7 @@ absolute and percentage difference, and total wall time separately. The publishe
 historical before value is **465.941 seconds (7m 45.941s)** for batch survival
 (legacy survival was 461.384 seconds); these are recorded measurements from the
 earlier comparison, not new measurements. Report the new paired scratch timings
-alongside that historical reference, with compiler attempt counts and surviving
+alongside that historical reference, with compiler attempt counts, peak JVM RSS/heap-pool peaks, and surviving
 populations: recovering three tests also adds later execution work, so a stage
 timing difference is not purely compiler overhead. An after time and the claimed
 disappearance of differences remain pending Part 2 execution.

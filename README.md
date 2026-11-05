@@ -212,7 +212,39 @@ predecessor coverage aliases. Missing coverage remains unavailable and can be
 repaired by resuming the measuring stage while keeping its recorded survival
 verdict. See [batch result formats](docs/result-formats.md#batch-baseline-results)
 and the [20-commit comparison and Java verification](docs/batch-baseline-verification.md),
-including the observed developer helper-compilation differences.
+including the historical developer helper-compilation differences. Fresh batch
+and policy runs now remove javac-error files and retry the remaining compilation
+set together; only tests whose own source files are removed become compile-fail.
+
+For affected-test selection in a fresh experiment:
+
+```yaml
+survival: {execution: batch, selection: affected}
+runner:
+  workers: {survive: 4}
+```
+
+`survival.selection` defaults to `all`. Affected mode records production-file
+runtime hits, compiled test/helper references, and source-name references at
+actual executions. It reruns an alive method when those files or production
+resources change, its resolved third-party classpath changes, or relevant compiler
+settings in any repository POM change. Missing or unbounded evidence executes
+conservatively. Control at t can seed the first segment. Carried methods retain
+state and scope lines, with their actual execution index recorded in raw results.
+
+Affected commit indices run in order; up to `runner.workers.survive` JVM chunks
+at one index run concurrently. Only roots with execution demand compile. Their
+compile set is selected test files plus non-test helpers, with referenced sources
+available to javac; `all` compiles the full eligible root. Both use iterative
+error-file removal. Raw records and final summaries include executed/carried
+counts, and JVM run evidence includes peak RSS and heap-pool peaks. See
+[selection result formats](docs/result-formats.md#affected-selection-records) and
+[settings](docs/tool-settings.md#affected-selection).
+
+Use separate output directories for mode comparisons. Finished experiments stay
+readable by status, show, reporting, and policy readers; they are not migrated or
+rerun automatically. Resuming historical measurements with new implementation
+fingerprints is not guaranteed.
 
 Start the remaining work in the background:
 

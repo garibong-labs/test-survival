@@ -142,6 +142,64 @@ Status and resume retain the existing run lock and worker/container ownership;
 failed or interrupted batch scratch is retained. Successful checkouts release
 after durable group projections validate, before the non-executing cover stage.
 
+## Affected-selection records
+
+Fresh batch method rows add `selection_action: executed | carried`,
+`last_executed_index`, and `last_executed_sha`. A carried row adds
+`carried_from_index`, pointing directly to the actual observation, and retains
+that observation's state and scope `lines`. Dead/not-selected inventory markers
+and unevaluated commit markers are excluded from execution counts.
+
+Affected actual executions add a `dependency_record` containing `version: 1`,
+`selection: affected`, sorted module-relative production `files`, `unbounded`, and
+`context`. Dependencies union runtime production class hits, compiled test-tree
+references (stopping at production classes), and production simple names found as
+Java identifiers in the selected/reached test sources. Nested/local/anonymous
+classes map through classfile source metadata to source files. Unmapped project
+classes or incomplete analysis are conservatively unbounded. Only dependency
+file sets and existing scope lines persist; no full-production line coverage,
+probe dumps, or XML are added by selection. Legacy/all rows without dependencies
+remain readable observations and cannot authorize an affected carry.
+
+`results/selection-context/<index>.json` records the commit SHA, coordinate-list
+version, `known`, and the ordered resolved third-party classpath entries
+`[group, artifact, version, classifier, type]`. Unknown contexts include a reason.
+The method's stored context always belongs to its last actual execution.
+
+Raw group projections add `selection_counts: {executed, carried}`. Baseline
+`final-summary.json` adds `selection`, post-anchor `selection_totals` per group,
+and separate `selection_control` counts. A selected compile-fail/absent method
+counts as executed for scheduling; compile/run evidence still shows whether
+its body actually ran. Repairs do not increase the logical method/index count.
+
+Policy physical observations remain in `results/policy/runs/<execution_hash>/`.
+Affected logical rows are in
+`results/policy/<policy>/decisions/<group>/<segment>/<index>.json.gz`; coverage
+consumes the active segment's logical row. Per-policy `selection-counts.json`
+records index/group totals, with each method counted once across boundary phases
+(as executed if any phase executed it). `selection-phases.json` retains affected
+phase counts, and per-policy `final-summary.json` contains group totals. These
+JSON additions leave all survival/failure/coverage table schemas unchanged.
+
+Compile evidence includes `strategy: remove-error-files-v1`, each attempt's
+command, input files, log, time, and `removed` map of source files to diagnostics.
+The final result preserves the complete removal map even when a retry succeeds.
+Each attempt uses clean class output; removed sources cannot be rediscovered
+through the scratch sourcepath. No frozen/imported source is changed.
+
+Each instrumented JVM `runs` entry adds `memory`: `peak_rss_bytes` is Linux's
+process resident-memory high-water mark; `heap_pool_peak_sum_bytes` and
+`nonheap_pool_peak_sum_bytes` sum memory-pool peak usage (individual pool peaks
+need not occur simultaneously). Missing shutdown evidence, including forced
+termination, leaves memory unavailable rather than reporting a measured zero.
+These are per-JVM peaks; they are not aggregate peaks of concurrent JVMs.
+
+Finished artifacts keep their original fields and remain readable. New code does
+not rewrite them to add dependencies or fix historical compilation verdicts.
+Exact historical resume fingerprints are not promised. Selection decisions and
+both executed and carried rows participate in current-run completeness/progress;
+status stays read-only and stop/resume use the existing ownership protocol.
+
 ## Archives
 
 `survival archive EXP_DIR [--dest DIR] [--include-work] [--prune] [--yes] [--dry-run]`
