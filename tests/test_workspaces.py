@@ -141,3 +141,26 @@ def test_survival_waits_for_every_index_consumer_before_release(tmp_path,monkeyp
         survive.run(tmp_path,config)
         assert not checkout.exists()
         assert not (tmp_path/'work/checkouts/1.json').exists()
+
+
+def test_pool_cleanup_requires_verified_immutable_snapshots(tmp_path):
+    from test_survival.policy.pools import verified_pool
+    from test_survival.policy.artifacts import tree_hash
+    from test_survival.config import canonical_hash
+    import hashlib
+    root=tmp_path/'results/policy/pools/dev/2'
+    source=root/'dev/src-test-t/java/T.java';source.parent.mkdir(parents=True)
+    source.write_text('class T {}')
+    assert not verified_pool(tmp_path,root,[])
+    write_json(root/'results/workspace-identities/0.json',dict(sha='sha',dependencies=[]))
+    source_hash=hashlib.sha256(source.read_bytes()).hexdigest()
+    sources=tree_hash(source.parent,'*.java')
+    resources=canonical_hash({name:tree_hash(root/'dev/src-test-t'/name) for name in ('resources','suite')})
+    member=dict(file=str(source.relative_to(tmp_path)),file_hash=source_hash,
+                source_root=str(source.parent.relative_to(tmp_path)),source_tree_hash=sources,
+                resource_root=str((root/'dev/src-test-t').relative_to(tmp_path)),resource_tree_hash=resources,
+                execution_hash=canonical_hash(dict(file=source_hash,sources=sources,resources=resources)))
+    assert verified_pool(tmp_path,root,[member])
+    source.write_text('class T { int changed; }')
+    with pytest.raises(RuntimeError,match='snapshot changed'):verified_pool(tmp_path,root,[member])
+    assert source.exists()

@@ -129,7 +129,7 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         reset=adapter.runner.execute(['python3','-c',
             'import pathlib, shutil; shutil.rmtree("work/compile-cache"); '
             'base="results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind"; '
-            '[pathlib.Path(base+suffix).unlink() for suffix in (".json", ".xml")]; '
+            '[pathlib.Path(base+suffix).unlink() for suffix in (".json.gz", ".xml.gz")]; '
             'pathlib.Path("work/runtime/environment-attempts.txt").unlink()'],
             tmp_path,tmp_path/'fixture-cache-reset.log',30)
         assert reset['exit_code']==0
@@ -137,7 +137,7 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         assert cold['whole_frozen_suite_compile']['cache']['status']=='miss'
         assert cold['methods']==covered['methods']
         assert read_csv(coverage_base.with_name(coverage_base.name+'-lines.csv'))==warm_lines
-    assert (tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind.xml').exists()
+    assert (tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind.xml.gz').exists()
     lines=read_csv(tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind-lines.csv')
     assert any(r['file']=='src/main/java/fixture/Production.java' and r['covered']=='yes' for r in lines)
 

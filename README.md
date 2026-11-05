@@ -555,3 +555,6 @@ are written as `.gz`, including inside policy pools. Logical record paths keep
 their original names; built-in status, reports, imports and policy readers accept
 both plain and compressed results. Use `gzip -dc FILE.gz` for external tools.
 Summary CSV/JSON, state, report/Sheets inputs and `generated/` retain their formats.
+
+See the [footprint verification report](docs/footprint-verification.md) for the
+fixture, accepted decisions, comparisons, per-stage timings and measured savings.

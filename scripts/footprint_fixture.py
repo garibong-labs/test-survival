@@ -85,8 +85,63 @@ public class Helper {
     commit('fixture: change value and update developer test', 3);git('tag', 'fixture-release')
     write(production, production.read_text().replace('x < 0 ? "negative" : "nonnegative"', 'x >= 0 ? "nonnegative" : "negative"'))
     commit('fixture: equivalent branch', 4);git('tag', 'fixture-end')
-    config = yaml.safe_load('name: footprint-fixture\nproject:\n  repo: /tmp/footprint-e2e/target\n  language: java\n  build: maven\n  test_framework: junit4\n  module: .\nanchor: fixture-t\nrange:\n  branch: main\n  end: fixture-end\n  limit: 3\n  skip_untouched: main-sources\nscope:\n  rule: explicit\n  classes: [fixture.Calculator]\n  min_methods: 1\n  target_methods: [1, 10]\n  min_classes: 1\n  max_classes: 1\n  exclude_accessor_heavy: false\ndev:\n  stable_runs: 3\n  unmapped: error\n  groups:\n    - {name: dev, denominator: project}\n    - {name: dev-scope, denominator: coverage-scoped, derive_from: dev}\ngenerators:\n  - name: ouedraogo\n    method: ouedraogo\n    impl: native\n    params: {prompts: [ZSL]}\n    rounds: {max: 1, until_dev_matched: false}\nscreen: {stable_runs: 3, dedup: exact-body, matching: none}\ncoverage: {changed_line: true, at_anchor: true, groups: alive-entering}\nrunner:\n  javac_mode: subprocess\n  docker:\n    image: survival-java:25\n    m2_volume: footprint-e2e-m2\n  workers: {build: 1, survive: 1, cover: 1}\n  timeouts: {build: 120, compile: 60, test_class: 30}\n  jvm: {launcher: 512m, javac: 256m, jacoco: 512m}')
-    policy = {**config, **yaml.safe_load('policies:\n  baseline: experiments/baseline\n  regenerate_developer: true\n  groups: [dev-scope]\n  releases: [fixture-release]\n  concurrency: {dev_selection: 1}\n  fill_seed: 20261029\n  set:\n    - {name: release-reset, trigger: release, action: reset}\n    - {name: release-fill, trigger: release, action: fill}')}
+    config = yaml.safe_load("""
+name: footprint-fixture
+project:
+  repo: /tmp/footprint-e2e/target
+  language: java
+  build: maven
+  test_framework: junit4
+  module: .
+anchor: fixture-t
+range:
+  branch: main
+  end: fixture-end
+  limit: 3
+  skip_untouched: main-sources
+scope:
+  rule: explicit
+  classes: [fixture.Calculator]
+  min_methods: 1
+  target_methods: [1, 10]
+  min_classes: 1
+  max_classes: 1
+  exclude_accessor_heavy: false
+dev:
+  stable_runs: 3
+  unmapped: error
+  groups:
+    - {name: dev, denominator: project}
+    - {name: dev-scope, denominator: coverage-scoped, derive_from: dev}
+generators:
+  - name: ouedraogo
+    method: ouedraogo
+    impl: native
+    params: {prompts: [ZSL]}
+    rounds: {max: 1, until_dev_matched: false}
+screen: {stable_runs: 3, dedup: exact-body, matching: none}
+coverage: {changed_line: true, at_anchor: true, groups: alive-entering}
+runner:
+  javac_mode: subprocess
+  docker:
+    image: survival-java:25
+    m2_volume: footprint-e2e-m2
+  workers: {build: 1, survive: 1, cover: 1}
+  timeouts: {build: 120, compile: 60, test_class: 30}
+  jvm: {launcher: 512m, javac: 256m, jacoco: 512m}
+""")
+    policy = {**config, **yaml.safe_load("""
+policies:
+  baseline: experiments/baseline
+  regenerate_developer: true
+  groups: [dev-scope]
+  releases: [fixture-release]
+  concurrency: {dev_selection: 1}
+  fill_seed: 20261029
+  set:
+    - {name: release-reset, trigger: release, action: reset}
+    - {name: release-fill, trigger: release, action: fill}
+""")}
     for name, data in [('baseline', config), ('policy', policy)]:
         write(TARGET/f'experiments/{name}/experiment.yaml', yaml.safe_dump(data, sort_keys=False))
     seed = ROOT/'generated-fixture/generated/ouedraogo/round1'
