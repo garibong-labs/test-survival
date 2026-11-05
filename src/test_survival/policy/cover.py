@@ -1,5 +1,5 @@
 """Compute changed-scope-line coverage from survival evidence; never launch Java."""
-from ..io import read_csv, read_json, write_csv, write_json
+from ..io import result_exists, read_csv, read_json, write_csv, write_json
 from .config import regenerates
 from .segments import execution_id, identity
 
@@ -29,7 +29,7 @@ def run(b, step):
                 raise ValueError('Missing changed-line image at '+str(index))
             changed = {(f,int(n)) for f,ns in change['post_image'].items() if f in scope for n in ns}
             universe_path = next((b.path/f'results/coverage/{index}-{g}-lines.csv' for g in b.groups
-                                  if (b.path/f'results/coverage/{index}-{g}-lines.csv').exists()), None)
+                                  if result_exists(b.path/f'results/coverage/{index}-{g}-lines.csv')), None)
             executable = changed & {(r['file'],int(r['line'])) for r in read_csv(universe_path)} if universe_path else changed
             if len(executable) != int(change_row['scope_executable']):
                 raise ValueError('Changed executable scope lines differ from baseline at '+str(index))

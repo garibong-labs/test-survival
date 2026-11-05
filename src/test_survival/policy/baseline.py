@@ -3,7 +3,7 @@ from pathlib import Path
 import subprocess
 
 from ..config import ConfigError, as_written, load, validate
-from ..io import read_csv, read_json
+from ..io import result_exists, read_csv, read_json
 from .config import merge
 
 
@@ -56,6 +56,7 @@ class Baseline:
         settings['dev'].pop('denominator', None)
         settings['generators'] = [merge(g, self.options['generator_overrides'].get(g['name'], {})) for g in settings['generators']]
         self.execution_config = validate(settings)
+        self.execution_config.keep_work = getattr(config, 'keep_work', False)
         self.execution_config['runner']['workers'] = dict(config['runner']['workers'])
         # Internal execution constraint, propagated through generator config copies.
         self.execution_config['runner']['policy_read_only'] = [str(self.path)]
@@ -64,7 +65,7 @@ class Baseline:
             self.skipped = {int(r['index']): r['reason'] for r in read_csv(skip_file)}
         else:
             # Missing metadata is only safe when the complete raw grid is present.
-            missing = [(r['index'], g) for r in self.commits for g in self.groups if not self.raw_path(int(r['index']), g).exists()]
+            missing = [(r['index'], g) for r in self.commits for g in self.groups if not result_exists(self.raw_path(int(r['index']), g))]
             if missing:
                 raise ConfigError(f'Baseline lacks skip metadata and raw records: {missing[:5]}')
             self.skipped = {}
@@ -86,7 +87,7 @@ class Baseline:
     def raw_path(self, index, group):
         for folder in ('raw-derived', 'raw'):
             path = self.path/f'results/{folder}/{index}-{group}.json'
-            if path.exists():
+            if result_exists(path):
                 return path
         return self.path/f'results/raw/{index}-{group}.json'
 

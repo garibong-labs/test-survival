@@ -273,7 +273,7 @@ the original compilation's duration. Test runs and method/denominator fields are
 Whole-suite compile records are still referenced by multiple `files[].compile` fields:
 deduplicate by `cache.event` (or command/log for older records) when totaling costs.
 
-`results/compile-events/<unique-id>/` is independent of replaceable worker scratch and
+Legacy `results/compile-events/<unique-id>/` is independent of replaceable worker scratch and
 stage state. `started.json` stores context, command, and start time; `finished.json`
 stores finish time, `executed`, and the command result pointing to a durable `javac.txt`.
 `interrupted.json` records an exception when possible; a start without a finish can mean
@@ -298,3 +298,175 @@ Native model-call directories contain `request.json` (model, temperature, max_to
 `results/raw-derived/<index>-<group>.json` contains filtered source methods and launch evidence with `derived_from`. `results/skipped-commits.csv` has `index,sha,reason`. Skipped raw records contain `index,sha,group,phase,status` with status `skipped-untouched`. Skipped build records have `build: skipped-untouched`, empty attempts, and a reason. `coverage-index-aliases.json` maps skipped predecessor indices to equivalent earlier evaluated indices.
 
 Survival consistency adds measured/derived counts and expected counts, plus skipped indices. `raw_records` and `expected_raw_records` count measured records, including skip placeholders. `final-summary.json` adds `environment_reruns` per group and `environment_rerun_unit`. Method records that undergo environment reruns have `environment_reruns` and `environment_attempts` (initial failure, followed by retry states/messages); the first-failure CSV header is unchanged.
+
+## Checkout lifetime and restoration
+
+A verified successful index build is a durable sub-operation. Nonzero
+`work/checkouts/<index>/` trees and their `<index>.json` markers are released
+only after their last workspace consumers and coordinator validation succeed.
+Prepare retains all successful builds. Survival retains the planned coverage set,
+including predecessors resolved across skipped commits; other nonzero indices
+are released after survival aggregation validates measured, imported and derived
+records. Coverage releases each index after all groups and executable line
+universes validate. Policy windows release non-boundary indices after their last
+batch; regeneration boundaries retain the index through both window and
+regeneration consumers. An uninterrupted run builds each index once. Restoration
+is reserved for resume, legacy workspaces or genuine consumers after release.
+The anchor remains through the run; successful completion releases remaining
+verified successful checkouts. Failed, interrupted and in-flight indices remain.
+Pool anchors are released only after completed pool publication and verification
+of source, helper and resource hashes. Legacy work without recorded identities
+is retained rather than pruned speculatively.
+
+`results/workspace-identities/<index>.json` records the original successful SHA
+and ordered Maven dependency paths/content SHA-256 values. Workspace restoration
+never rewrites `results/builds/<index>.json` or its original build logs. New
+attempts, dependency probes and diagnostics live under
+`results/workspace-restorations/<index>/<attempt-id>/`. `state/workspace-<index>.json`
+records running/completed/failed restoration and its diagnostics path; an interrupted
+or failed restoration cannot be mistaken for a ready tree just because classes
+exist. A SHA, dependency identity or build-verdict disagreement stops execution
+and retains work. Old experiments remain readable; reconstructing an already
+removed legacy workspace without a recorded dependency identity fails closed.
+Report PNG rendering uses the experiment directory and needs no checkout.
+
+Dependency probes write their structured payload to `dependencies.json` and
+command stdout/stderr to `dependencies.log` in the probe diagnostics directory
+(for example, `results/builds/logs/<index>-identity/` or the restoration attempt).
+Docker Compose startup messages remain in the log. The adapter accepts only a
+successful, non-timeout invocation that published a fresh payload; it never
+parses the command log as JSON. Existing dependency identities remain readable.
+
+Changed build inputs invalidate the build instead of restoring it. Before replacing
+the authoritative record, the previous build, dependency identity and any restoration
+state are copied to `results/build-history/<index>/<attempt-id>/{build,identity,workspace-state}.json`
+(only existing files are copied). Replacement build and classpath diagnostics use
+`results/builds/logs/<index>/<attempt-id>/`, preserving earlier logs in place.
+The replacement record carries the new input fingerprint and may have a different
+verdict or dependency identity. Interrupted attempts retain their logs and workspace;
+the next attempt uses a new diagnostics directory. Build history is operational
+evidence, not a scientific result.
+
+## Successful-stage scratch cleanup
+
+`survival run --keep-work` and `survival policy run --keep-work` retain successful
+checkouts and scratch; the option propagates through background runs and pools
+and is excluded from scientific/configuration fingerprints. By default the
+coordinator cleans owned worker scratch after successful stage validation:
+`work/phase-*`, `work/dev-method-coverage-t`, `work/validation`,
+`work/import-repair`, `work/policy-survive`, and pool selection/screening scratch.
+Missing/unverified outputs never authorize cleanup. Cached screening failures
+retain their original diagnostics for later classification. Baseline failed
+file subtrees remain whole; shared failed policy batches remain whole because
+multiple methods can share their compilation and coverage evidence. Failed
+developer tests also retain shared `suite-classes` and `suite-javac.txt` when
+whole-suite compilation succeeded; their numbered classes folder can be empty.
+Cleanup retries use the effective runner configuration, including generator
+Docker overrides, even for nested pools without an `experiment.yaml`.
+
+On a worker retry, existing scratch is copied to independent files under
+`work/failed-attempts/<original-work-relative-path>/<attempt-id>/`, with a sibling
+JSON record identifying the original path. A resumed worker does not erase its
+interrupted attempt. Copying avoids Docker Desktop stale-directory aliases after
+a host rename; the worker then clears only the original directory. These histories are not removed on successful completion.
+
+`results/work-cleanup.json` records cumulative `removed_files`, `removed_bytes`
+(logical bytes), and `retained_failures` keyed by relative work path with current
+file/byte counts. Parent retained paths subsume children, avoiding double counting.
+This operational report is uncompressed and excluded from scientific comparison.
+
+After full run / verified pool completion, shared libraries, classpath jobs and
+successful runtime scratch can be recreated on demand. `work/classpaths/` is retained
+while any checkout remains, including legacy trees without workspace identities,
+so cached builds can support baseline inventory before runner setup. It is removed
+when no checkout remains. Compiler caches (including
+pool-local caches), generation/policy histories, unknown work, and every generated
+artifact remain untouched. KTester dataset scratch is removed only after round
+output matches its generated archive and, for a baseline run, report completion
+has been recorded. `work/ktester/<group>/experiment-result.json` and
+`dataset_info.json` stay in place. Completed rounds are reused from
+`generated/<group>/round<N>/run.json` before any worker launch or credential
+access, even when cleanup removed their workspace markers. Raising `rounds.max`
+rebuilds preparation/index/dataset scratch only for the new round. Existing
+archived sources and responses are not rewritten; missing derived source copies
+can be completed after an interrupted publication. An incomplete/failed archive
+requires inspection before generation can continue.
+
+Forcing the report stage refreshes the retained KTester completion record and its
+`final_summary_sha256`. A prior completion record also identifies datasets cleaned
+by older versions that removed `dataset_info.json`; imported generation without
+either dataset record does not create a KTester completion record.
+A partial `--until` run never triggers whole-run cleanup. Failure or interruption
+leaves the owning stage's scratch; previously verified index operations may
+already have released their successful checkouts.
+
+## Compressed compile-event journal
+
+New compilation history is stored in `results/compile-events/<index>.jsonl.gz`
+(or `stage-<phase>.jsonl.gz` without an index), with a persistent matching `.lock`
+file. Each append is one closed gzip member containing one JSON line. Records
+have `type` (`start`, `finish`, `interrupted`, or `toolchain`) and `event_id`.
+Start retains context, command and start time. Finish retains finish time,
+`executed`, and the command result; interrupted retains the exception type and
+available diagnostics. Toolchain records retain the JDK probe result and log.
+`cache.event` and durable event log references are `<ledger-relative-path>#<id>`;
+`cache.origin_event` continues to identify the originating compilation UUID.
+`adapters.compile_events.read_events` and `read_event` accept both this layout
+and legacy per-event directories.
+
+The `javac`/toolchain log payload contains `text`, original `bytes`, `sha256`, and
+`truncated`. Successful javac text is limited to 16 KiB of UTF-8, without splitting
+a character. Nonzero exits, timeouts and exceptions retain full text. Full
+successful compiler-cache logs remain in the protected compile cache.
+
+Writers serialize using `flock`, fsync each complete member, and checkpoint its
+byte boundary in the same persistent lock inode. An append after interruption
+validates the uncheckpointed tail. Any damaged/incomplete tail is fsynced to a
+`.jsonl.gz.damaged-<id>` evidence file before truncating back to the last complete
+record. Already complete members survive a crash between append and checkpoint.
+Readers expose earlier complete records even if a final member is incomplete.
+A killed compile therefore remains visible as a start without a finish. Normal
+appends inspect only the new tail, not the entire historical ledger.
+
+## Bulk result compression
+
+New writes use gzip level 6 for `results/coverage/*.xml.gz` (including
+`<index>-dev-scope.xml.gz`), `results/coverage/*-lines.csv.gz`,
+`results/{raw,raw-coverage,raw-derived}/*.json.gz`, and the JSON, XML and lines CSV
+files inside `results/dev-method-coverage-t/`. The same rules apply inside pools.
+The path names in records and the schemas above remain logical names without
+`.gz`. Compression changes no uncompressed bytes. Failed partial XML may remain
+plain for debugging.
+
+`io.open_result`, `read_json` and `read_csv` read either the logical name or its
+`.gz` representation. Enumeration and existence checks use the same resolution.
+An interrupted conversion can leave equal twins; these count once. Conflicting
+twins or corrupt gzip data raise an error rather than silently selecting stale
+measurements. Writers publish a complete temporary file atomically, then remove
+the previous representation. Import checksums and result hashes cover the
+**uncompressed bytes**; source/resource hashes still cover the original bytes.
+Rehash and stale-stage configuration hashes retain their existing meaning.
+
+Small summaries, all state files, policy tables and direct report/Sheets inputs
+remain plain. No files under `generated/` are compressed or removed. Legacy
+finished experiments continue to load without migration.
+
+Container-produced JSON and coverage CSV retain readable `0644` permissions so
+Linux host coordinators can consume root-owned worker files. XML compression
+preserves the original file mode. Compile-journal lock files remain persistent
+and readable for archive packaging. Host-only atomic files retain their existing
+private default mode.
+
+Known pre-footprint runner fingerprints remain reusable and count toward progress.
+The compatibility map pins the exact main component hashes and accounts for new
+provenance entries; all unrelated component hashes still must match. Screening
+reuse checks the corresponding historical key without rewriting generated
+validation evidence. Unknown provenance changes still invalidate reuse.
+
+On Linux, a host user may be unable to delete root-owned Maven/worker scratch.
+Only after host deletion reports `PermissionError`, cleanup retries the same
+validated descriptor-relative deletion inside the configured Docker runner.
+It does not relax permissions or follow symlinks. The command result and log are
+retained under `results/work-cleanup-commands/<id>.{json,log}`. A failed retry
+stops cleanup and leaves the remaining evidence. This operational path is covered
+by a real container fixture, including hosts where Docker remaps ownership.

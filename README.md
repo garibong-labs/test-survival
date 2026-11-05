@@ -532,3 +532,40 @@ Checkpoint/regeneration experiments are a separate post-baseline stage family:
 `survival policy plan|run|status <exp>`. See
 [regeneration policies](docs/regeneration-policies.md) for configuration, source
 snapshots, shared runs, per-test coverage, and the two validated project plans.
+
+Prepare keeps successful per-index checkouts for survival and coverage. Each is
+released after its last consumer validates the saved results: coverage (including
+skipped-commit predecessor aliases), otherwise survival; policy indices wait for
+their last window/regeneration batch. An uninterrupted run builds each index
+once. Failed or interrupted work stays available. Restoration preserves the original build record/logs and
+stops on a SHA, dependency or build-verdict disagreement. Changing build inputs
+instead creates a new build record and preserves prior records in
+`results/build-history/`, with separate logs for each replacement attempt.
+Retained legacy checkouts keep their classpaths for later baseline inventory. See
+[checkout lifetime and restoration](docs/result-formats.md#checkout-lifetime-and-restoration).
+Dependency verification stores JSON separately from command diagnostics, including
+Docker Compose startup messages.
+
+Use `survival run EXP_DIR --keep-work` or `survival policy run EXP_DIR --keep-work`
+to retain successful working files for inspection. Default cleanup preserves
+failed evidence, model outputs, compiler caches, force histories, and KTester
+completion records. `results/work-cleanup.json` reports scratch bytes removed and
+failed subtrees retained; see [scratch cleanup](docs/result-formats.md#successful-stage-scratch-cleanup).
+
+After KTester cleanup, increasing `rounds.max` reuses completed archived rounds
+without repeating model calls. Report regeneration refreshes the retained
+completion record, including when an older cleanup removed dataset metadata.
+
+Compiler history uses one append-only gzip journal per index instead of one
+folder per javac call. Start/finish records preserve interrupted calls, failed
+compiler output stays complete, and legacy event folders remain readable. See
+[compile-event journals](docs/result-formats.md#compressed-compile-event-journal).
+
+Large coverage XML/lines, raw measurement JSON and per-method developer coverage
+are written as `.gz`, including inside policy pools. Logical record paths keep
+their original names; built-in status, reports, imports and policy readers accept
+both plain and compressed results. Use `gzip -dc FILE.gz` for external tools.
+Summary CSV/JSON, state, report/Sheets inputs and `generated/` retain their formats.
+
+See the [footprint verification report](docs/footprint-verification.md) for the
+fixture, accepted decisions, comparisons, per-stage timings and measured savings.

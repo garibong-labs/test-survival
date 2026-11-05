@@ -1,12 +1,13 @@
+from ..work import release_checkout
 from ..adapters.java_maven import JavaMavenAdapter
 from ..adapters.run_reuse import cached_survival_record
 from ..config import group_names, derived_source
-from ..io import read_json,read_csv,write_json,write_csv
+from ..io import read_json,read_csv,write_json,write_csv,result_exists,resolve_path
 from ..pipeline import log
 from ..runner import measurement_session
 from ..runner.dispatch import dispatch
 from ..rules.survival import FAILURES, advance
-from ..rules.commits import skip_reason
+from ..rules.commits import skip_reason, coverage_indices
 from ..rules.dev_denominator import derive_record,validate_derived_subsets
 
 
@@ -64,7 +65,7 @@ def aggregate(exp,config):
     write_csv(exp/'results/survival.csv',curves,['index','sha','date','subject','evaluated']+[g+s for g in groups for s in ['_alive','_lost']])
     write_csv(exp/'results/first-failures.csv',failures,['index','sha','group','id','class','method','kind','flaky'])
     write_json(exp/'results/alive-entering.json',entering)
-    counts={folder:sum((exp/f'results/{folder}/{r["index"]}-{g}.json').exists() for g in groups if raw_folder(g,config,provenance)==folder for r in commits if int(r['index']) not in failed) for folder in ['raw','raw-derived']}
+    counts={folder:sum(result_exists(exp/f'results/{folder}/{r["index"]}-{g}.json') for g in groups if raw_folder(g,config,provenance)==folder for r in commits if int(r['index']) not in failed) for folder in ['raw','raw-derived']}
     n=len(commits)-len(failed)
     expected=sum(raw_folder(g,config,provenance)=='raw' for g in groups)*n
     derived_expected=sum(raw_folder(g,config,provenance)=='raw-derived' for g in groups)*n
@@ -88,7 +89,7 @@ def run(exp,config):
             if group in imported:
                 imported_record(exp, f'results/{raw_folder(group,config,provenance)}/{row["index"]}-{group}.json', sha=row['sha'], provenance=provenance)
                 continue
-            write_json(exp/f'results/{raw_folder(group,config,provenance)}/{row["index"]}-{group}.json',dict(index=int(row['index']),sha=row['sha'],group=group,phase='A',status='skipped-untouched'))
+            write_json(exp/f'results/{raw_folder(group,config,provenance)}/{row["index"]}-{group}.json',dict(index=int(row['index']),sha=row['sha'],group=group,phase='A',status='skipped-untouched'),compress=True)
     evaluated=[r for r in commits if int(r['index']) not in skipped and read_json(exp/f'results/builds/{r["index"]}.json')['build']=='ok']
     for row in evaluated:
         for g in imported:
@@ -113,7 +114,7 @@ def run(exp,config):
     def completed(item,record):
         row,g=item; i=int(row['index'])
         if any(run.get('exit_code') in [-9,137] for f in record['files'] for run in [f['compile'],*f['runs']]):
-            source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);source.replace(dest)
+            source=exp/f'results/raw/{i}-{g}.json';dest=exp/f'results/quarantine/{i}-{g}.json';dest.parent.mkdir(parents=True,exist_ok=True);physical=resolve_path(source);physical.replace(dest.with_name(dest.name+'.gz') if physical.suffix=='.gz' else dest)
             raise RuntimeError('Worker killed; quarantined raw record')
         if {m['id'] for m in record['methods']} != {m['id'] for m in frozen[g]}:
             raise RuntimeError('Raw methods differ from the frozen denominator')
@@ -131,6 +132,12 @@ def run(exp,config):
             source=pending.pop(g)
             for row in evaluated:
                 raw=read_json(exp/f'results/{raw_folder(source,config,provenance)}/{row["index"]}-{source}.json')
-                write_json(exp/f'results/raw-derived/{row["index"]}-{g}.json',derive_record(raw,g,frozen[g]))
+                write_json(exp/f'results/raw-derived/{row["index"]}-{g}.json',derive_record(raw,g,frozen[g]),compress=True)
     curves=aggregate(exp,config)
+    # Prepare's builds remain live through their final workspace consumer.
+    # Validate measured, imported and derived records before releasing anything.
+    coverage, _ = coverage_indices(commits, skipped, config['coverage'])
+    for row in evaluated:
+        if int(row['index']) not in coverage:
+            release_checkout(exp, config, row['index'])
     return 'Final survivors: '+', '.join(f'{g}={curves[-1][g+"_alive"]}' for g in groups)

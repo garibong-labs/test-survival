@@ -86,7 +86,7 @@ def test_build_records_unresolvable_dependencies_as_a_failed_build(tmp_path, mon
     from test_survival.config import validate
     adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo'}}))
     monkeypatch.setattr(adapter, 'checkout', lambda index, sha: None)
-    def unresolvable(folder, index):
+    def unresolvable(folder, index, **kwargs):
         raise RuntimeError('Maven classpath resolution failed; see results/builds/logs/classpath-3.txt')
     monkeypatch.setattr(adapter.cache, 'resolve', unresolvable)
     monkeypatch.setattr(adapter.runner, 'execute', lambda *args: pytest.fail('compile must not run without a classpath'))

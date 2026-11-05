@@ -8,7 +8,7 @@ import shutil
 import yaml
 
 from .config import MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate, execution_groups
-from .io import now, read_csv, read_json, write_json
+from .io import compressed_result, logical_glob, resolve_path, result_exists, result_hash, now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
 from .rules.dev_denominator import denominator_file, unmapped_note
 
@@ -40,15 +40,16 @@ def check_unmapped_audit(exp, record):
 
 
 @lru_cache(maxsize=16384)
-def _file_hash(path, device, inode, size, mtime_ns, ctime_ns):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _file_hash(path, device, inode, size, mtime_ns, ctime_ns, logical=False):
+    return result_hash(path) if logical else hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def file_hash(path):
     """Reuse digests only while the file identity and change metadata match."""
-    path = Path(path).resolve()
+    logical = compressed_result(path)
+    path = (resolve_path(path) if logical else Path(path)).resolve()
     stat = path.stat()
-    return _file_hash(path, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    return _file_hash(path, stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, logical)
 
 
 def load_provenance(exp):
@@ -153,8 +154,8 @@ def import_results(exp, source, config):
         group_paths = []
         pattern = re.compile(r'\d+-'+re.escape(name)+r'(?:\.[^/]+|-lines\.csv)$')
         for folder in ('raw', 'raw-derived', 'coverage', 'raw-coverage', 'control'):
-            for path in sorted((source/'results'/folder).glob('*')):
-                if path.is_file() and pattern.fullmatch(path.name):
+            for path in logical_glob(source/'results'/folder):
+                if result_exists(path) and pattern.fullmatch(path.name):
                     relative = str(path.relative_to(source))
                     plan[relative] = path
                     group_paths.append(relative)
@@ -173,7 +174,7 @@ def import_results(exp, source, config):
             raise PipelineError(f'dev-results: missing control result for {name} in {source}')
         groups[name] = dict(denominator=group['denominator'], frozen=frozen[name], files=group_paths, raw_folder=target_folder)
     for target, path in plan.items():
-        if not path.is_file():
+        if not result_exists(path):
             raise PipelineError(f'dev-results: missing source file {path}')
     hashes = {}
     for target, path in plan.items():
@@ -182,7 +183,11 @@ def import_results(exp, source, config):
         # Identical frozen source files need no rewrite. Their retained bytes
         # are still included in the manifest, just like copied baseline files.
         if not target.startswith('dev/src-test-t/'):
-            shutil.copy2(path, destination)
+            physical = resolve_path(path)
+            copied = destination.with_name(destination.name+'.gz') if physical.suffix == '.gz' and destination.suffix != '.gz' else destination
+            shutil.copy2(physical, copied)
+            alternate = destination if copied != destination else destination.with_name(destination.name+'.gz')
+            alternate.unlink(missing_ok=True)
         hashes[target] = file_hash(destination)
     if UNMAPPED_AUDIT not in plan:
         (exp/UNMAPPED_AUDIT).unlink(missing_ok=True)
@@ -243,7 +248,7 @@ def imported_for(exp, config, stage):
 def require_record(exp, provenance, relative):
     path = exp/relative
     expected = provenance['files'].get(relative)
-    if not expected or not path.is_file() or file_hash(path) != expected:
+    if not expected or not result_exists(path) or file_hash(path) != expected:
         raise PipelineError(f'dev-results refused: imported evidence missing or changed: {relative}')
 
 
@@ -263,7 +268,7 @@ def imported_file_valid(exp, relative, files=None):
     if files is None:
         files = load_provenance(exp).get('files', {})
     expected = files.get(relative)
-    return bool(expected and (exp/relative).is_file() and file_hash(exp/relative) == expected)
+    return bool(expected and result_exists(exp/relative) and file_hash(exp/relative) == expected)
 
 
 def imported_baseline(exp, config):

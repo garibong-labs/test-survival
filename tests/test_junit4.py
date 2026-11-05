@@ -129,7 +129,7 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         reset=adapter.runner.execute(['python3','-c',
             'import pathlib, shutil; shutil.rmtree("work/compile-cache"); '
             'base="results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind"; '
-            '[pathlib.Path(base+suffix).unlink() for suffix in (".json", ".xml")]; '
+            '[pathlib.Path(base+suffix).unlink() for suffix in (".json.gz", ".xml.gz")]; '
             'pathlib.Path("work/runtime/environment-attempts.txt").unlink()'],
             tmp_path,tmp_path/'fixture-cache-reset.log',30)
         assert reset['exit_code']==0
@@ -137,7 +137,7 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         assert cold['whole_frozen_suite_compile']['cache']['status']=='miss'
         assert cold['methods']==covered['methods']
         assert read_csv(coverage_base.with_name(coverage_base.name+'-lines.csv'))==warm_lines
-    assert (tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind.xml').exists()
+    assert (tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind.xml.gz').exists()
     lines=read_csv(tmp_path/'results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind-lines.csv')
     assert any(r['file']=='src/main/java/fixture/Production.java' and r['covered']=='yes' for r in lines)
 
@@ -366,3 +366,78 @@ def test_direct_scoped_child_keeps_whole_frozen_tree_compilation(tmp_path,monkey
     adapter.worker(dict(action='run',group='dev-scope'))
     assert jobs[0]['developer'] is True
     assert jobs[0].get('developer_suite',True) is True
+
+
+@pytest.mark.java_integration
+@pytest.mark.parametrize('mode', ['image', 'compose'])
+def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode):
+    import hashlib
+    from uuid import uuid4
+    import yaml
+    image, _ = java_environment
+    docker = dict(image=image)
+    if mode == 'compose':
+        compose = tmp_path/'compose.yaml'
+        compose.write_text(yaml.safe_dump(dict(name='identity-'+uuid4().hex,
+            services=dict(probe=dict(image=image, network_mode='none')))))
+        docker = dict(compose_files=[str(compose)], service='probe')
+    config = validate(dict(name='identity', anchor='t', project=dict(repo=str(tmp_path)),
+                           runner=dict(docker=docker)))
+    for exp in (tmp_path/'baseline', tmp_path/'baseline/results/policy/pools/dev/2'):
+        adapter = JavaMavenAdapter(exp, config)
+        adapter.folder(0).mkdir(parents=True)
+        jar = exp/'dependency.jar'
+        jar.write_bytes(b'fixture dependency')
+        cp = exp/'work/classpath.txt'
+        cp.write_text(adapter.runner.path(jar))
+        directory = exp/'results/identity'
+        expected = [dict(path=adapter.runner.path(jar), sha256=hashlib.sha256(jar.read_bytes()).hexdigest())]
+        assert adapter.dependency_identity(0, dict(classpath='work/classpath.txt'), directory) == expected
+        assert json.loads((directory/'dependencies.json').read_text()) == expected
+        assert (directory/'dependencies.log').is_file()
+
+
+@pytest.mark.java_integration
+def test_container_owned_scratch_cleanup(tmp_path, java_environment, monkeypatch):
+    import yaml
+    from test_survival import work
+    image,_=java_environment
+    raw=dict(name='cleanup',anchor='t',project={'repo':str(tmp_path)},runner={'docker':{'image':image}})
+    (tmp_path/'experiment.yaml').write_text(yaml.safe_dump(raw))
+    adapter=JavaMavenAdapter(tmp_path,validate(raw))
+    created=adapter.runner.execute(['python3','-c',
+        'from pathlib import Path; p=Path("work/owned/nested/file"); p.parent.mkdir(parents=True); p.write_text("evidence")'],
+        tmp_path,tmp_path/'create.log',30)
+    assert created['exit_code']==0
+    # Force the same Linux ownership boundary on Docker Desktop too. The
+    # container imports the real implementation, not this host monkeypatch.
+    monkeypatch.setattr(work,'_remove_owned',lambda *args: (_ for _ in ()).throw(PermissionError('container owner')))
+    work.remove_owned(tmp_path,'work/owned')
+    assert not (tmp_path/'work/owned').exists()
+    records=list((tmp_path/'results/work-cleanup-commands').glob('*.json'))
+    assert len(records)==1 and json.loads(records[0].read_text())['exit_code']==0
+    # Real pools have no experiment.yaml, and may use a generator-specific
+    # image. Exercise both checkout and successful scratch cleanup there.
+    from test_survival.io import write_json
+    pool=tmp_path/'results/policy/pools/dev/2'
+    pool.mkdir(parents=True)
+    config=validate(raw)
+    runner=JavaMavenAdapter(pool,config).runner
+    # Checkout/marker publication is host-owned before Maven creates its
+    # root-owned target subtree, matching the production checkout path.
+    write_json(pool/'work/checkouts/0.json',dict(sha='sha'))
+    created=runner.execute(['python3','-c',
+        'from pathlib import Path; '
+        'paths=[Path("work/checkouts/0/target/classes/A.class"),Path("work/libs/runtime.jar")]; '
+        '[(p.parent.mkdir(parents=True,exist_ok=True),p.write_bytes(b"compiled")) for p in paths]'],
+        pool,pool/'create.log',30)
+    assert created['exit_code']==0
+    assert not (pool/'experiment.yaml').exists()
+    write_json(pool/'results/builds/0.json',dict(sha='sha',build='ok'))
+    write_json(pool/'results/workspace-identities/0.json',dict(sha='sha'))
+    work.finish_checkouts(pool,config)
+    work.finish_work(pool,config,pool=True)
+    assert not (pool/'work/checkouts').exists()
+    assert not (pool/'work/libs').exists()
+    records=list((pool/'results/work-cleanup-commands').glob('*.json'))
+    assert len(records)==4 and all(json.loads(p.read_text())['exit_code']==0 for p in records)

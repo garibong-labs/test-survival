@@ -10,8 +10,10 @@ def record(exp, config, summary):
         if group['method'] != 'ktester':
             continue
         dataset = exp/'work/ktester'/group['name']
-        if not (dataset/'dataset_info.json').exists():
+        if not (dataset/'dataset_info.json').exists() and not (dataset/'experiment-result.json').exists():
             continue  # Imported generation does not create an author-tool dataset.
+        # A prior cleanup may have removed dataset_info.json. Its retained
+        # completion record still identifies a dataset whose report must refresh.
         def git(*args):
             return subprocess.check_output(['git', '-C', config['project']['repo'], *args], text=True).strip()
         result = dict(

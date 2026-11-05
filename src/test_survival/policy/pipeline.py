@@ -7,7 +7,7 @@ import traceback
 
 from ..config import ConfigError, canonical_hash, load, result_inputs
 from ..display import UTC_DISPLAY
-from ..io import atomic_text, now, read_json, write_json
+from ..io import logical_glob, resolve_path, atomic_text, now, read_json, write_json
 from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
 from .config import COVERAGE_VERSION, digest_options, active_plan, reusable_run
@@ -63,7 +63,8 @@ class Steps:
             self.progress.event(name, 'completed')
 
 
-def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_DISPLAY):
+def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_DISPLAY, keep_work=False):
+    config.keep_work = keep_work
     b = Baseline(exp,config)  # Validate the read-only boundary before creating lock/state files.
     with run_lock(b.exp, lock_fd), run_session(b.exp), LiveProgress(b.exp, display=display) as progress:
         if force:
@@ -77,8 +78,9 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
             for path in (b.exp/'state').glob('policy-*-error.txt'):
                 path.unlink()
             # Adapter result caches are beneath this experiment, never the baseline.
-            for path in (b.exp/'results/raw').glob('*-policy-*.json'):
-                path.unlink()
+            for path in logical_glob(b.exp/'results/raw', '*-policy-*.json'):
+                resolve_path(path).unlink()
+                path.unlink(missing_ok=True)
             directory = b.exp/'results/policy-coverage'
             if directory.exists():
                 shutil.rmtree(directory)
@@ -101,19 +103,26 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
             return
         names = [p['name'] for p in b.options['set']]
         step('survive',lambda:execute.survive(b,plan,built,step),outputs=[b.exp/f'results/policy/{p}/survival.csv' for p in names])
+        from ..work import cleanup_stage
+        cleanup_stage(b.exp, b.execution_config, 'policy-survive')
         if until == 'survive':
             return
         step('cover',lambda:cover.run(b,step),outputs=[b.exp/f'results/policy/{p}/coverage-total.json' for p in names])
         if until == 'cover':
             return
         step('report',lambda:report.run(b),outputs=[b.exp/'results/policy/summary.csv',b.exp/'results/policy/consistency.md'])
+        from ..work import finish_checkouts, finish_work
+        finish_checkouts(b.exp, b.execution_config)
+        finish_work(b.exp, b.execution_config)
 
 
-def background(exp, config, until, force):
+def background(exp, config, until, force, keep_work=False):
     b = Baseline(exp,config)
     arguments = ['policy','run',str(b.exp),'--until',until]
     if force:
         arguments.append('--force')
+    if keep_work:
+        arguments.append('--keep-work')
     return launch_background(b.exp, arguments, log_name='policy-background.log')
 
 
@@ -168,7 +177,7 @@ def command(args, *, display=UTC_DISPLAY):
         else:
             print(status(args.exp_dir,config,display=display))
     elif args.background:
-        pid,log = background(args.exp_dir,config,args.until,args.force)
+        pid,log = background(args.exp_dir,config,args.until,args.force,getattr(args,'keep_work',False))
         print(f'PID {pid}; log {log}')
     else:
         if args.ready_fd is not None:
@@ -177,4 +186,4 @@ def command(args, *, display=UTC_DISPLAY):
                     raise PipelineError('Background startup was interrupted')
             finally:
                 os.close(args.ready_fd)
-        run(args.exp_dir,config,args.until,args.force,args.lock_fd,display=display)
+        run(args.exp_dir,config,args.until,args.force,args.lock_fd,display=display,keep_work=getattr(args,'keep_work',False))

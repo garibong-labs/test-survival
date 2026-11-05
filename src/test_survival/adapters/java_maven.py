@@ -8,16 +8,22 @@ import re
 import shutil
 import subprocess
 import tarfile
+import threading
+from uuid import uuid4
 import xml.etree.ElementTree as ET
 
 from ..config import as_written, canonical_hash, record_runner_inputs
-from ..io import read_json, write_json, write_csv
+from ..io import read_json, write_json, write_csv, result_exists
 from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
 from .java_worker import RUNNER_JAR_RETRIES, RUNNER_JAR_BACKOFF_SECONDS, project_jars, runner_test_jars
 from .maven_dependencies import resolution_timeout
 from .run_reuse import survival_provenance_matches
 from ..rules.survival import dead_method
+
+
+_BUILD_LOCKS = {}
+_BUILD_LOCKS_GUARD = threading.Lock()
 
 
 class JavaMavenAdapter:
@@ -74,32 +80,118 @@ class JavaMavenAdapter:
         return self.build_fingerprint(sha), self.build_fingerprint(sha, legacy=True)
 
     def build(self, index, sha):
+        with _BUILD_LOCKS_GUARD:
+            lock = _BUILD_LOCKS.setdefault((str(self.exp.resolve()), str(index)), threading.RLock())
+        with lock:
+            return self._build(index, sha)
+
+    def dependency_identity(self, index, record, directory):
+        directory.mkdir(parents=True, exist_ok=True)
+        output = directory/'dependencies.json'
+        log = directory/'dependencies.log'
+        # Compose progress and stderr belong to diagnostics, never the payload.
+        # Require this invocation to publish its own output, even on a retry.
+        output.unlink(missing_ok=True)
+        result = self.runner.execute(['python3', str(Path(__file__).with_name('workspace_identity.py')),
+                                      str(self.exp/record['classpath']), str(output)], self.folder(index), log,
+                                     self.config['runner']['timeouts']['build'])
+        if result['exit_code'] or result.get('timeout') or not output.is_file():
+            raise RuntimeError('Cannot verify workspace dependencies; see '+str(log))
+        return read_json(output)
+
+    def ensure_anchor(self):
+        anchor = read_json(self.exp/'results/anchor.json', {})
+        # Rejected/interrupted restorations can leave classes behind. Preserve
+        # ready legacy trees, but never bypass build validation for unsettled work.
+        unsettled = read_json(self.exp/'state/workspace-0.json', {}).get('status') in ('running', 'failed')
+        if anchor.get('sha') and (unsettled or not (self.folder(0)/'target/classes').exists()):
+            if self.build(0, anchor['sha'])['build'] != 'ok':
+                raise RuntimeError('Anchor workspace build failed')
+
+    def _build(self, index, sha):
         record = self.exp / f'results/builds/{index}.json'
+        identity_path = self.exp/f'results/workspace-identities/{index}.json'
         fingerprint, legacy = self.build_fingerprints(sha)
         previous = read_json(record, {})
-        if previous.get('input_sha256') in (fingerprint, legacy) and previous.get('build') == 'ok' and (self.folder(index)/'target/classes').exists():
+        recorded_identity = read_json(identity_path)
+        compatible = previous.get('input_sha256') in (fingerprint, legacy) and previous.get('sha') == sha
+        present = (self.folder(index)/'target/classes').exists()
+        restoration_state = self.exp/f'state/workspace-{index}.json'
+        unsettled = read_json(restoration_state, {}).get('status') in ('running', 'failed')
+        if compatible and previous.get('build') == 'ok' and present and not unsettled:
             return previous
+        # An identity does not make an invalidated build authoritative for new
+        # inputs. Compare using the original SHA so a changed index mapping with
+        # a recorded identity still fails the SHA check under unchanged settings.
+        same_inputs = previous.get('input_sha256') in self.build_fingerprints(previous.get('sha'))
+        restoration = previous.get('build') == 'ok' and (compatible or recorded_identity is not None and same_inputs)
+        directory = self.exp/f'results/workspace-restorations/{index}/{uuid4().hex}' if restoration else self.exp/'results/builds/logs'
+        if previous and not restoration:
+            attempt = uuid4().hex
+            history = self.exp/f'results/build-history/{index}/{attempt}'
+            history.mkdir(parents=True)
+            for source, name in ((record, 'build.json'), (identity_path, 'identity.json'),
+                                 (restoration_state, 'workspace-state.json')):
+                if source.is_file():
+                    shutil.copy2(source, history/name)
+            # Preserve all diagnostics referenced by superseded records, even
+            # if this new attempt fails or is interrupted before publication.
+            directory = self.exp/f'results/builds/logs/{index}/{attempt}'
+        directory.mkdir(parents=True, exist_ok=True)
+        if restoration and (previous.get('sha') != sha or recorded_identity and recorded_identity['sha'] != sha):
+            write_json(directory/'result.json', dict(status='failed', reason='SHA disagrees', sha=sha))
+            raise RuntimeError('Workspace restoration SHA disagrees with authoritative build')
+        # For old layouts still containing their workspace, capture the dependency
+        # identity before reconstruction. Without original identity, fail closed.
+        if restoration and recorded_identity is None:
+            if not present:
+                raise RuntimeError('Cannot restore old workspace without recorded dependency identity')
+            recorded_identity = dict(sha=sha, dependencies=self.dependency_identity(index, previous, directory))
+            write_json(identity_path, recorded_identity)
+        if restoration:
+            write_json(restoration_state, dict(status='running', sha=sha, diagnostics=str(directory.relative_to(self.exp))))
         self.checkout(index, sha)
         folder = self.folder(index)
         try:
-            digest, cache, runs = self.cache.resolve(folder, index)
-        except RuntimeError as exc:
-            # Unresolvable dependencies are a recorded build failure, like a failed compile.
-            result = dict(index=index, sha=sha, build='fail', attempts=[], classpath_error=str(exc), input_sha256=fingerprint)
+            try:
+                digest, cache, runs = self.cache.resolve(folder, index, log_root=directory)
+            except RuntimeError as exc:
+                if restoration:
+                    raise
+                result = dict(index=index, sha=sha, build='fail', attempts=[], classpath_error=str(exc), input_sha256=fingerprint)
+                write_json(record, result)
+                restoration_state.unlink(missing_ok=True)
+                return result
+            attempts = []
+            for number, offline in enumerate((True, False), 1):
+                attempt = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), '-DskipTests', 'compile'], folder,
+                                              directory/f'{index}-{number}.txt', self.config['runner']['timeouts']['build'])
+                attempts.append(attempt)
+                if attempt['exit_code'] == 0:
+                    break
+            result = dict(index=index, sha=sha, build='ok' if attempts[-1]['exit_code'] == 0 else 'fail', attempts=attempts, input_sha256=fingerprint)
+            if result['build'] == 'ok':
+                result.update(pom_sha256=digest, classpath=str(cache.relative_to(self.exp)), classpath_attempts=runs)
+                observed = dict(sha=sha, dependencies=self.dependency_identity(index, result, directory/(str(index)+'-identity')))
+                if restoration and observed != recorded_identity:
+                    raise RuntimeError('Workspace restoration dependency identity disagrees')
+                if not restoration:
+                    write_json(identity_path, observed)
+            if restoration:
+                write_json(directory/'result.json', result)
+                if result['build'] != previous['build']:
+                    raise RuntimeError('Workspace restoration verdict disagrees')
+                write_json(restoration_state, dict(status='completed', sha=sha, diagnostics=str(directory.relative_to(self.exp))))
+                return previous
             write_json(record, result)
+            restoration_state.unlink(missing_ok=True)
             return result
-        attempts = []
-        for number, offline in enumerate((True, False), 1):
-            attempt = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), '-DskipTests', 'compile'], folder,
-                                          self.exp / f'results/builds/logs/{index}-{number}.txt', self.config['runner']['timeouts']['build'])
-            attempts.append(attempt)
-            if attempt['exit_code'] == 0:
-                break
-        result = dict(index=index, sha=sha, build='ok' if attempts[-1]['exit_code'] == 0 else 'fail', attempts=attempts, input_sha256=fingerprint)
-        if result['build'] == 'ok':
-            result.update(pom_sha256=digest, classpath=str(cache.relative_to(self.exp)), classpath_attempts=runs)
-        write_json(record, result)
-        return result
+        except BaseException as exc:
+            if restoration:
+                write_json(restoration_state, dict(status='failed', sha=sha, diagnostics=str(directory.relative_to(self.exp))))
+                write_json(directory/'failure.json', dict(error_type=type(exc).__name__, error=str(exc), sha=sha))
+                raise
+            raise
 
     def test_framework(self):
         requested=self.config['project']['test_framework']
@@ -216,10 +308,15 @@ class JavaMavenAdapter:
     def provenance(self):
         paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).with_name('compilation.py'), Path(__file__).with_name('maven_dependencies.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py', Path(__file__).parents[1]/'rules/environment.py']
         paths.append(Path(__file__).with_name('compiler_session.py'))
-        paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py'))
+        paths.append(Path(__file__).parents[1]/'io.py')
+        paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py'))
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
     def worker(self, job):
+        self.ensure_anchor()
+        if job.get('index', 0) != 0:
+            if self.build(job['index'], job['sha'])['build'] != 'ok':
+                raise RuntimeError('Worker workspace build failed')
         developer=job.get('group') in {g['name'] for g in self.config['dev']['groups']}
         framework = self.config['project']['test_framework'] if job.get('action') == 'setup' else self.test_framework() if developer else 'auto'
         job.update(experiment=self.runner.path(self.exp), module=self.config['project']['module'],
@@ -234,6 +331,9 @@ class JavaMavenAdapter:
             # result/hash inputs. env also works inside a reused Docker session.
             job['coverage_environment'] = {'SURVIVAL_JVM_JACOCO': os.environ['SURVIVAL_JVM_JACOCO']}
             command = ['env', 'SURVIVAL_JVM_JACOCO='+os.environ['SURVIVAL_JVM_JACOCO'], *command]
+        if job.get('work'):
+            from ..work import retain_previous_work
+            retain_previous_work(self.exp, job['work'])
         write_json(path, job)
         # A stale classpath can require both dependency goals, each offline then online.
         dependency_timeout = resolution_timeout(self.config['runner']['timeouts']['build'])
@@ -247,6 +347,7 @@ class JavaMavenAdapter:
         return read_json(self.exp/job['output']) if job.get('output') else result
 
     def setup_runner(self):
+        self.ensure_anchor()
         record = read_json(self.exp/'results/runner-setup.json',{})
         jars = read_json(self.helpers/'classpath-artifacts.json')
         digest = hashlib.sha256((self.folder(0)/'pom.xml').read_bytes()).hexdigest()
@@ -259,12 +360,18 @@ class JavaMavenAdapter:
         return canonical_hash({'source':hashlib.sha256(source.read_bytes()).hexdigest(), 'repeats':repeats,
                                'runner':self.provenance() if provenance is None else provenance})
 
+    def screen_fingerprints(self, source, repeats, *, provenance=None):
+        from .run_reuse import pre_footprint_provenance
+        provenance = self.provenance() if provenance is None else provenance
+        return (self.screen_fingerprint(source, repeats, provenance=provenance),
+                self.screen_fingerprint(source, repeats, provenance=pre_footprint_provenance(provenance)))
+
     def screen_file(self, group, round_name, source, repeats, number):
         relative = str(source.relative_to(self.exp))
         output = f'generated/{group}/{round_name}/validation/{number}.json'
-        key = self.screen_fingerprint(source, repeats)
+        key, legacy_key = self.screen_fingerprints(source, repeats)
         old = read_json(self.exp/output,{})
-        if old.get('input_sha256') == key:
+        if old.get('input_sha256') in (key, legacy_key):
             return old
         result = self.worker(dict(action='screen',group=group,round=round_name,file=relative,
                                   technique='KTester' if next(g for g in self.config['generators'] if g['name']==group)['method']=='ktester' else source.parent.name,
@@ -330,7 +437,7 @@ class JavaMavenAdapter:
         previous=read_json(self.exp/output,{})
         provenance=self.provenance()
         anchor=read_json(self.exp/'results/anchor.json')
-        if previous.get('input_sha256') in (fingerprint,legacy) and previous.get('runner_sha256')==provenance and previous.get('sha')==anchor['sha'] and (self.exp/xml).exists():return previous
+        if previous.get('input_sha256') in (fingerprint,legacy) and survival_provenance_matches(previous.get('runner_sha256'),provenance) and previous.get('sha')==anchor['sha'] and result_exists(self.exp/xml):return previous
         return self.worker(dict(action='run',index=0,sha=anchor['sha'],group=self.config['dev']['groups'][0]['name'],phase='B',methods=[method],repeats=1,retry=False,environment_retry=True,
                                 input_sha256=fingerprint,runner_sha256=provenance,coverage_xml=xml,output=output,work='work/dev-method-coverage-t/'+name))
 

@@ -1,12 +1,13 @@
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor,as_completed
+from collections import defaultdict, Counter
 import re
 
 from ..adapters.java_maven import JavaMavenAdapter
-from ..io import read_json,read_csv,write_json,write_csv
+from ..io import read_json,read_csv,write_json,write_csv,result_exists
 from ..pipeline import log
+from ..work import release_checkout
 from ..runner import measurement_session
 from ..config import group_names, execution_groups
+from ..rules.commits import coverage_indices
 from .survive import skipped_commits
 
 
@@ -27,6 +28,20 @@ def changed_lines(diff, module='.'):
     return {k:sorted(v) for k,v in pre.items()},{k:sorted(v) for k,v in post.items()}
 
 
+def validate_index(exp, index, groups):
+    """Check the durable line universe before releasing a completed index."""
+    universes = []
+    for group in groups:
+        rows = read_csv(exp/f'results/coverage/{index}-{group}-lines.csv')
+        universe = {(r['file'], int(r['line'])) for r in rows}
+        if len(universe) != len(rows):
+            raise RuntimeError('Duplicate coverage lines')
+        universes.append(universe)
+    if universes and any(u != universes[0] for u in universes):
+        write_json(exp/'results/coverage-universe-mismatches.json', [index])
+        raise RuntimeError('Executable line universes differ across groups')
+
+
 def aggregate(exp,config):
     groups=group_names(config)
     commits=read_csv(exp/'results/commits.csv')
@@ -40,7 +55,7 @@ def aggregate(exp,config):
         failed_build = i != 0 and read_json(exp/f'results/builds/{i}.json', {}).get('build') == 'fail'
         for g in groups:
             path=exp/f'results/coverage/{i}-{g}-lines.csv'
-            if failed_build or not path.exists():maps[i][g]=None;missing.append(dict(index=i,group=g));continue
+            if failed_build or not result_exists(path):maps[i][g]=None;missing.append(dict(index=i,group=g));continue
             rows=read_csv(path);data={(r['file'],int(r['line'])):r['covered']=='yes' for r in rows}
             if len(data)!=len(rows):raise RuntimeError('Duplicate coverage lines')
             maps[i][g]=data
@@ -82,23 +97,18 @@ def run(exp,config):
     from ..dev_results import imported_for, imported_record, require_record
     provenance, imported = imported_for(exp, config, 'cover')
     adapter=JavaMavenAdapter(exp,config)
-    commits=read_csv(exp/'results/commits.csv');indices={0} if config['coverage']['at_anchor'] else set()
-    skipped=skipped_commits(exp,config,commits);aliases={}
-    def previous_evaluated(index):
-        original=index
-        while index in skipped:index-=1
-        if original!=index:aliases[str(original)]=index
-        return index
+    commits=read_csv(exp/'results/commits.csv')
+    skipped=skipped_commits(exp,config,commits)
+    indices,aliases=coverage_indices(commits,skipped,config['coverage'])
     if config['coverage']['changed_line']:
         for row in commits:
             if row['changes-src-main']!='yes':continue
-            i=int(row['index']);indices.update([i,previous_evaluated(i-1)]);sha=row['sha'];parent=adapter.git('rev-parse',sha+'^1')
+            i=int(row['index']);sha=row['sha'];parent=adapter.git('rev-parse',sha+'^1')
             module=config['project']['module'].removeprefix('./').rstrip('/')
             prefix=module+'/' if module not in ['', '.'] else ''
             diff=adapter.git('diff','--no-ext-diff','--find-renames','-U0',parent,sha,'--',prefix+'src/main/java')
             pre,post=changed_lines(diff,module)
             write_json(exp/f'results/changes/{i}.json',dict(index=i,sha=sha,parent=parent,pre_image=pre,post_image=post,diff=diff))
-    indices-=set(skipped)
     write_json(exp/'results/coverage-index-aliases.json',aliases)
     write_csv(exp/'results/coverage-commits.csv',[dict(index=i) for i in sorted(indices)],['index'])
     alive=read_json(exp/'results/alive-entering.json');frozen=execution_groups(config, read_json(exp/'results/frozen-denominators.json'))
@@ -117,9 +127,22 @@ def run(exp,config):
                 raise RuntimeError('Imported coverage report failed')
             require_record(exp, provenance, f'results/coverage/{i}-{g}-lines.csv')
     pending = [(i, g) for i in buildable for g in frozen if g not in imported]
-    with measurement_session(adapter, 'cover', bool(pending)), ThreadPoolExecutor(max_workers=config['runner']['workers']['cover']) as pool:
-        jobs = [pool.submit(job, i, g) for i, g in pending]
-        for future in as_completed(jobs):future.result()
+    for i in buildable:
+        if all(g in imported for g in frozen):
+            validate_index(exp, i, frozen)
+            release_checkout(exp, config, i)
+    with measurement_session(adapter, 'cover', bool(pending)):
+        # Bound queued work so only active workers can materialize checkouts.
+        from ..runner.dispatch import dispatch
+        remaining = Counter(i for i, _ in pending)
+        def completed(item, result):
+            i, _ = item
+            remaining[i] -= 1
+            if remaining[i] == 0:
+                validate_index(exp, i, frozen)
+                release_checkout(exp, config, i)
+        dispatch(pending, config['runner']['workers']['cover'], lambda item, active: (None, None),
+                 lambda item, context: job(*item), completed)
     # Restrict the stored changed-line images to executable coordinates.
     for row in commits:
         i=int(row['index']);path=exp/f'results/changes/{i}.json'
@@ -129,7 +152,7 @@ def run(exp,config):
             image_index=aliases.get(str(image_index),image_index)
             first_dev=group_names(config)[0]
             universe_path=exp/f'results/coverage/{image_index}-{first_dev}-lines.csv'
-            if universe_path.exists():
+            if result_exists(universe_path):
                 universe={(r['file'],int(r['line'])) for r in read_csv(universe_path)}
                 change[key]={f:[n for n in ns if (f,n) in universe] for f,ns in change[key].items()}
         write_json(path,change)

@@ -3,7 +3,7 @@ from ..rules.dev_denominator import unmapped_note
 from ..stages.survive import raw_folder
 import json
 from datetime import datetime
-from ..io import read_json,read_csv,atomic_text,write_json,now
+from ..io import logical_glob, result_exists, read_json,read_csv,atomic_text,write_json,now
 
 
 def build(exp,config):
@@ -14,7 +14,7 @@ def build(exp,config):
     survival=read_json(exp/'results/survival-consistency.json');coverage=read_json(exp/'results/coverage-consistency.json')
     counts={g:n for g,n in read_json(exp/'results/denominators.json').items() if g in groups};curves=read_csv(exp/'results/survival.csv')
     final={g:int(curves[-1][g+'_alive']) for g in groups}
-    raw_paths={g:[p for row in curves[1:] if int(row['index']) not in survival.get('build_fail_indices', []) if (p:=exp/f'results/{raw_folder(g,config,imported)}/{row["index"]}-{g}.json').exists()] for g in groups}
+    raw_paths={g:[p for row in curves[1:] if int(row['index']) not in survival.get('build_fail_indices', []) if result_exists(p:=exp/f'results/{raw_folder(g,config,imported)}/{row["index"]}-{g}.json')] for g in groups}
     text='# Consistency checks\n\n```json\n'+json.dumps(survival,indent=2)+'\n```\n'
     excluded=read_json(exp/'results/anchor.json',{}).get('dev_unmapped_excluded',0)
     notes=[unmapped_note(excluded)] if excluded else []
@@ -22,7 +22,7 @@ def build(exp,config):
     text+=f'\nCoverage: identical executable line sets across all {len(groups)} groups at {len(coverage["identical_executable_line_sets"])} indices. Required indices: {coverage["coverage_indices"]}. Missing measurements: {len(coverage["missing"])} (enumerated in coverage-consistency.json).\n'
     number={3:'Three',4:'Four',5:'Five'}.get(len(groups),str(len(groups)))
     text+='\n## '+number+'-group checks\n\n| Check | '+' | '.join(labels[g] for g in groups)+' |\n|---|'+'---:|'*len(groups)+'\n'
-    for label,values in [('Fixed denominator',[counts[g] for g in groups]),('Final survivors',[final[g] for g in groups]),('Survival records',[len(raw_paths[g]) for g in groups]),('Coverage records',[len(list((exp/'results/raw-coverage').glob(f'*-{g}.json'))) for g in groups]),('Matching executable universes',[len(coverage['identical_executable_line_sets'])]*len(groups))]:
+    for label,values in [('Fixed denominator',[counts[g] for g in groups]),('Final survivors',[final[g] for g in groups]),('Survival records',[len(raw_paths[g]) for g in groups]),('Coverage records',[len(list(logical_glob(exp/'results/raw-coverage', f'*-{g}.json'))) for g in groups]),('Matching executable universes',[len(coverage['identical_executable_line_sets'])]*len(groups))]:
         text+='| '+label+' | '+' | '.join(map(str,values))+' |\n'
     atomic_text(exp/'results/consistency.md',text)
     timings={}

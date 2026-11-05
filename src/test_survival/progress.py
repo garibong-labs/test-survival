@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .config import range_fingerprint, execution_groups, derived_source
 from .display import UTC_DISPLAY
-from .io import read_csv, read_json
+from .io import result_exists, resolve_path, read_csv, read_json
 from .adapters.run_reuse import survival_provenance_matches
 
 
@@ -52,7 +52,8 @@ def items(exp, stage, config, state):
             if record.get('input_sha256') not in adapter.build_fingerprints(sha):
                 continue
             fresh = started is not None and path.stat().st_mtime >= started
-            cached = record.get('build') == 'ok' and (adapter.folder(index)/'target/classes').exists()
+            identity = read_json(exp/f'results/workspace-identities/{index}.json', {})
+            cached = record.get('build') == 'ok' and ((adapter.folder(index)/'target/classes').exists() or identity.get('sha') == sha)
             if record.get('build') in ('ok', 'fail') and (fresh or cached):
                 completed.append([path])
         return completed, total, 'builds'
@@ -79,8 +80,8 @@ def items(exp, stage, config, state):
                     for number, source in enumerate(sources):
                         path = directory/f'validation/{number}.json'
                         record = read_json(path, {})
-                        fingerprint = adapter.screen_fingerprint(source, config['screen']['stable_runs'], provenance=provenance)
-                        if record.get('file') == str(source.relative_to(exp)) and record.get('input_sha256') == fingerprint:
+                        fingerprints = adapter.screen_fingerprints(source, config['screen']['stable_runs'], provenance=provenance)
+                        if record.get('file') == str(source.relative_to(exp)) and record.get('input_sha256') in fingerprints:
                             completed.append([path])
                 continue
             manifest = read_json(root/'rounds.json', {})
@@ -157,7 +158,7 @@ def items(exp, stage, config, state):
                 valid = ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or (raw.get('input_sha256') in fingerprints[key] and runner_matches))
                          and bool(commit.get('sha')) and raw.get('sha') == commit['sha'])
                 if stage == 'cover':
-                    valid = valid and raw.get('status') == 'evaluated' and (exp/f'results/coverage/{index}-{group}-lines.csv').exists()
+                    valid = valid and raw.get('status') == 'evaluated' and result_exists(exp/f'results/coverage/{index}-{group}-lines.csv')
                 if valid:
                     paths.append(path)
             if groups and len(paths) == len(groups):
@@ -186,7 +187,7 @@ def description(exp, stage, config, *, at=None):
     try:
         completed, total, unit = items(exp, stage, config, state)
         # Cached evidence contributes to done/total, but not this attempt's rate.
-        fresh = sum(bool(paths) and max(p.stat().st_mtime for p in paths) >= start.timestamp()
+        fresh = sum(bool(paths) and max(resolve_path(p).stat().st_mtime for p in paths) >= start.timestamp()
                     for paths in completed) if start else 0
     except (OSError, ValueError, KeyError, TypeError):
         # A live worker may be replacing a record. Reporting must not fail work.
@@ -347,7 +348,7 @@ def snapshot(exp, stage, config, *, at=None):
     elapsed = max(0, ((finish or at)-start).total_seconds()) if start else 0
     try:
         completed, total, unit, extra = panel_items(exp, stage, config, state)
-        fresh = sum(bool(paths) and max(p.stat().st_mtime for p in paths) >= start.timestamp()
+        fresh = sum(bool(paths) and max(resolve_path(p).stat().st_mtime for p in paths) >= start.timestamp()
                     for paths in completed) if start else 0
     except (OSError, ValueError, KeyError, TypeError):
         completed, total, unit, extra, fresh = [], None, UNITS[stage], {}, 0

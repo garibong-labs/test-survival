@@ -38,6 +38,20 @@ def coverage(adapter, index, tests, name, full_suite=False):
     return combined
 
 
+def pool_config(b, point):
+    """Use identical runner settings for pool execution and host cleanup retries."""
+    config = deepcopy(b.execution_config)
+    config['anchor'] = point['sha']
+    config['screen']['stable_runs'] = 3
+    config['dev']['stable_runs'] = 3
+    config['runner']['reuse'] = {'checkouts':None, 'classpath_cache':None}
+    g = next((g for g in config['generators'] if g['name'] == point['group']), None)
+    if g is not None:
+        config = generator_config(config, g)
+        config['generators'] = [g]
+    return config
+
+
 def build_pool(b, point, dev_target):
     group, index = point['group'], point['index']
     exp = b.exp/f'results/policy/pools/{group}/{index}'
@@ -45,15 +59,8 @@ def build_pool(b, point, dev_target):
     if owner.get('status') != 'running' or not owner.get('run_id'):
         raise RuntimeError('Pool generation requires a registered policy run')
     write_json(exp/'state/run-owner.json', dict(experiment=str(b.exp), run_id=owner['run_id']))
-    config = deepcopy(b.execution_config)
-    config['anchor'] = point['sha']
-    config['screen']['stable_runs'] = 3
-    config['dev']['stable_runs'] = 3
-    config['runner']['reuse'] = {'checkouts':None, 'classpath_cache':None}
+    config = pool_config(b, point)
     g = next((g for g in config['generators'] if g['name'] == group), None)
-    if g is not None:
-        config = generator_config(config, g)
-        config['generators'] = [g]
     adapter = JavaMavenAdapter(exp, config)
     write_json(exp/'results/anchor.json', dict(sha=point['sha'], date=b.by_index[index]['date']))
     if adapter.build(0, point['sha'])['build'] != 'ok':
@@ -177,7 +184,13 @@ def run(b, plan, step):
             target = matching_target(b,plan,g,i,pools) if generator and generator['rounds']['until_dev_matched'] else len(next(iter(b.frozen.values())))
             path = b.exp/f'results/policy/pools/{g}/{i}/pool.json'
             step(f'pool-{g}-{i}', lambda: build_pool(b, point, target), outputs=[path])
-            return (g,i), read_json(path)
+            pool = read_json(path)
+            from ..work import finish_checkouts, finish_work
+            if verified_pool(b.exp, path.parent, pool):
+                config = pool_config(b, point)
+                finish_checkouts(path.parent, config)
+                finish_work(path.parent, config, pool=True)
+            return (g,i), pool
         except BaseException:
             stopped.set()
             raise
@@ -214,3 +227,21 @@ def run(b, plan, step):
                 stopped.set()
             executor.shutdown(wait=True, cancel_futures=True)
     return pools
+
+
+def verified_pool(parent, root, members):
+    """Old pools remain loadable; prune only snapshots with complete identities."""
+    from .artifacts import tree_hash
+    if not (root/'results/workspace-identities/0.json').is_file():
+        return False
+    for member in members:
+        if not all(k in member for k in ('file', 'file_hash', 'source_root', 'source_tree_hash', 'resource_root', 'resource_tree_hash', 'execution_hash')):
+            return False
+        source = parent/member['file']
+        sources = tree_hash(parent/member['source_root'], '*.java')
+        resources = canonical_hash({name:tree_hash(parent/member['resource_root']/name) for name in ('resources', 'suite')})
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        execution = canonical_hash(dict(file=digest, sources=sources, resources=resources))
+        if (digest, sources, resources, execution) != tuple(member[k] for k in ('file_hash','source_tree_hash','resource_tree_hash','execution_hash')):
+            raise RuntimeError('Pool snapshot changed before cleanup')
+    return True

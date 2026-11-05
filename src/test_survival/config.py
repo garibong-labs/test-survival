@@ -120,6 +120,7 @@ class Configuration(dict):
         clone._written_keys = self._written_keys.copy()
         clone._path_values = deepcopy(self._path_values, memo)
         clone._path_key_prefix = self._path_key_prefix
+        clone.keep_work = getattr(self, 'keep_work', False)
         for key, value in self.items():
             dict.__setitem__(clone, key, deepcopy(value, memo))
         return clone
