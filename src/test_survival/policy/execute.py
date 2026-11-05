@@ -7,6 +7,7 @@ from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv
 from ..rules.survival import FAILURES, dead_method
 from ..runner.dispatch import dispatch
+from ..work import release_checkout
 from .artifacts import snapshot
 from .config import COVERAGE_VERSION, MARKERS, active_plan, reusable_run, unmet_rows
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
@@ -27,6 +28,7 @@ class Runs:
         self.catalog = defaultdict(dict)
         self.excluded = set()
         self.missing = {}
+        self.held_indices = set()
 
     def initialize(self):
         with self.lock:
@@ -224,6 +226,10 @@ class Runs:
                     k = key(ref)
                     if k in alive and t['state'] in FAILURES:
                         known[k] = min(index,known.get(k,index))
+            for h in sorted(digests):
+                self.get(index, h)
+            if index not in self.held_indices:
+                release_checkout(self.b.exp, self.b.execution_config, index)
         dispatch(indices,self.b.execution_config['runner']['workers']['survive'],prepare,job,completed)
 
     def get(self, index, digest):
@@ -304,6 +310,7 @@ def survive(b, plan, pools, step):
         curves[p].append(row)
     dead_at = {}
     boundaries = sorted({i for ps in points.values() for _,i in ps})
+    runs.held_indices = set(boundaries)
     prefetched_until = -1
     def entering():
         # Members policy run records are read for: segment 1 is evaluated from
@@ -361,6 +368,7 @@ def survive(b, plan, pools, step):
             runs.run_index(index,sorted(regenerated),alive=before_evaluation|entering(),dead_at=dead_at,label='regenerate',evaluated=before_evaluation)
             for digest in sorted(regenerated):
                 runs.get(index,digest)  # inventory check of the record just written
+        release_checkout(b.exp, b.execution_config, index)
     baseline_alive = {g:{key(t) for t in tests} for g,tests in frozen.items()}
     baseline_at = {}
     for commit in b.curves:

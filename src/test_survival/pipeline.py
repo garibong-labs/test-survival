@@ -261,6 +261,11 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
             write_json(path, state)
             log(exp, f'{current}: {state["notes"]}', config)
             completed.append(current)
+        if handlers is None and all(read_json(exp/'state'/f'{stage}.json', {}).get('status') == 'completed'
+                                    and read_json(exp/'state'/f'{stage}.json', {}).get('config_hash') == stage_hash(config, stage)
+                                    for stage in STAGES):
+            from .work import finish_checkouts
+            finish_checkouts(exp, config)
         return completed
 
 

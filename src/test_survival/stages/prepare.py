@@ -5,6 +5,7 @@ from ..io import read_json, write_json, write_csv, atomic_text, now
 from ..pipeline import log
 from ..config import range_fingerprint
 from ..rules.commits import skip_reason
+from ..work import release_checkout
 
 
 def run(exp, config):
@@ -80,6 +81,8 @@ def run(exp, config):
             return result
         result = adapter.build(row['index'], row['sha'])
         log(exp, f'prepare: build {row["index"]}/{len(commits)} {result["build"]}', config)
+        if result['build'] == 'ok':
+            release_checkout(exp, config, row['index'])
         return result
     adapter.setup_runner()
     with ThreadPoolExecutor(max_workers=config['runner']['workers']['build']) as pool:

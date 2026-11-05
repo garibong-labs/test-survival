@@ -298,3 +298,29 @@ Native model-call directories contain `request.json` (model, temperature, max_to
 `results/raw-derived/<index>-<group>.json` contains filtered source methods and launch evidence with `derived_from`. `results/skipped-commits.csv` has `index,sha,reason`. Skipped raw records contain `index,sha,group,phase,status` with status `skipped-untouched`. Skipped build records have `build: skipped-untouched`, empty attempts, and a reason. `coverage-index-aliases.json` maps skipped predecessor indices to equivalent earlier evaluated indices.
 
 Survival consistency adds measured/derived counts and expected counts, plus skipped indices. `raw_records` and `expected_raw_records` count measured records, including skip placeholders. `final-summary.json` adds `environment_reruns` per group and `environment_rerun_unit`. Method records that undergo environment reruns have `environment_reruns` and `environment_attempts` (initial failure, followed by retry states/messages); the first-failure CSV header is unchanged.
+
+## Checkout lifetime and restoration
+
+A verified successful index build is a durable sub-operation. Nonzero
+`work/checkouts/<index>/` trees and their `<index>.json` markers are released
+when all current consumers and coordinator validation for that index succeed:
+prepare builds, survival groups, coverage groups, and policy batches. Regeneration
+boundaries retain the index through both window and regeneration consumers.
+Workers recreate required production trees on demand through checkout/build.
+The anchor remains through the run; successful completion releases remaining
+verified successful checkouts. Failed, interrupted and in-flight indices remain.
+Pool anchors are released only after completed pool publication and verification
+of source, helper and resource hashes. Legacy work without recorded identities
+is retained rather than pruned speculatively.
+
+`results/workspace-identities/<index>.json` records the original successful SHA
+and ordered Maven dependency paths/content SHA-256 values. Workspace restoration
+never rewrites `results/builds/<index>.json` or its original build logs. New
+attempts, dependency probes and diagnostics live under
+`results/workspace-restorations/<index>/<attempt-id>/`. `state/workspace-<index>.json`
+records running/completed/failed restoration and its diagnostics path; an interrupted
+or failed restoration cannot be mistaken for a ready tree just because classes
+exist. A SHA, dependency identity or build-verdict disagreement stops execution
+and retains work. Old experiments remain readable; reconstructing an already
+removed legacy workspace without a recorded dependency identity fails closed.
+Report PNG rendering uses the experiment directory and needs no checkout.

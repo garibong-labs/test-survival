@@ -532,3 +532,9 @@ Checkpoint/regeneration experiments are a separate post-baseline stage family:
 `survival policy plan|run|status <exp>`. See
 [regeneration policies](docs/regeneration-policies.md) for configuration, source
 snapshots, shared runs, per-test coverage, and the two validated project plans.
+
+Successful per-index checkouts are released after their consumers validate the
+saved results, and restored on demand for later stages. Failed or interrupted
+work stays available. Restoration preserves the original build record/logs and
+stops on a SHA, dependency or build-verdict disagreement. See
+[checkout lifetime and restoration](docs/result-formats.md#checkout-lifetime-and-restoration).

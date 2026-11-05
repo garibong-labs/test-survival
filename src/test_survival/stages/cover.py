@@ -1,10 +1,10 @@
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor,as_completed
+from collections import defaultdict, Counter
 import re
 
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,read_csv,write_json,write_csv
 from ..pipeline import log
+from ..work import release_checkout
 from ..runner import measurement_session
 from ..config import group_names, execution_groups
 from .survive import skipped_commits
@@ -117,9 +117,17 @@ def run(exp,config):
                 raise RuntimeError('Imported coverage report failed')
             require_record(exp, provenance, f'results/coverage/{i}-{g}-lines.csv')
     pending = [(i, g) for i in buildable for g in frozen if g not in imported]
-    with measurement_session(adapter, 'cover', bool(pending)), ThreadPoolExecutor(max_workers=config['runner']['workers']['cover']) as pool:
-        jobs = [pool.submit(job, i, g) for i, g in pending]
-        for future in as_completed(jobs):future.result()
+    with measurement_session(adapter, 'cover', bool(pending)):
+        # Bound queued work so only active workers can materialize checkouts.
+        from ..runner.dispatch import dispatch
+        remaining = Counter(i for i, _ in pending)
+        def completed(item, result):
+            i, _ = item
+            remaining[i] -= 1
+            if remaining[i] == 0:
+                release_checkout(exp, config, i)
+        dispatch(pending, config['runner']['workers']['cover'], lambda item, active: (None, None),
+                 lambda item, context: job(*item), completed)
     # Restrict the stored changed-line images to executable coordinates.
     for row in commits:
         i=int(row['index']);path=exp/f'results/changes/{i}.json'

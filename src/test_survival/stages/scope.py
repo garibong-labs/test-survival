@@ -15,6 +15,7 @@ def run(exp, config):
     from ..dev_results import imported_groups
     imported = imported_groups(exp, config)
     adapter = JavaMavenAdapter(exp, config)
+    adapter.ensure_anchor()
     inventory = read_json(exp/'results/source-inventory.json')
     baseline = read_csv(exp/'dev/dev-methods-all.csv')
     touches = read_json(exp/'results/commit-paths.json')

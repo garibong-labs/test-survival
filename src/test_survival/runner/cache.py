@@ -13,7 +13,7 @@ class ClasspathCache:
     def __init__(self, exp, config, runner):
         self.exp, self.config, self.runner = Path(exp), config, runner
 
-    def resolve(self, folder, index):
+    def resolve(self, folder, index, *, log_root=None):
         digest = hashlib.sha256((folder / 'pom.xml').read_bytes()).hexdigest()
         enabled = self.config['runner']['cache']['classpath'] == 'pom-sha256'
         cache = self.exp / 'work/classpaths' / f'{digest if enabled else index}.txt'
@@ -26,13 +26,14 @@ class ClasspathCache:
             # Maven paths belong to the container, not the orchestrator's filesystem.
             job = self.exp / f'work/classpath-jobs/{index}.json'
             output = f'work/classpath-jobs/{index}-result.json'
-            write_json(job, dict(action='classpath', experiment=self.runner.path(self.exp),
+            logs = log_root or self.exp/'results/builds/logs'
+            write_json(job, dict(action='classpath', logs=str(logs.relative_to(self.exp)), experiment=self.runner.path(self.exp),
                                 folder=self.runner.path(folder), module=self.config['project']['module'],
                                 cache=str(cache.relative_to(self.exp)), index=index, force=not enabled,
                                 jvm={}, timeouts=self.config['runner']['timeouts'], output=output))
             timeout = resolution_timeout(self.config['runner']['timeouts']['build'])+600
             result = self.runner.execute(['python3', str(Path(__file__).parents[1]/'adapters/java_worker.py'), str(job)],
-                                         folder, self.exp/f'results/builds/logs/classpath-{index}.txt', timeout)
+                                         folder, logs/f'classpath-{index}.txt', timeout)
             if result['exit_code'] or not cache.exists():
                 raise RuntimeError('Maven classpath resolution failed; see '+result['log'])
             attempts = read_json(self.exp/output)['attempts']

@@ -107,6 +107,8 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
         if until == 'cover':
             return
         step('report',lambda:report.run(b),outputs=[b.exp/'results/policy/summary.csv',b.exp/'results/policy/consistency.md'])
+        from ..work import finish_checkouts
+        finish_checkouts(b.exp, b.execution_config)
 
 
 def background(exp, config, until, force):

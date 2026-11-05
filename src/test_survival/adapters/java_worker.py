@@ -422,7 +422,7 @@ def main():
     TEST_FRAMEWORK=job.get('test_framework','junit5');DEVELOPER=job.get('developer',job.get('group')=='dev')
     ENVIRONMENT_ERRORS=job.get('environment_errors',{'patterns':[],'max_reruns':3,'backoff_seconds':5})
     if job['action']=='classpath':
-        attempts=maven_dependencies.resolve(Path(job['folder']),EXP/job['cache'],RESULTS/'builds/logs'/f'classpath-{job["index"]}',
+        attempts=maven_dependencies.resolve(Path(job['folder']),EXP/job['cache'],EXP/job.get('logs', 'results/builds/logs')/f'classpath-{job["index"]}',
                                             TIMEOUTS['build'],execute,force=job['force'])
         write_json(EXP/job['output'],{'attempts':attempts})
     elif job['action']=='setup':setup()

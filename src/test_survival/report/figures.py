@@ -36,6 +36,6 @@ def png(exp,config):
     from ..io import write_json
     adapter=JavaMavenAdapter(exp,config)
     helper=Path(__file__).with_name('RenderFigure.java')
-    result=adapter.runner.execute(['java','-Djava.awt.headless=true',str(helper),str(exp/'results/figure1-survival-by-commit.svg'),str(exp/'results/figure1-survival-by-commit.png')],adapter.folder(0),exp/'results/figure-render.log',config['runner']['timeouts']['compile'])
+    result=adapter.runner.execute(['java','-Djava.awt.headless=true',str(helper),str(exp/'results/figure1-survival-by-commit.svg'),str(exp/'results/figure1-survival-by-commit.png')],exp,exp/'results/figure-render.log',config['runner']['timeouts']['compile'])
     write_json(exp/'results/figure-render.json',result)
     return result['exit_code']==0
