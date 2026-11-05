@@ -13,7 +13,7 @@ import yaml
 import footprint_fixture
 
 
-def main(root):
+def main(root, selection='all'):
     root=root.resolve()
     footprint_fixture.ROOT=root;footprint_fixture.TARGET=root/'target';footprint_fixture.create()
     repo=root/'target';baseline=repo/'experiments/baseline';policy=repo/'experiments/policy'
@@ -21,7 +21,7 @@ def main(root):
         cfg=yaml.safe_load((exp/'experiment.yaml').read_text())
         cfg['project']['repo']=str(repo)
         cfg['dev']['stable_runs']=cfg['screen']['stable_runs']=1
-        cfg['survival']={'execution':'batch'}
+        cfg['survival']={'execution':'batch','selection':selection}
         cfg['runner']['docker']['m2_volume']='footprint-e2e-m2'
         if exp==policy:
             cfg['policies'].update(regenerate_developer=False,threshold=.25,set=[
@@ -93,4 +93,5 @@ def main(root):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--root',type=Path,required=True)
-    main(parser.parse_args().root)
+    parser.add_argument('--selection',choices=['all','affected'],default='all')
+    args=parser.parse_args();main(args.root,args.selection)

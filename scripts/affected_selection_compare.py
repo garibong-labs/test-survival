@@ -93,11 +93,55 @@ def compare(root,policy=False):
     def diff(kind,identity,left,right):
         if left!=right: differences.append(dict(kind=kind,identity=identity,all=left,affected=right))
     if policy:
+        from test_survival.policy.segments import key, identity, execution_id
+        def method_states(exp, mode, policy_name):
+            directory=exp/'results/policy'/policy_name
+            segments=read_json(directory/'segments.json')
+            active={g:gs[0] for g,gs in segments.items()}
+            states={g:{key(t):('pass',None) for t in s['tests']} for g,s in active.items()}
+            result={}
+            def observations(index,g,s):
+                if mode=='affected' and s['segment']>1:
+                    return read_json(directory/f'decisions/{g}/{s["segment"]}/{index}.json')['methods']
+                if s['segment']==1:
+                    base=root/'repo/experiments'/mode
+                    path=base/f'results/raw-derived/{index}-{g}.json'
+                    if not result_exists(path):path=base/f'results/raw/{index}-{g}.json'
+                    rows={r['id']:r for r in read_json(path)['methods']}
+                    return [{**t,**rows[t['origin_id']],'id':key(t)} for t in s['tests']]
+                rows=[]
+                for digest in {execution_id(t) for t in s['tests']}:
+                    rows.extend(read_json(exp/f'results/policy/runs/{digest}/{index}.json')['methods'])
+                return rows
+            for event in read_csv(directory/'survival.csv'):
+                index=int(event['index'])
+                for g in segments:
+                    s=active[g]
+                    if event['event']=='regenerate':
+                        newer=next((s for s in segments[g][1:] if s['start']==index),None)
+                        if newer:
+                            s=active[g]=newer
+                            states[g]={key(t):('pass',None) for t in s['tests']}
+                            observed={key(r):r for r in observations(index,g,s)}
+                            for t in s['tests']:
+                                result[str((index,g,s['segment'],key(t),'boundary'))]=(observed[key(t)]['state'],None)
+                    elif index and event['evaluated']=='yes':
+                        observed={key(r):r for r in observations(index,g,s)}
+                        for t in s['tests']:
+                            k=key(t)
+                            if states[g][k][0]=='pass':
+                                value=observed[k]['state']
+                                states[g][k]=(value,index if value!='pass' else None)
+                    for k,value in states[g].items():result[str((index,g,s['segment'],k,event['event']))]=value
+            return result
         for p in ('reset','fill'):
-            for name in ('survival.csv','first-failures.csv','coverage-commits.csv'):
+            for name in ('survival.csv','first-failures.csv','coverage-commits.csv','coverage-missing.csv'):
                 values={m:read_csv(e/'results/policy'/p/name) for m,e in exps.items()}
                 # IDs include equal source hashes and do not depend on output roots.
                 diff('policy-table',[p,name],values['all'],values['affected'])
+            states={m:method_states(e,m,p) for m,e in exps.items()}
+            for identity in sorted(states['all'].keys()|states['affected'].keys()):
+                diff('policy-method',[p,identity],states['all'].get(identity),states['affected'].get(identity))
     else:
         frozen={m:read_json(e/'results/frozen-denominators.json') for m,e in exps.items()}
         from test_survival.config import load,execution_groups

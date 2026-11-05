@@ -233,7 +233,7 @@ dependency-file count, and L existing scope-line evidence per method.
 | Compilation fallback | One full-root attempt on success; on failure, successively smaller root compilations, at most one failed removal round per initial file | One active compiler/output at a time; persist round logs and per-file errors. May save repeated per-file fallback compiles, but cascades can require several rounds. Measure rather than assume a speedup. |
 | Source identifiers | O(S) once per frozen tree, then matching/reachability joins | Distinct identifier sets cached by source hash; union files stored, not repeated source text. |
 | Selection | One Git endpoint diff per distinct `(last executed SHA, current SHA)`, then set intersections; one context extraction per commit | O(changed paths + active methods' D); direct pointers avoid chains proportional to commit count. |
-| Build context | Artifact metadata lookup and effective compiler extraction per commit, cached only under verified inputs | Small ordered artifact list and compiler tuple per commit; rows can reference its digest. |
+| Build context | Artifact metadata lookup per commit and structural comparisons of changed POMs under the approved conservative rule | Small ordered artifact list per commit and cached endpoint POM comparisons. No effective-model extraction. |
 
 The current Java listener already analyzes the full production class directory
 after each test before filtering scope lines. Extending probe inspection does

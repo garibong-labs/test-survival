@@ -179,6 +179,9 @@ def survive(b, plan, pools, step):
         if regenerated:
             boundary = decisions.measure(index,regenerated,boundary=True)
             for p,g,_,_ in regenerated: record(p,g,index,boundary[p,g],'regenerate')
+        progress_counts = counts(r for rows in selection_at.values() for r in rows.values())
+        write_json(b.exp/'results/policy/selection-progress.json',
+                   dict(config_hash=step.digest, index=index, **progress_counts))
         release_checkout(b.exp,b.execution_config,index)
     baseline_alive = {g:{key(t) for t in ts} for g,ts in frozen.items()}; baseline_at = {}
     for commit in b.curves:
