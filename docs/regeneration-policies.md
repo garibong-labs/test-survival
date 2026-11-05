@@ -163,18 +163,18 @@ reads of a record never launch anything), and that measurement refreshes the
 row's lines only, never its state, so survival curves are reproducible across
 resumes. A measurement that then succeeds clears the index from
 `coverage-missing.csv`; one that fails again is listed as before. The outcome
-of a remeasure is kept in `remeasured_state`: a row whose verdict is not `pass`
-is settled by any outcome, and a `pass` verdict run again with another outcome
-keeps the verdict and takes the lines; the record's reason notes every
-disagreement among its final rows. When the measurement that gave a settled row
-its lines did not execute the method (compile failure, absent), `cover` reports
-that member's coverage as unavailable rather than zero, which matters when a
-later regeneration revives the member. A `pass` verdict whose remeasure did not
-execute stays lineless, so the index stays listed, under the record's reason, and
-is measured again. The coverage stage keeps every entry survival listed, whatever
-the reason and whether or not the index changes scope lines, and adds its own. Only rows
-the policies evaluated from keep a verdict; the regeneration batch's own rows
-for the new entrants are measured afresh. Inside a prefetch window an index waits for the pending earlier
+of a remeasure is kept in `remeasured_state`; the record's reason notes every
+disagreement among its final rows. A retry that did not execute the method
+(`compile-fail` or `absent`) provides no usable coverage, even if its row has
+`lines: []` and preserves a failing verdict. Such rows remain listed and retryable
+until execution supplies lines. Batch-baseline seeds follow the same rule:
+their recorded verdicts are imported, while missing or unusable coverage is
+repaired. Previously seeded records are checked too. Valid empty line lists
+remain reusable when they came from actual execution.
+The coverage stage keeps every entry survival listed, whatever the reason and
+whether or not the index changes scope lines, and adds its own. Repairs preserve
+existing verdicts, including baseline seeds used by newly regenerated segments;
+new entrants with no prior observation are measured afresh. Inside a prefetch window an index waits for the pending earlier
 indices only when a required row is a dead or not-selected marker (a death
 reported there may excuse it); rows that merely lack lines are measured at once,
 so a run of JVM failures is re-measured in parallel.
@@ -218,8 +218,10 @@ semantics; version 1 cross-root measurements must be upgraded as well. Completed
 measured run records without the current coverage schema are
 recomputed automatically, without `--force`, in every experiment. Import and
 skip/build-failure records remain reusable; no pool is regenerated for this
-upgrade. New completed records (including explicit coverage-missing fallbacks)
-are reused on subsequent resumes. Force archives policy artifacts under
+upgrade. Completed records retain usable observations while missing coverage
+remains retryable. Aggregate stages also resume when coverage remains missing,
+and a survival repair invalidates coverage/report completion so those outputs
+reflect the repaired evidence. Force archives policy artifacts under
 `work/policy-history/` before rebuilding. Foreground and background policy runs
 share the experiment's exclusive lock and run lifecycle with ordinary stages.
 `survival stop <exp>` stops the coordinator and its nested pool workers/containers,

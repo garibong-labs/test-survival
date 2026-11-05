@@ -7,7 +7,7 @@ import traceback
 
 from ..config import ConfigError, canonical_hash, load, result_inputs
 from ..display import UTC_DISPLAY
-from ..io import logical_glob, resolve_path, atomic_text, now, read_json, write_json
+from ..io import logical_glob, resolve_path, atomic_text, now, read_csv, read_json, write_json
 from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
 from .config import COVERAGE_VERSION, digest_options, digest_plan, active_plan, reusable_run
@@ -29,9 +29,9 @@ class Steps:
         prior = read_json(path, {})
         if prior and prior.get('config_hash') != self.digest:
             raise ConfigError('Policy inputs changed; use --force to rebuild policy evidence')
-        # survive=2: carried and pool members are executed for their lines; records
-        # with lines stay reusable, so bumping this only re-runs the step itself.
-        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=2)
+        # Upgrade aggregate steps without rebuilding pools or valid run records.
+        # Revision 3 repairs previously seeded non-executing coverage retries.
+        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=3)
         revision['developer'] = {p['name']:p.get('developer', 'regenerate' if self.b.options.get('regenerate_developer', True) else 'keep') for p in self.b.options['set']}
         fresh = True
         if name.startswith('run-'):
@@ -40,12 +40,20 @@ class Steps:
             fresh = all(p.exists() for p in outputs)
         elif name in ('survive', 'cover', 'report'):
             fresh = prior.get('revision') == revision
+            if name == 'survive' and fresh:
+                missing = [self.b.exp/f'results/policy/{p["name"]}/coverage-missing.csv' for p in self.b.options['set']]
+                fresh = all(p.exists() and not read_csv(p) for p in missing)
         if prior.get('status') == 'completed' and fresh:
             if not all(p.exists() for p in outputs):
                 raise PipelineError('Completed policy evidence is missing; restore it or use --force: '+name)
             if self.progress:
                 self.progress.event(name, 'already completed; skipped')
             return
+        if name == 'survive':
+            # A later repair may change coverage without changing survival.
+            # Rebuild downstream aggregates even when the revision is unchanged.
+            for downstream in ('cover', 'report'):
+                (self.b.exp/f'state/policy-{downstream}.json').unlink(missing_ok=True)
         error_path = self.b.guard(self.b.exp/f'state/policy-{name}-error.txt')
         error_path.unlink(missing_ok=True)
         record = dict(status='running', revision=revision, config_hash=self.digest, started=now(), pid=os.getpid(),

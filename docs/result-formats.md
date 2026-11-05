@@ -103,6 +103,9 @@ and report formats, with these explicit differences:
   preserves consumed verdicts and records `remeasured_state` on disagreements.
   Repairs with `remeasured_state: absent` or `compile-fail` remain unavailable
   and are retried on resume; an empty line list alone does not make them usable.
+  Policy imports and shared-run caches apply the same rule. They retain the
+  recorded survival verdict while repairing coverage, including previously
+  seeded records that incorrectly claimed `coverage_status: complete`.
 - Local derived groups inherit their parent's observations, including when the
   parent is imported. Chained derivations preserve per-test lines and verdicts
   without executing the child independently; imported files remain unchanged.

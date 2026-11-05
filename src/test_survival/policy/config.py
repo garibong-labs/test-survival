@@ -4,6 +4,7 @@ import re
 
 from ..adapters.policy_coverage import COVERAGE_VERSION
 from ..config import ConfigError, Field, _validate, _strings, enum, integer
+from ..rules.coverage import usable_lines
 from .segments import identity
 
 SCHEMA = {
@@ -97,7 +98,7 @@ def unmet_rows(record, required_methods):
     for t in record.get('methods', []):
         if 'class' not in t or 'method' not in t:
             return None  # a malformed or legacy row is replaced, never a crash at the gate
-        if identity(t) in required_methods and (t.get('state') in MARKERS or 'lines' not in t):
+        if identity(t) in required_methods and (t.get('state') in MARKERS or not usable_lines(t)):
             rows.append(t)
     return rows
 

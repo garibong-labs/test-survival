@@ -425,6 +425,108 @@ def test_reusable_run_replaces_malformed_rows_instead_of_crashing():
     assert reusable_run(dict(coverage_version=3,methods=[dict(id='x',**{'class':'A'},method='x',state='pass',lines=[])]),required_methods={'A#x'})
 
 
+@pytest.mark.parametrize('repair_state', ['absent', 'compile-fail'])
+@pytest.mark.parametrize('already_seeded', [False, True])
+def test_reset_repairs_unusable_batch_seed_without_changing_verdict_or_pools(baseline, monkeypatch, repair_state, already_seeded):
+    from test_survival.policy import execute, cover
+    exp, config, root = baseline
+    config['policies']['set'] = [dict(name='reset', trigger='release', action='reset')]
+    b = Baseline(exp, config); saved = build_plan(b); steps = Steps(b, saved)
+    t = execute.baseline_tests(b)['dev-scope'][0]
+    digest = execution_id(t)
+    for index in (1, 2, 3):
+        raw = b.raw(index, 'dev-scope')
+        raw.update(execution='batch', coverage_version=3, sha=b.by_index[index]['sha'])
+        raw['methods'][0].update(execution_hash=digest, lines=[['src/main/java/A.java',1]])
+        if index == 2:
+            raw['methods'][0].update(state='fail', message='original failure', flaky=False,
+                                     lines=[], remeasured_state=repair_state)
+        write_json(b.raw_path(index, 'dev-scope'), raw)
+    change = dict(index=2, sha=b.by_index[2]['sha'], date='date', subject='change', scope_executable=1)
+    write_csv(root/'results/changed-lines.csv', [change], list(change))
+    write_json(root/'results/changes/2.json', {'post_image':{'src/main/java/A.java':[1]}})
+    pool_path = exp/'results/policy/pools/dev-scope/2/pool.json'
+    steps('pool-dev-scope-2', lambda: write_json(pool_path, [t]), outputs=[pool_path])
+    pool_bytes = pool_path.read_bytes()
+    pool_state = (exp/'state/policy-pool-dev-scope-2.json').read_bytes()
+    source_bytes = {p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    path = exp/f'results/policy/runs/{digest}/2.json'
+    if already_seeded:
+        # A record produced by the old seeder claimed completeness incorrectly.
+        steps(f'run-{digest}-2', lambda: write_json(path, dict(index=2, sha=b.by_index[2]['sha'],
+              status='evaluated', coverage_version=3, coverage_status='complete', measurement_source='batch baseline',
+              methods=[dict(t, state='fail', message='original failure', flaky=False, lines=[], remeasured_state=repair_state)])), outputs=[path])
+        write_json(exp/'state/policy-survive.json', dict(status='completed', config_hash=steps.digest,
+                   revision=dict(coverage_version=3, regenerate_developer=True, survive=2, developer={'reset':'regenerate'})))
+    monkeypatch.setattr(execute.JavaMavenAdapter, 'build', lambda *_: {'build':'ok'})
+    monkeypatch.setattr(execute.JavaMavenAdapter, 'setup_runner', lambda *_: None)
+    jobs = []; recovered = False
+    def worker(self, job):
+        jobs.append(job)
+        return dict(methods=[dict(m, state='pass' if recovered else repair_state, message='retry',
+                                 lines=[['src/main/java/A.java',1]] if recovered else []) for m in job['methods']])
+    monkeypatch.setattr(execute.JavaMavenAdapter, 'worker', worker)
+    output = exp/'results/policy/reset'
+    def attempt():
+        steps('survive', lambda: execute.survive(b, saved, {('dev-scope',2):[t]}, steps), outputs=[output/'survival.csv'])
+        steps('cover', lambda: cover.run(b, steps), outputs=[output/'coverage-total.json'])
+        steps('report', lambda: write_json(output/'report-check.json', read_json(output/'coverage-total.json')),
+              outputs=[output/'report-check.json'])
+    attempt()
+    first_curve = (output/'survival.csv').read_bytes()
+    first_failures = (output/'first-failures.csv').read_bytes()
+    for expected_jobs in (1, 2):
+        assert len(jobs) == expected_jobs
+        assert read_json(path)['coverage_status'] == 'missing'
+        assert not reusable_run(read_json(path), required_methods={f'{t["class"]}#{t["method"]}'})
+        assert read_csv(output/'coverage-commits.csv')[0]['dev-scope_covered'] == ''
+        assert read_csv(output/'coverage-missing.csv')
+        if expected_jobs == 1:
+            attempt()  # Repeated failed repair remains resumable at the aggregate step.
+    recovered = True
+    attempt()
+    assert len(jobs) == 3 and all(j['index'] == 2 and len(j['methods']) == 1 for j in jobs)
+    row = read_json(path)['methods'][0]
+    assert (row['state'], row['message'], row['remeasured_state']) == ('fail', 'original failure', 'pass')
+    assert row['lines'] == [['src/main/java/A.java',1]]
+    assert read_csv(output/'coverage-commits.csv')[0]['dev-scope_covered'] == '1'
+    assert read_csv(output/'coverage-missing.csv') == []
+    assert read_json(output/'report-check.json')['groups']['dev-scope'] == 1
+    assert (output/'survival.csv').read_bytes() == first_curve
+    assert (output/'first-failures.csv').read_bytes() == first_failures
+    attempt()
+    assert len(jobs) == 3
+    assert pool_path.read_bytes() == pool_bytes
+    assert (exp/'state/policy-pool-dev-scope-2.json').read_bytes() == pool_state
+    assert source_bytes == {p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+
+
+def test_policy_seed_repairs_only_unusable_members(baseline, monkeypatch):
+    exp, config, _ = baseline; b = Baseline(exp, config)
+    runs = Runs(b, Steps(b, build_plan(b))); runs.ready = True
+    tests = [dict(test_test(name), execution_hash='shared') for name in ('a','b','c')]
+    runs.register(tests)
+    observations = [dict(tests[0], state='fail', message='fallback'),
+                    dict(tests[1], state='fail', message='failed retry', lines=[], remeasured_state='absent'),
+                    dict(tests[2], state='pass', message='', lines=[])]
+    monkeypatch.setattr(b, 'raw', lambda *_: dict(execution='batch', coverage_version=3,
+                        sha=b.by_index[1]['sha'], methods=observations))
+    monkeypatch.setattr(runs.adapter, 'build', lambda *_: {'build':'ok'})
+    jobs = []
+    def worker(job):
+        jobs.append(job)
+        return dict(methods=[dict(t, state='pass', lines=[['src/main/java/A.java',1]]) for t in job['methods']])
+    monkeypatch.setattr(runs.adapter, 'worker', worker)
+    runs.run_index(1, {'shared'})
+    assert [[t['method'] for t in job['methods']] for job in jobs] == [['a','b']]
+    rows = runs.get(1, 'shared')['methods']
+    assert [t['state'] for t in rows] == ['fail','fail','pass']
+    assert [t['message'] for t in rows] == ['fallback','failed retry','']
+    assert rows[2]['lines'] == [] and 'remeasured_state' not in rows[2]
+    runs.run_index(1, {'shared'})
+    assert len(jobs) == 1
+
+
 def test_remeasuring_a_lineless_row_refreshes_lines_but_keeps_the_fallback_verdict(baseline,monkeypatch):
     """When the coverage JVM died, the per-file fallback kept the survival verdict and
     a run may have evaluated from it. The next run measures the member again for
@@ -502,7 +604,7 @@ def test_remeasure_that_does_not_run_the_method_keeps_the_row_lineless(baseline,
 
 
 @pytest.mark.parametrize('verdict,remeasure,expect_lines,expect_reason', [
-    ('fail','compile-fail',True,''),            # dead here: settled with the compile failure's empty lines
+    ('fail','compile-fail',True,'remeasure did not execute'),  # Empty retry lines are not usable coverage.
     ('fail','pass',True,''),                    # same outcome class is not required for a non-pass verdict
     ('pass','pass',True,''),                    # agrees: settled
     ('pass','fail',True,'remeasure disagreed'), # lines adopted, disagreement surfaced
@@ -522,8 +624,9 @@ def test_settle_rules_for_remeasured_rows(verdict,remeasure,expect_lines,expect_
     record=read_json(path); row=record['methods'][0]
     assert row['state']==verdict and row['remeasured_state']==remeasure and ('lines' in row)==expect_lines
     assert record['coverage_reason'].startswith(expect_reason)
-    assert reusable_run(record,required_methods={'A#a'})==expect_lines  # settled unless kept lineless
-    assert ((2,key(t)) in runs.missing)==(not expect_lines)
+    usable = expect_lines and remeasure in ('pass', 'fail')
+    assert reusable_run(record,required_methods={'A#a'})==usable
+    assert ((2,key(t)) in runs.missing)==(not usable)
 
 
 def test_window_rewrite_keeps_measured_rows_of_members_outside_its_demand(baseline,monkeypatch):

@@ -6,6 +6,7 @@ import threading
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, write_csv
 from ..rules.survival import FAILURES, dead_method
+from ..rules.coverage import usable_lines
 from ..runner.dispatch import dispatch
 from ..work import release_checkout
 from .artifacts import snapshot
@@ -57,7 +58,7 @@ class Runs:
         return {ident for ident, t in self.catalog[digest].items() if alive is None or key(t) in alive}
 
     def seed_baseline(self, index, digest):
-        """Import matching batch observations; never treat screening as coverage."""
+        """Import matching batch verdicts; unusable lines still require repair."""
         path = self.path(index, digest)
         if read_json(path) is not None:
             return
@@ -69,7 +70,7 @@ class Runs:
             if raw.get('sha') != self.b.by_index[index]['sha']:
                 raise ValueError('Batch baseline SHA differs at '+str(index))
             for t in raw.get('methods', []):
-                if t.get('execution_hash') == digest and t.get('state') not in MARKERS and 'lines' in t:
+                if t.get('execution_hash') == digest and t.get('state') not in MARKERS:
                     observations[identity(t)] = t
         if not observations:
             return
@@ -78,8 +79,10 @@ class Runs:
             observed = observations.get(ident)
             methods.append({**t, **{k:observed[k] for k in ('state','message','flaky','lines','remeasured_state') if k in observed}}
                            if observed else dict(t,state='not-selected',flaky=False,lines=[]))
+        complete = all(usable_lines(t) for t in methods)
         self.step(f'run-{digest}-{index}', lambda:write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'],
-                  status='evaluated', coverage_version=COVERAGE_VERSION, coverage_status='complete',
+                  status='evaluated', coverage_version=COVERAGE_VERSION, coverage_status='complete' if complete else 'missing',
+                  coverage_reason='' if complete else 'batch baseline lacks usable per-test coverage',
                   measurement_source='batch baseline', methods=methods)), outputs=[path])
 
     def run_index(self, index, digests, *, alive=None, dead_at=None, label=None, evaluated=None):
@@ -111,7 +114,7 @@ class Runs:
             rows = {identity(t): t for t in prior.get('methods', []) if 'class' in t and 'method' in t} if current else {}
             for ident, t in self.catalog[h].items():
                 row = rows.get(ident)
-                usable = row is not None and row.get('state') not in MARKERS and 'lines' in row
+                usable = row is not None and row.get('state') not in MARKERS and usable_lines(row)
                 if ident not in required[h]:
                     # Not needed here: keep a usable row another batch measured
                     # (the regeneration batch's new entrants), else write a marker.
@@ -126,13 +129,13 @@ class Runs:
                 elif usable or (evaluated is not None and ident in consumed[h] and row is not None and row.get('state') not in MARKERS):
                     kept[h][ident] = row
                 else:
-                    if row is not None and row.get('state') not in MARKERS and ident in consumed[h]:
-                        # The per-file fallback kept this survival verdict when the
-                        # coverage JVM died, and the policies evaluated from it.
-                        # Measuring again refreshes the lines, never the verdict.
+                    if row is not None and row.get('state') not in MARKERS:
+                        # This includes seeded baseline verdicts at regeneration,
+                        # before a later segment consumes them. Coverage repair
+                        # refreshes their lines, never their recorded verdict.
                         verdicts[h][ident] = {k: row[k] for k in ('state', 'message', 'flaky') if k in row}
                     collected.append(t)
-            if any('lines' not in row for row in kept[h].values()):
+            if any(not usable_lines(row) for row in kept[h].values()):
                 reasons[h] = prior.get('coverage_reason', '')
         batch = None
         def measure():
@@ -169,14 +172,15 @@ class Runs:
                 scope = {c['file'] for c in self.b.scope['classes']}
                 observed = [{**t, 'message':t.get('message', '')[:4000], **({'lines':[line for line in t['lines'] if line[0] in scope]} if 'lines' in t else {})}
                             for t in observed]
-                complete = all('lines' in t for t in observed)
+                complete = all(usable_lines(t) for t in observed)
                 # Reasons are derived from the final rows, kept or measured, so a
                 # rewrite carries a disagreement or a non-executing remeasure over.
                 disagreed = [t for t in observed if t.get('remeasured_state') in ('pass', 'fail') and t['remeasured_state'] != t.get('state')]
                 parts = []
                 if not complete:
+                    unexecuted = [str(t['remeasured_state']) for t in observed if t.get('remeasured_state') not in (None, 'pass', 'fail')]
                     parts.append(raw.get('coverage_reason') or reasons.get(digest, '')
-                                 or (f'remeasure did not execute {len(unsettled)} passing method(s): '+', '.join(sorted(set(unsettled))) if unsettled else 'missing per-test coverage'))
+                                 or (f'remeasure did not execute {len(unexecuted)} method(s): '+', '.join(sorted(set(unexecuted))) if unexecuted else 'missing per-test coverage'))
                 if disagreed:
                     parts.append(f'remeasure disagreed with the recorded verdict for {len(disagreed)} method(s)')
                 write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'], status='evaluated',
@@ -195,16 +199,15 @@ class Runs:
         return {p for p in self.excluded if any((exp/p).resolve().is_relative_to(r) for r in roots)}
 
     def track_missing(self, index, digest, saved):
-        """Keep `missing` in step with the record on disk: a lineless observation
-        is listed with the record's reason, and a later measurement that gives it
-        lines clears it. Marker rows are not measurements in either direction."""
+        """List unusable coverage with its reason until a usable retry clears it.
+        Marker rows are not measurements in either direction."""
         reason = saved.get('coverage_reason') or 'missing per-test coverage'
         for t in saved.get('methods', []):
             ref = self.catalog[digest].get(identity(t))
             if ref is None or t.get('state') in MARKERS:
                 continue
             k = (index, key(ref))
-            if 'lines' in t:
+            if usable_lines(t):
                 self.missing.pop(k, None)
             else:
                 self.missing[k] = reason

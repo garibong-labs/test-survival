@@ -285,3 +285,24 @@ rewrites even when the bytes would remain identical.
 The full suite passed: **822 tests, zero skips**, including all 14 required Java
 fixtures (149.84 seconds). The checks use disposable fixtures; no finished
 experiments or original comparison measurements were rerun or modified.
+
+The fourth review reproduced a policy import accepting empty lines from a
+non-executing baseline coverage retry. Batch caching, policy seeding/reuse,
+missing-coverage tracking and coverage projection now share the usable-line
+criterion. Seeds retain recorded verdicts, and repairs preserve them even at a
+regeneration boundary. Policy aggregate revision 3 revisits older completed
+stages without rebuilding pools or valid run records; missing coverage stays
+retryable, and a survival repair invalidates downstream coverage/report state.
+
+Five regression cases cover `absent` and `compile-fail` repairs from both fresh
+and already-seeded records, repeated unsuccessful repairs followed by recovery,
+and a shared batch containing usable and unusable members. They verify unchanged
+survival/failure outputs and baseline/pool bytes, repaired regeneration coverage,
+refreshed report output, and no execution of members with usable lines.
+
+The full suite passed: **827 tests, zero skips**, including all 14 required Java
+fixtures (152.62 seconds). A fresh standalone Java fixture at
+`/tmp/batch-baseline-fourth-review-e2e` passed developer pool/segment execution,
+stop/status/resume with byte-identical resumed outputs, and reuse of completed
+policy stages and pool files. Finished experiments and timed comparison evidence
+were not rerun or changed.

@@ -14,6 +14,7 @@ from ..io import read_csv, read_json, write_csv, write_json, resolve_path
 from ..policy.artifacts import tree_hash
 from ..policy.execute import screening_exclusion_details, settle
 from ..rules.survival import FAILURES, dead_method
+from ..rules.coverage import usable_lines
 from ..runner import measurement_session
 from ..runner.dispatch import dispatch
 from ..work import release_checkout
@@ -21,10 +22,6 @@ from ..work import release_checkout
 
 def identity(t):
     return (t['execution_hash'], t['class'], t['method'])
-
-
-def usable_lines(row):
-    return 'lines' in row and row.get('remeasured_state') in (None, 'pass', 'fail')
 
 
 def complete_lines(raw, dead):
