@@ -215,6 +215,28 @@ def test_fill_boundary_forces_one_shared_execution(tmp_path):
     assert all(rows[0]['selection_action']=='executed' and rows[0]['last_executed_index']==4 for rows in result.values())
 
 
+def test_policy_resume_requires_logical_rows_and_direct_physical_origin(tmp_path):
+    from test_survival.policy.affected import logical_path, records_complete
+    from test_survival.policy.segments import segment, execution_id
+    from test_policy import test_test
+    test=test_test('one');s=segment(2,1,[test],[])
+    b=SimpleNamespace(exp=tmp_path,options={'set':[{'name':'p'}]},
+                      by_index={0:{'sha':'t'},1:{'sha':'one'},2:{'sha':'two'}},evaluable=lambda _:True)
+    write_json(tmp_path/'results/policy/p/segments.json',{'g':[segment(1,0,[test],[]),s]})
+    row=executed({**test,**observation()},1,'one',observation()['dependency_record']['context'])
+    origin=tmp_path/f'results/policy/runs/{execution_id(test)}/1.json'
+    write_json(origin,dict(sha='one',methods=[row]))
+    write_json(logical_path(b,'p','g',2,1),dict(sha='one',methods=[row]))
+    write_json(logical_path(b,'p','g',2,2),dict(sha='two',methods=[carry(row)]))
+    before={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    assert records_complete(b)
+    assert before=={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    changed={**row,'lines':[]};write_json(origin,dict(sha='one',methods=[changed]))
+    assert not records_complete(b)
+    write_json(origin,dict(sha='one',methods=[row]));logical_path(b,'p','g',2,2).unlink()
+    assert not records_complete(b)
+
+
 def test_baseline_control_carries_lines_and_resume_validates_origin(tmp_path, monkeypatch):
     from test_batch_baseline import fixture, setup_worker
     from test_survival.stages import batch, control, survive

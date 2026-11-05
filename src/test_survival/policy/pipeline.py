@@ -43,6 +43,9 @@ class Steps:
             if name == 'survive' and fresh:
                 missing = [self.b.exp/f'results/policy/{p["name"]}/coverage-missing.csv' for p in self.b.options['set']]
                 fresh = all(p.exists() and not read_csv(p) for p in missing)
+                if fresh and self.b.execution_config['survival'].get('selection') == 'affected':
+                    from .affected import records_complete
+                    fresh = records_complete(self.b)
         if prior.get('status') == 'completed' and fresh:
             if not all(p.exists() for p in outputs):
                 raise PipelineError('Completed policy evidence is missing; restore it or use --force: '+name)

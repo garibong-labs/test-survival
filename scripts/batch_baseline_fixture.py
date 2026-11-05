@@ -87,6 +87,13 @@ def main(root, selection='all'):
     prior={p:p.read_bytes() for p in (policy/'results/policy/pools').rglob('pool.json')}
     call('policy-resume',['policy','run',policy])
     assert all(p.read_bytes()==data for p,data in prior.items())
+    if selection=='affected':
+        from test_survival.io import logical_glob, resolve_path
+        decision=next(logical_glob(policy/'results/policy/release-reset/decisions','*/*/*.json'))
+        saved=read_json(decision);resolve_path(decision).unlink()
+        call('policy-repair',['policy','run',policy])
+        assert read_json(decision)==saved
+        assert all(p.read_bytes()==data for p,data in prior.items())
     (root/'verification.json').write_text(json.dumps(dict(passed=True,pool_methods=len(pool),funnel=funnel,timings=timings),indent=2)+'\n')
     print(root/'verification.json')
 

@@ -19,6 +19,40 @@ def logical_path(b, policy, group, number, index):
     return b.exp/f'results/policy/{policy}/decisions/{group}/{number}/{index}.json'
 
 
+def records_complete(b):
+    """Read-only resume check for logical decisions and their actual origins."""
+    for policy in b.options['set']:
+        p = policy['name']
+        segments = read_json(b.exp/f'results/policy/{p}/segments.json')
+        if segments is None: return False
+        for g, entries in segments.items():
+            for number, s in enumerate(entries):
+                if s['segment'] == 1: continue
+                end = entries[number+1]['start'] if number+1 < len(entries) else max(b.by_index)
+                for index in range(s['start'], end+1):
+                    if index != s['start'] and not b.evaluable(index): continue
+                    raw = read_json(logical_path(b,p,g,s['segment'],index), {})
+                    rows = {key(r):r for r in raw.get('methods', [])}
+                    if raw.get('sha') != b.by_index[index]['sha'] or set(rows) != {key(t) for t in s['tests']}: return False
+                    for k,row in rows.items():
+                        if row['state'] == 'dead': continue
+                        if not usable_lines(row): return False
+                        origin = row.get('last_executed_index')
+                        if origin is None or not s['start'] <= origin <= index: return False
+                        if row.get('selection_action') == 'carried':
+                            if origin >= index or row.get('carried_from_index') != origin: return False
+                            prior = read_json(logical_path(b,p,g,s['segment'],origin), {})
+                            actual = next((r for r in prior.get('methods', []) if key(r) == k), {})
+                            if actual.get('selection_action') != 'executed' or any(actual.get(n) != row.get(n) for n in
+                                    ('state','lines','dependency_record','last_executed_index','last_executed_sha')): return False
+                        elif row.get('selection_action') != 'executed' or origin != index: return False
+                        physical = read_json(b.exp/f'results/policy/runs/{execution_id(row)}/{origin}.json', {})
+                        actual = next((r for r in physical.get('methods', []) if key(r) == k), {})
+                        if (physical.get('sha') != b.by_index[origin]['sha'] or actual.get('selection_action') != 'executed'
+                                or any(actual.get(n) != row.get(n) for n in ('lines','dependency_record','last_executed_sha'))): return False
+    return True
+
+
 class Decisions:
     def __init__(self, b, runs):
         self.b, self.runs = b, runs
