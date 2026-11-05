@@ -185,8 +185,9 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
     else:
         compile_run=execute(['javac','-J-Xmx'+JVM['javac'],'-cp',cp,'-sourcepath',str(sourcepath),'-d',str(classes),str(source)],folder,part/'javac.txt',TIMEOUTS['compile'])
     record=dict(file=filename,compile=compile_run,runs=[],methods=[])
-    if compile_run['exit_code']:
-        record['methods']=[{**r,'state':'compile-fail','initial_state':'compile-fail','baseline_states':[],'selector':[],'flaky':False,'message':(EXP/compile_run['log']).read_text(errors='replace')[:4000]} for r in members]
+    removed = compile_run.get('removed', {}).get(str(source.relative_to(sourcepath)), []) if compile_run.get('removed') else []
+    if removed or compile_run['exit_code']:
+        record['methods']=[{**r,'state':'compile-fail','initial_state':'compile-fail','baseline_states':[],'selector':[],'flaky':False,'message':('\n'.join(removed) if removed else (EXP/compile_run['log']).read_text(errors='replace'))[:4000]} for r in members]
         return record
     resources=EXP/members[0].get('resource_root','dev/src-test-t') if members else EXP/'dev/src-test-t'
     runtime=':'.join([str(classes),cp,str(resources/'resources'),str(resources/'suite')])
@@ -427,6 +428,12 @@ def main():
         attempts=maven_dependencies.resolve(Path(job['folder']),EXP/job['cache'],EXP/job.get('logs', 'results/builds/logs')/f'classpath-{job["index"]}',
                                             TIMEOUTS['build'],execute,force=job['force'])
         write_json(EXP/job['output'],{'attempts':attempts})
+    elif job['action']=='selection-context':
+        try:
+            from .selection_context import collect
+        except ImportError:
+            from adapters.selection_context import collect
+        collect(sys.modules[__name__], job)
     elif job['action']=='setup':setup()
     elif job['action'] in ('policy-cover', 'policy-survive'):
         job['survival'] = job['action'] == 'policy-survive'

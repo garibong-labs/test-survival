@@ -19,6 +19,7 @@ def items(exp, stage, config, state):
     A commit/index is done only when all measured groups have records. Empty
     lists represent build failures that require no work in this stage.
     """
+    historical = state.get('status') == 'completed' and read_json(exp/'state/report.json', {}).get('status') == 'completed'
     completed = []
     if stage in ('control', 'survive') and config['survival'].get('execution') == 'batch':
         from .stages.batch import completed_items
@@ -28,7 +29,7 @@ def items(exp, stage, config, state):
             path = exp/'results/commits.csv'
             total = len(csv_rows(path)) if path.exists() else None
         try:
-            completed, _ = completed_items(exp, config, stage)
+            completed, _ = completed_items(exp, config, stage, historical=historical)
         except PipelineError:
             # Incompatible imports are pending, not reusable evidence. The
             # measuring stage reports the actionable compatibility error.
@@ -95,7 +96,7 @@ def items(exp, stage, config, state):
                         path = directory/f'validation/{number}.json'
                         record = read_json(path, {})
                         fingerprints = adapter.screen_fingerprints(source, config['screen']['stable_runs'], provenance=provenance)
-                        if record.get('file') == str(source.relative_to(exp)) and record.get('input_sha256') in fingerprints:
+                        if record.get('file') == str(source.relative_to(exp)) and (historical or record.get('input_sha256') in fingerprints):
                             completed.append([path])
                 continue
             manifest = read_json(root/'rounds.json', {})
@@ -168,7 +169,7 @@ def items(exp, stage, config, state):
                 if key not in fingerprints:
                     fingerprints[key] = adapter.run_fingerprints(methods)
                 # Same reuse rule as run_group(): historical provenances count, failed coverage does not.
-                runner_matches = survival_provenance_matches(raw.get('runner_sha256'), provenance) and raw.get('status') != 'coverage-fail'
+                runner_matches = (historical or survival_provenance_matches(raw.get('runner_sha256'), provenance)) and raw.get('status') != 'coverage-fail'
                 valid = ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or (raw.get('input_sha256') in fingerprints[key] and runner_matches))
                          and bool(commit.get('sha')) and raw.get('sha') == commit['sha'])
                 if stage == 'cover':

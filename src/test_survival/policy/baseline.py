@@ -55,6 +55,7 @@ class Baseline:
         settings.pop('policies', None)
         settings['dev'].pop('denominator', None)
         settings['generators'] = [merge(g, self.options['generator_overrides'].get(g['name'], {})) for g in settings['generators']]
+        settings['survival']['selection'] = config['survival'].get('selection', 'all')
         self.execution_config = validate(settings)
         self.execution_config.keep_work = getattr(config, 'keep_work', False)
         self.execution_config['runner']['workers'] = dict(config['runner']['workers'])

@@ -16,6 +16,8 @@ public final class PerTestCoverage implements TestExecutionListener {
     private final Path output;
     private final Path production;
     private final Set<String> scope;
+    private final boolean dependencies = Boolean.getBoolean("survival.dependencies");
+    private final Map<String, Set<String>> setupHits = new HashMap<>();
     private TestPlan plan;
     private int serial;
     private Throwable failure;
@@ -47,6 +49,24 @@ public final class PerTestCoverage implements TestExecutionListener {
         }
     }
 
+    private Set<String> hits(byte[] bytes) throws Exception {
+        ExecFileLoader data = new ExecFileLoader();
+        data.load(new ByteArrayInputStream(bytes));
+        Set<String> names = new TreeSet<>();
+        for (var entry : data.getExecutionDataStore().getContents())
+            for (boolean probe : entry.getProbes()) if (probe) { names.add(entry.getName()); break; }
+        return names;
+    }
+
+    public synchronized void executionStarted(TestIdentifier id) {
+        if (!dependencies || !id.isTest()) return;
+        try {
+            MethodSource source = method(id);
+            if (source != null && !setupHits.containsKey(source.getClassName()))
+                setupHits.put(source.getClassName(), hits((byte[])dump.invoke(agent, false)));
+        } catch (Throwable ex) { failure = ex; }
+    }
+
     public synchronized void executionFinished(TestIdentifier id, TestExecutionResult result) {
         try {
             byte[] bytes = (byte[]) dump.invoke(agent, true);
@@ -57,6 +77,11 @@ public final class PerTestCoverage implements TestExecutionListener {
             if (source == null) throw new IllegalStateException("Unmapped test: " + id.getUniqueId());
             String name = Integer.toString(serial++);
             if (scope == null) Files.write(output.resolve(name + ".exec"), bytes);
+            if (dependencies) {
+                Set<String> names = hits(bytes);
+                names.addAll(setupHits.getOrDefault(source.getClassName(), Set.of()));
+                Files.write(output.resolve(name + ".classes"), names);
+            }
             ExecFileLoader data = new ExecFileLoader();
             data.load(new ByteArrayInputStream(bytes));
             CoverageBuilder coverage = new CoverageBuilder();
@@ -149,6 +174,21 @@ public final class PerTestCoverage implements TestExecutionListener {
     }
 
     public static void main(String[] args) throws Exception {
+        String memoryFile = System.getProperty("survival.memory");
+        if (memoryFile != null) Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            try {
+                long heap = 0, nonheap = 0;
+                for (var pool : java.lang.management.ManagementFactory.getMemoryPoolMXBeans()) {
+                    long used = pool.getPeakUsage().getUsed();
+                    if (pool.getType() == java.lang.management.MemoryType.HEAP) heap += used; else nonheap += used;
+                }
+                long rss = -1;
+                Path status = Path.of("/proc/self/status");
+                if (Files.exists(status)) for (String line : Files.readAllLines(status))
+                    if (line.startsWith("VmHWM:")) rss = Long.parseLong(line.replaceAll("[^0-9]", "")) * 1024;
+                Files.writeString(Path.of(memoryFile), "heap_pool_peak_sum_bytes\t" + heap + "\nnonheap_pool_peak_sum_bytes\t" + nonheap + "\npeak_rss_bytes\t" + rss + "\n");
+            } catch (Exception ex) { ex.printStackTrace(); }
+        }));
         if (args.length == 4 && args[0].equals("--universe")) {
             universe(args);
             return;

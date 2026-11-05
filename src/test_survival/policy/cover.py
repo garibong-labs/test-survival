@@ -49,6 +49,10 @@ def run(b, step):
                         if digest not in cache:
                             cache[digest] = read_json(b.exp/f'results/policy/runs/{digest}/{index}.json', {})
                         raw = cache[digest]
+                        if b.execution_config['survival'].get('selection') == 'affected':
+                            from .affected import logical_path
+                            active = [s for s in segments[g] if int(s['start']) <= index][-1]
+                            raw = read_json(logical_path(b,p,g,active['segment'],index), {})
                         found = [r for r in raw.get('methods', []) if identity(r) == identity(t)]
                         if not found or 'lines' not in found[0]:
                             reasons.add(raw.get('coverage_reason') or 'missing per-test coverage')

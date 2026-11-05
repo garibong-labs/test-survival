@@ -18,6 +18,7 @@ from ..rules.coverage import usable_lines
 from ..runner import measurement_session
 from ..runner.dispatch import dispatch
 from ..work import release_checkout
+from ..selection import Selector, affected, carry, executed, counts, FIELDS
 
 
 def identity(t):
@@ -51,6 +52,8 @@ class Measurements:
         from ..dev_results import imported_for
         self.exp, self.config, self.phase = exp, config, phase
         self.adapter = JavaMavenAdapter(exp, config)
+        self.selector = Selector(self.adapter) if affected(config) else None
+        self.history = {}
         self.provenance, self.imported = imported_for(exp, config, phase)
         self.frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json'))
         self.tests = catalog(exp, config, self.frozen)
@@ -67,9 +70,9 @@ class Measurements:
         self.unique = {identity(t):t for g,ts in self.tests.items()
                        if g not in self.imported and g not in self.derived for t in ts}
 
-    def cached(self, index, sha, dead, *, require_lines=True):
+    def cached(self, index, sha, dead, *, require_lines=True, historical=False):
         raw = read_json(self.exp/f'results/baseline-batches/{index}.json', {})
-        if (raw.get('input_sha256') != self.digest or raw.get('sha') != sha
+        if ((not historical and raw.get('input_sha256') != self.digest) or raw.get('sha') != sha
                 or raw.get('coverage_version') != COVERAGE_VERSION or 'universe' not in raw):
             return None
         rows = {identity(t):t for t in raw.get('methods', [])}
@@ -77,6 +80,14 @@ class Measurements:
             return None
         if any(rows[k]['state'] == 'dead' and k not in dead for k in rows):
             return None
+        for k, row in rows.items():
+            if row.get('selection_action') == 'carried':
+                origin = read_json(self.exp/f'results/baseline-batches/{row.get("carried_from_index")}.json', {})
+                sources = {identity(t):t for t in origin.get('methods', [])}
+                source = sources.get(k, {})
+                if (origin.get('input_sha256') != self.digest or source.get('selection_action') != 'executed'
+                        or any(source.get(n) != row.get(n) for n in ('state','lines','dependency_record','last_executed_sha','last_executed_index'))):
+                    return None
         if require_lines and not complete_lines(raw, dead):
             return None
         return raw
@@ -87,12 +98,15 @@ class Measurements:
         current = prior.get('input_sha256') == self.digest and prior.get('sha') == sha
         old = {identity(t):t for t in prior.get('methods', [])} if current else {}
         kept = {}; requested = []; verdicts = {}
+        context = self.selector.context(index, sha) if self.selector and self.unique else None
         for k,t in self.unique.items():
             row = old.get(k)
             if k in dead:
                 kept[k] = row if row and row.get('state') != 'dead' and usable_lines(row) else dead_method(t, dead[k])
             elif row and row.get('state') != 'dead' and usable_lines(row):
                 kept[k] = row
+            elif self.selector and index and not self.selector.decision(self.history.get(k), index, sha, context):
+                kept[k] = carry(self.history[k])
             else:
                 requested.append(t)
                 if row and row.get('state') != 'dead':
@@ -119,12 +133,13 @@ class Measurements:
             k = identity(observation)
             if k not in self.unique:
                 raise ValueError('Unexpected batch method')
-            row = {**self.unique[k], **{n:observation[n] for n in ('state','message','lines') if n in observation}, 'flaky':False}
-            kept[k] = settle(row, verdicts.get(k), [])
+            row = {**self.unique[k], **{n:observation[n] for n in ('state','message','lines','dependency_record') if n in observation}, 'flaky':False}
+            kept[k] = executed(settle(row, verdicts.get(k), []), index, sha, context)
         if set(kept) != set(self.unique):
             raise ValueError('Incomplete baseline batch inventory')
         raw = {**measured, 'execution':'batch', 'input_sha256':self.digest, 'runner_sha256':self.runner,
                'methods':[kept[k] for k in self.unique], 'ignored_settings':['survival.flaky_rerun','survival.environment_errors']}
+        raw['selection_counts'] = counts(raw['methods'])
         raw['coverage_status'] = 'complete' if all(usable_lines(t) for t in raw['methods']) else 'missing'
         write_json(path, raw, compress=True)
         return raw
@@ -147,7 +162,7 @@ class Measurements:
                 continue
             rows = [{**observed[identity(t)], **t} for t in tests]
             record = {**raw, 'group':g, 'phase':'control' if self.phase == 'control' else 'A',
-                      'methods':rows, 'requested_ids':[t['id'] for t in rows if t['state'] != 'dead'],
+                      'methods':rows, 'selection_counts':counts(rows), 'requested_ids':[t['id'] for t in rows if t['state'] != 'dead'],
                       'input_sha256':self.adapter.run_fingerprint(self.frozen[g]), 'batch_input_sha256':self.digest,
                       'measurement_source':f'results/baseline-batches/{index}.json'}
             if read_json(path) != record:
@@ -160,6 +175,7 @@ class Measurements:
             for g in ready:
                 source = pending.pop(g)
                 record = derive_record(read_json(path_for(source)), g, self.frozen[g])
+                record['selection_counts'] = counts(record['methods'])
                 record.update(input_sha256=self.adapter.run_fingerprint(self.frozen[g]),
                               batch_input_sha256=self.digest,
                               measurement_source=str(path_for(source).relative_to(self.exp)),
@@ -207,6 +223,11 @@ def survive(exp, config):
                     write_json(exp/path,dict(index=i,sha=r['sha'],group=g,phase='A',status='skipped-untouched'),compress=True)
     evaluated = [r for r in commits if int(r['index']) not in skipped and read_json(exp/f'results/builds/{r["index"]}.json')['build']=='ok']
     known = {}
+    if m.selector:
+        anchor = read_json(exp/'results/anchor.json')['sha']
+        control = m.cached(0, anchor, {})
+        if control:
+            m.history.update({identity(t):t for t in control['methods'] if t['state'] == 'pass'})
     def prepare(row, pending):
         i = int(row['index']); dead = {k:n for k,n in known.items() if n < i}
         cached = m.cached(i, row['sha'], dead)
@@ -219,9 +240,11 @@ def survive(exp, config):
         for t in raw['methods']:
             if t['state'] in FAILURES:
                 k=identity(t); known[k]=min(i,known.get(k,i))
+        if m.selector:
+            m.history.update({identity(t):t for t in raw['methods'] if t['state'] == 'pass'})
         log(exp,f'survive: {i} batch recorded',config)
     with measurement_session(m.adapter, 'survive', bool(evaluated and (m.unique or not m.imported))):
-        dispatch(evaluated,config['runner']['workers']['survive'],prepare,
+        dispatch(evaluated,1 if m.selector else config['runner']['workers']['survive'],prepare,
                  lambda r,dead:m.measure(int(r['index']),r['sha'],dead),completed)
     curves = aggregate(exp, config)
     entering = read_json(exp/'results/alive-entering.json')
@@ -265,7 +288,7 @@ def project_coverage(exp, config, index, entering):
         write_csv(output,[dict(file=f,line=n,covered='yes' if (f,n) in hits else 'no') for f,n in raw['universe']],['file','line','covered'],compress=True)
 
 
-def completed_items(exp, config, stage):
+def completed_items(exp, config, stage, *, historical=False):
     """Read-only completeness audit shared by resume, log and panel progress."""
     from .survive import skipped_commits, raw_folder
     # Status visits every stage, including those whose inputs have not been
@@ -304,7 +327,7 @@ def completed_items(exp, config, stage):
             continue
         # Coverage repair preserves recorded survival verdicts. They still
         # justify later dead omissions while this index remains incomplete.
-        record = m.cached(i,r['sha'],known,require_lines=False)
+        record = m.cached(i,r['sha'],known,require_lines=False,historical=historical)
         if record is None:
             continue
         valid = complete_lines(record, known)
@@ -313,7 +336,7 @@ def completed_items(exp, config, stage):
                 continue
             folder = 'control' if stage == 'control' else raw_folder(g,config,m.provenance)
             projected = read_json(exp/f'results/{folder}/{i}-{g}.json', {})
-            if projected.get('batch_input_sha256') != m.digest or {t['id'] for t in projected.get('methods', [])} != {t['id'] for t in tests}:
+            if (not historical and projected.get('batch_input_sha256') != m.digest) or {t['id'] for t in projected.get('methods', [])} != {t['id'] for t in tests}:
                 valid = False
         if valid:
             completed.append([exp/f'results/baseline-batches/{i}.json', *paths])

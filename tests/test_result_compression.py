@@ -135,7 +135,7 @@ def test_container_result_permissions_preserve_host_readability(tmp_path):
     assert stat.S_IMODE(io.compress_file(xml).stat().st_mode)==0o640
 
 
-def test_real_main_provenance_reuse_remains_strict(tmp_path,monkeypatch):
+def test_finished_main_evidence_remains_readable_without_hash_migration(tmp_path,monkeypatch):
     from test_survival.adapters.java_maven import JavaMavenAdapter
     from test_survival.adapters.run_reuse import survival_provenance_matches,pre_footprint_provenance
     from test_survival.config import validate
@@ -144,13 +144,17 @@ def test_real_main_provenance_reuse_remains_strict(tmp_path,monkeypatch):
     config=validate(dict(name='old',anchor='t',project={'repo':str(tmp_path)},
                          generators=[dict(name='llm',method='ouedraogo',impl='native')]))
     adapter=JavaMavenAdapter(tmp_path,config);current=adapter.provenance()
-    assert previous==pre_footprint_provenance(current)
-    assert survival_provenance_matches(previous,current)
+    assert previous != pre_footprint_provenance(current)
+    assert not survival_provenance_matches(previous,current)
     for key in previous:
         assert not survival_provenance_matches({**previous,key:'unknown'},current)
     source=tmp_path/'generated/llm/round1/sources/T.java';source.parent.mkdir(parents=True);source.write_text('class T {}')
     record=dict(file=str(source.relative_to(tmp_path)),input_sha256=adapter.screen_fingerprint(source,3,provenance=previous),methods=[])
     io.write_json(tmp_path/'generated/llm/round1/validation/0.json',record)
-    monkeypatch.setattr(adapter,'worker',lambda *a:pytest.fail('historical screening must not rerun'))
-    assert adapter.screen_file('llm','round1',source,3,0)==record
+    io.write_json(tmp_path/'state/screen.json',dict(status='completed'))
+    io.write_json(tmp_path/'state/report.json',dict(status='completed'))
+    before={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    monkeypatch.setattr(JavaMavenAdapter,'worker',lambda *a:pytest.fail('status must not execute'))
+    assert io.read_json(tmp_path/'generated/llm/round1/validation/0.json')==record
     assert snapshot(tmp_path,'screen',config)['done']==1
+    assert before=={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}

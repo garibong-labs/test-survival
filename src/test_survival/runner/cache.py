@@ -15,7 +15,7 @@ class ClasspathCache:
 
     def resolve(self, folder, index, *, log_root=None):
         digest = hashlib.sha256((folder / 'pom.xml').read_bytes()).hexdigest()
-        enabled = self.config['runner']['cache']['classpath'] == 'pom-sha256'
+        enabled = self.config['runner']['cache']['classpath'] == 'pom-sha256' and self.config['survival'].get('selection') != 'affected'
         cache = self.exp / 'work/classpaths' / f'{digest if enabled else index}.txt'
         attempts = []
         with _LOCK:
