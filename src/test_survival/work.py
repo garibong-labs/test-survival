@@ -11,7 +11,7 @@ import stat
 from .io import read_json
 
 
-def remove_owned(exp, relative):
+def _remove_owned(exp, relative):
     """Delete beneath an open experiment descriptor without following parent links."""
     relative = Path(relative)
     if relative.is_absolute() or '..' in relative.parts or relative.parts[:1] != ('work',):
@@ -39,6 +39,31 @@ def remove_owned(exp, relative):
             os.unlink(name, dir_fd=fd)
     finally:
         os.close(fd)
+
+
+def remove_owned(exp, relative):
+    """Delete owned work, including Linux files created by the root container."""
+    try:
+        _remove_owned(exp, relative)
+    except PermissionError:
+        # Host coordinators cannot traverse/unlink root-owned Maven/worker
+        # subtrees on Linux. Re-run the same descriptor-relative, no-follow
+        # deletion in the configured container; never change tree permissions.
+        if os.geteuid() == 0 or not (Path(exp)/'experiment.yaml').is_file():
+            raise
+        from uuid import uuid4
+        from .config import load
+        from .runner.docker import DockerRunner
+        from .io import write_json
+        exp=Path(exp)
+        runner=DockerRunner(exp,load(exp))
+        script=('import importlib,sys; sys.path.insert(0,"/"); '
+                'importlib.import_module("survival-package.work").remove_owned(sys.argv[1],sys.argv[2])')
+        log=exp/'results/work-cleanup-commands'/(uuid4().hex+'.log')
+        result=runner.execute(['python3','-c',script,str(exp),str(relative)],exp,log,600)
+        write_json(log.with_suffix('.json'),result)
+        if result['exit_code']:
+            raise RuntimeError('Container workspace cleanup failed; see '+str(log))
 
 
 def release_checkout(exp, config, index, *, final=False):
@@ -193,7 +218,7 @@ def retain_previous_work(exp, relative):
     if not counts['files'] and not any(p.is_file() for p in siblings):return
     target = exp/'work/failed-attempts'/str(relative.relative_to('work'))/uuid4().hex
     target.parent.mkdir(parents=True, exist_ok=True)
-    # Parent chain is validated before moving; run ownership excludes other writers.
+    # Parent chain is validated before copying; run ownership excludes other writers.
     if any(p.is_symlink() for p in [root, *root.parents] if p != exp.parent and p.is_relative_to(exp)):
         raise RuntimeError('Refusing symlink scratch')
     # Docker Desktop may retain a guest dentry after a host rename. Moving

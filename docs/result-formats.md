@@ -421,3 +421,11 @@ The compatibility map pins the exact main component hashes and accounts for new
 provenance entries; all unrelated component hashes still must match. Screening
 reuse checks the corresponding historical key without rewriting generated
 validation evidence. Unknown provenance changes still invalidate reuse.
+
+On Linux, a host user may be unable to delete root-owned Maven/worker scratch.
+Only after host deletion reports `PermissionError`, cleanup retries the same
+validated descriptor-relative deletion inside the configured Docker runner.
+It does not relax permissions or follow symlinks. The command result and log are
+retained under `results/work-cleanup-commands/<id>.{json,log}`. A failed retry
+stops cleanup and leaves the remaining evidence. This operational path is covered
+by a real container fixture, including hosts where Docker remaps ownership.

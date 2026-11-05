@@ -366,3 +366,24 @@ def test_direct_scoped_child_keeps_whole_frozen_tree_compilation(tmp_path,monkey
     adapter.worker(dict(action='run',group='dev-scope'))
     assert jobs[0]['developer'] is True
     assert jobs[0].get('developer_suite',True) is True
+
+
+@pytest.mark.java_integration
+def test_container_owned_scratch_cleanup(tmp_path, java_environment, monkeypatch):
+    import yaml
+    from test_survival import work
+    image,_=java_environment
+    raw=dict(name='cleanup',anchor='t',project={'repo':str(tmp_path)},runner={'docker':{'image':image}})
+    (tmp_path/'experiment.yaml').write_text(yaml.safe_dump(raw))
+    adapter=JavaMavenAdapter(tmp_path,validate(raw))
+    created=adapter.runner.execute(['python3','-c',
+        'from pathlib import Path; p=Path("work/owned/nested/file"); p.parent.mkdir(parents=True); p.write_text("evidence")'],
+        tmp_path,tmp_path/'create.log',30)
+    assert created['exit_code']==0
+    # Force the same Linux ownership boundary on Docker Desktop too. The
+    # container imports the real implementation, not this host monkeypatch.
+    monkeypatch.setattr(work,'_remove_owned',lambda *args: (_ for _ in ()).throw(PermissionError('container owner')))
+    work.remove_owned(tmp_path,'work/owned')
+    assert not (tmp_path/'work/owned').exists()
+    records=list((tmp_path/'results/work-cleanup-commands').glob('*.json'))
+    assert len(records)==1 and json.loads(records[0].read_text())['exit_code']==0
