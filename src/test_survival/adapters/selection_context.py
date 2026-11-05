@@ -15,6 +15,8 @@ def collect(w, job):
             options=('-DincludeScope=test', '-DoutputAbsoluteArtifactFilename=true', '-DoutputFile='+str(listing)))
         coordinates = {}
         for line in listing.read_text().splitlines():
+            line = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', line)
+            line = re.sub(r'\s+\(optional\)(?=\s|$)', '', line)
             match = re.match(r'^\s*([^\s]+?):(/.*?)(?:\s+--.*)?\s*$', line)
             if not match: continue
             parts = match[1].split(':')

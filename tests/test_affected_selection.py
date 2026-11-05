@@ -167,7 +167,7 @@ def test_context_uses_final_worker_classpath_and_runner_jars(tmp_path, monkeypat
     project='/cache/g/a/1/a-1-tests.jar'; shadowed='/cache/org/junit/junit/4/junit-4.jar'
     def resolve(*args,**kwargs):
         output = next(x.split('=',1)[1] for x in kwargs['options'] if x.startswith('-DoutputFile='))
-        Path(output).write_text(f'   g:a:test-jar:tests:1:test:{project}\n   org.junit:junit:jar:4:test:{shadowed}\n')
+        Path(output).write_text(f'   g:a:test-jar:tests:1:test:{project} (optional)\x1b[36m -- module g.a\x1b[m\n   org.junit:junit:jar:4:test:{shadowed}\n')
     w=SimpleNamespace(EXP=tmp_path,HELPERS=helpers,TIMEOUTS={'build':10},execute=None,write_json=write_json,
                       classpath=lambda _: (folder,':'.join([str(folder/'target/classes'),str(tmp_path/'work/libs/runner.jar'),project])),
                       jacoco_version=lambda _: '0.8.14',maven_dependencies=SimpleNamespace(maven=resolve))
