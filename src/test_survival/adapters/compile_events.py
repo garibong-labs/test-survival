@@ -61,7 +61,7 @@ class Journal:
     def append(self, value):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = gzip.compress((json.dumps(value,ensure_ascii=False,allow_nan=False)+'\n').encode(), compresslevel=6, mtime=0)
-        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o644)
         with os.fdopen(fd, 'r+b') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX)
             # The lock file also stores the last fsynced record boundary. Normal

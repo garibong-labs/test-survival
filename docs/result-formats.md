@@ -409,3 +409,15 @@ Rehash and stale-stage configuration hashes retain their existing meaning.
 Small summaries, all state files, policy tables and direct report/Sheets inputs
 remain plain. No files under `generated/` are compressed or removed. Legacy
 finished experiments continue to load without migration.
+
+Container-produced JSON and coverage CSV retain readable `0644` permissions so
+Linux host coordinators can consume root-owned worker files. XML compression
+preserves the original file mode. Compile-journal lock files remain persistent
+and readable for archive packaging. Host-only atomic files retain their existing
+private default mode.
+
+Known pre-footprint runner fingerprints remain reusable and count toward progress.
+The compatibility map pins the exact main component hashes and accounts for new
+provenance entries; all unrelated component hashes still must match. Screening
+reuse checks the corresponding historical key without rewriting generated
+validation evidence. Unknown provenance changes still invalidate reuse.

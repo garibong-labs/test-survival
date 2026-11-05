@@ -80,8 +80,8 @@ def items(exp, stage, config, state):
                     for number, source in enumerate(sources):
                         path = directory/f'validation/{number}.json'
                         record = read_json(path, {})
-                        fingerprint = adapter.screen_fingerprint(source, config['screen']['stable_runs'], provenance=provenance)
-                        if record.get('file') == str(source.relative_to(exp)) and record.get('input_sha256') == fingerprint:
+                        fingerprints = adapter.screen_fingerprints(source, config['screen']['stable_runs'], provenance=provenance)
+                        if record.get('file') == str(source.relative_to(exp)) and record.get('input_sha256') in fingerprints:
                             completed.append([path])
                 continue
             manifest = read_json(root/'rounds.json', {})

@@ -58,7 +58,7 @@ def rerun_environment_failures(results, launch_class, settings, wait=time.sleep)
 
 
 def write_json(path, value):
-    result_io.atomic_text(path, json.dumps(value,indent=2)+'\n', compress=result_io.compressed_result(path))
+    result_io.atomic_text(path, json.dumps(value,indent=2)+'\n', compress=result_io.compressed_result(path), permissions=0o644)
 
 
 def execute(command,cwd,log,timeout=600):
@@ -339,7 +339,7 @@ def _run_group(job, session):
         if result['coverage_report']['exit_code']==0:
             result_io.write_csv(xml.with_name(xml.stem+'-lines.csv'),
                                 ({'file':row['file'],'line':row['line'],'covered':'yes' if row['covered'] else 'no'} for row in line_rows(xml)),
-                                ['file','line','covered'], compress=True)
+                                ['file','line','covered'], compress=True, permissions=0o644)
             result_io.compress_file(xml)
         else:result['status']='coverage-fail'
     result['seconds']=round(time.monotonic()-start,3)

@@ -335,12 +335,18 @@ class JavaMavenAdapter:
         return canonical_hash({'source':hashlib.sha256(source.read_bytes()).hexdigest(), 'repeats':repeats,
                                'runner':self.provenance() if provenance is None else provenance})
 
+    def screen_fingerprints(self, source, repeats, *, provenance=None):
+        from .run_reuse import pre_footprint_provenance
+        provenance = self.provenance() if provenance is None else provenance
+        return (self.screen_fingerprint(source, repeats, provenance=provenance),
+                self.screen_fingerprint(source, repeats, provenance=pre_footprint_provenance(provenance)))
+
     def screen_file(self, group, round_name, source, repeats, number):
         relative = str(source.relative_to(self.exp))
         output = f'generated/{group}/{round_name}/validation/{number}.json'
-        key = self.screen_fingerprint(source, repeats)
+        key, legacy_key = self.screen_fingerprints(source, repeats)
         old = read_json(self.exp/output,{})
-        if old.get('input_sha256') == key:
+        if old.get('input_sha256') in (key, legacy_key):
             return old
         result = self.worker(dict(action='screen',group=group,round=round_name,file=relative,
                                   technique='KTester' if next(g for g in self.config['generators'] if g['name']==group)['method']=='ktester' else source.parent.name,
@@ -406,7 +412,7 @@ class JavaMavenAdapter:
         previous=read_json(self.exp/output,{})
         provenance=self.provenance()
         anchor=read_json(self.exp/'results/anchor.json')
-        if previous.get('input_sha256') in (fingerprint,legacy) and previous.get('runner_sha256')==provenance and previous.get('sha')==anchor['sha'] and result_exists(self.exp/xml):return previous
+        if previous.get('input_sha256') in (fingerprint,legacy) and survival_provenance_matches(previous.get('runner_sha256'),provenance) and previous.get('sha')==anchor['sha'] and result_exists(self.exp/xml):return previous
         return self.worker(dict(action='run',index=0,sha=anchor['sha'],group=self.config['dev']['groups'][0]['name'],phase='B',methods=[method],repeats=1,retry=False,environment_retry=True,
                                 input_sha256=fingerprint,runner_sha256=provenance,coverage_xml=xml,output=output,work='work/dev-method-coverage-t/'+name))
 

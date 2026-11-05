@@ -3,6 +3,7 @@ import csv
 import gzip
 import hashlib
 import shutil
+import stat
 from datetime import datetime, timezone
 import json
 import os
@@ -91,6 +92,7 @@ def compress_file(path):
     target = path.with_name(path.name + '.gz')
     fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=target.name+'.', suffix='.tmp')
     try:
+        os.fchmod(fd, stat.S_IMODE(path.stat().st_mode))
         with os.fdopen(fd, 'wb') as raw:
             with gzip.GzipFile(fileobj=raw, mode='wb', compresslevel=6, mtime=0, filename='') as zipped:
                 with path.open('rb') as source:
@@ -105,13 +107,14 @@ def compress_file(path):
     return target
 
 
-def atomic_text(path, text, *, compress=False):
+def atomic_text(path, text, *, compress=False, permissions=None):
     path = Path(path)
     compress = compress or path.suffix == '.gz'
     target = path.with_name(path.name + '.gz') if compress and path.suffix != '.gz' else path
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=target.parent, prefix=target.name+'.', suffix='.tmp')
     try:
+        if permissions is not None:os.fchmod(fd, permissions)
         data = text.encode('utf-8')
         with os.fdopen(fd, 'wb') as stream:
             stream.write(gzip.compress(data, compresslevel=6, mtime=0) if compress else data)
@@ -146,10 +149,10 @@ def read_csv(path):
         return list(csv.DictReader(stream))
 
 
-def write_csv(path, rows, fields, *, compress=False):
+def write_csv(path, rows, fields, *, compress=False, permissions=None):
     import io
     stream = io.StringIO(newline='')
     writer = csv.DictWriter(stream, fieldnames=fields, lineterminator='\n')
     writer.writeheader()
     writer.writerows(rows)
-    atomic_text(path, stream.getvalue(), compress=compress)
+    atomic_text(path, stream.getvalue(), compress=compress, permissions=permissions)

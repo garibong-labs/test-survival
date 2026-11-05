@@ -121,3 +121,36 @@ def test_coverage_coordinator_rejects_bad_universe_before_release(tmp_path):
     with pytest.raises(RuntimeError,match='Duplicate'):validate_index(tmp_path,2,['dev','dev-scope'])
     io.write_csv(tmp_path/'results/coverage/2-dev-lines.csv',[dict(row,line=2)],fields,compress=True)
     with pytest.raises(RuntimeError,match='universes differ'):validate_index(tmp_path,2,['dev','dev-scope'])
+
+
+def test_container_result_permissions_preserve_host_readability(tmp_path):
+    import stat
+    path=tmp_path/'results/raw/1-dev.json'
+    java_worker.write_json(path, {'value':1})
+    assert stat.S_IMODE(io.resolve_path(path).stat().st_mode)==0o644
+    csv=tmp_path/'results/coverage/1-dev-lines.csv'
+    io.write_csv(csv,[],['file','line','covered'],compress=True,permissions=0o644)
+    assert stat.S_IMODE(io.resolve_path(csv).stat().st_mode)==0o644
+    xml=csv.with_name('1-dev.xml');xml.write_text('<report/>');xml.chmod(0o640)
+    assert stat.S_IMODE(io.compress_file(xml).stat().st_mode)==0o640
+
+
+def test_real_main_provenance_reuse_remains_strict(tmp_path,monkeypatch):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.adapters.run_reuse import survival_provenance_matches,pre_footprint_provenance
+    from test_survival.config import validate
+    from test_survival.progress import snapshot
+    previous=io.read_json(Path(__file__).parent/'fixtures/footprint-main-provenance.json')
+    config=validate(dict(name='old',anchor='t',project={'repo':str(tmp_path)},
+                         generators=[dict(name='llm',method='ouedraogo',impl='native')]))
+    adapter=JavaMavenAdapter(tmp_path,config);current=adapter.provenance()
+    assert previous==pre_footprint_provenance(current)
+    assert survival_provenance_matches(previous,current)
+    for key in previous:
+        assert not survival_provenance_matches({**previous,key:'unknown'},current)
+    source=tmp_path/'generated/llm/round1/sources/T.java';source.parent.mkdir(parents=True);source.write_text('class T {}')
+    record=dict(file=str(source.relative_to(tmp_path)),input_sha256=adapter.screen_fingerprint(source,3,provenance=previous),methods=[])
+    io.write_json(tmp_path/'generated/llm/round1/validation/0.json',record)
+    monkeypatch.setattr(adapter,'worker',lambda *a:pytest.fail('historical screening must not rerun'))
+    assert adapter.screen_file('llm','round1',source,3,0)==record
+    assert snapshot(tmp_path,'screen',config)['done']==1

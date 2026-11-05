@@ -1,0 +1,19 @@
+{
+  "AccessorAudit.java": "8c082858b2264ef33b1688dc04692630d2506184a3fc586c1f817d9b0ea9da9a",
+  "CompilerServer.java": "42325ca74f50549fc9815584593c5599bf70ca05038a5fe2050d7a6eea69aab1",
+  "DependencyInventory2.java": "366cec31e3bad91f6479a06b2461565ad61bc9f987f001fca21aa0fb8d79fb7c",
+  "MethodSelectors.java": "dce25f26bae1f123086a0f58df2fad6a4b66085e67a5a70a035d3fbe10f80646",
+  "PerTestCoverage.java": "1e940e096effde6bdfd59ea8465ff7728537eda7460cc9b96bf9604d3f65bb76",
+  "SourceInventory.java": "03d7596d7f53d4e193672ec8fdd24f2cd2d901c3e563ef031c60c33d695e0f5e",
+  "classpath-artifacts.json": "9175ba6dc75e88d8a229d91075ccebcdbe97a9d888b37c922d9f408584d407a1",
+  "java_maven.py": "fbe13ded0601be99ca5684d9a867e4e18f289537b6bfb40fb86dfc3eafb7182a",
+  "java_worker.py": "d62468de6dfa7897deb0bbcce4567063a7e6836494319fa6728b34653ab9475f",
+  "compilation.py": "e76f7debb3201fc4b636479a42ec0f87409061c5fda4a62a95e74a67c1c64320",
+  "maven_dependencies.py": "895d95439e2c27937e14c3d78aa954570f5d5ad515de3a5859b0f53c4a3fa8dd",
+  "docker.py": "d317a991190995d46b5498c38f5274bc5d393915e0ab1c2ee74dfad5ee3ec2e7",
+  "cache.py": "5a5396703aab5a9060b76e87ce7a459e6307d2849db770bdfc086578997526cc",
+  "environment.py": "687e46bd557642367cab60f4d3338b711af5bb08e5be117adedfcb4d6f9b0b75",
+  "compiler_session.py": "85df6eee5f32e6fb113042b8e696a65b646e0e257edc6c3ec734bfa9a5953882",
+  "policy_coverage.py": "4bef5ce356d3004b00d307b6c34c3e418f9ec02bedb1c4708285aee6181a6f49",
+  "snapshot_compile.py": "c12ebc7e25563ec723f4077ca26ccb07fce02e95c08fda394f56970eabb116e1"
+}

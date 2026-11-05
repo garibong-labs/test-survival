@@ -24,8 +24,27 @@ PRE_MULTI_RELEASE = {
 HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE)
 
 
+# Main 01ae5d0, before storage/lifecycle-only changes. The two new provenance
+# entries did not exist in that layout. Keep all other components exact.
+PRE_FOOTPRINT = {
+    'java_maven.py': 'fbe13ded0601be99ca5684d9a867e4e18f289537b6bfb40fb86dfc3eafb7182a',
+    'java_worker.py': 'd62468de6dfa7897deb0bbcce4567063a7e6836494319fa6728b34653ab9475f',
+    'compilation.py': 'e76f7debb3201fc4b636479a42ec0f87409061c5fda4a62a95e74a67c1c64320',
+    'cache.py': '5a5396703aab5a9060b76e87ce7a459e6307d2849db770bdfc086578997526cc',
+}
+
+
+def pre_footprint_provenance(current):
+    return {**{k:v for k,v in current.items() if k not in ('io.py', 'compile_events.py')}, **PRE_FOOTPRINT}
+
+
 def survival_provenance_matches(previous, current):
-    return previous == current or any(previous == {**current, **era} for era in HISTORICAL)
+    if previous == current or any(previous == {**current, **era} for era in HISTORICAL):
+        return True
+    if not PRE_FOOTPRINT.keys() <= current.keys():
+        return False
+    old = pre_footprint_provenance(current)
+    return previous == old or any(previous == {**old, **era} for era in HISTORICAL)
 
 
 def cached_survival_record(adapter, exp, index, group, methods):
