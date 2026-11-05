@@ -258,6 +258,34 @@ def test_fill_boundary_forces_one_shared_execution(tmp_path):
     assert all(rows[0]['selection_action']=='executed' and rows[0]['last_executed_index']==4 for rows in result.values())
 
 
+@pytest.mark.parametrize('state', ['pass','fail','compile-fail','absent'])
+def test_policy_resume_replays_cached_evidence_without_remeasurement_markers(tmp_path, state):
+    from test_survival.policy.affected import Decisions
+    from test_survival.policy.segments import key, segment
+    from test_survival.rules.coverage import usable_lines
+    from test_policy import test_test
+    test = test_test('one'); s = segment(2,1,[test],[])
+    b = SimpleNamespace(exp=tmp_path,by_index={1:{'sha':'one'}})
+    runs = SimpleNamespace(adapter=SimpleNamespace(config={'project':{'repo':str(tmp_path),'module':'.'}}),initialize=lambda:None)
+    context = observation()['dependency_record']['context']
+    row = executed({**test, **observation(), 'state':state, 'lines':[]},1,'one',context)
+    consumers = [('reset','g',s,{key(test)})]
+    def coordinator(measured):
+        d = Decisions(b,runs)
+        d.selector = SimpleNamespace(context=lambda *args:context)
+        d.physical = lambda *args:{key(test):measured}
+        return d
+    first = coordinator(row).measure(1,consumers,boundary=True)
+    resumed = coordinator(row).measure(1,consumers,boundary=True)
+    assert resumed == first
+    assert usable_lines(resumed['reset','g'][0])
+    assert 'remeasured_state' not in resumed['reset','g'][0]
+    if state == 'pass':
+        changed = {**row, 'state':'compile-fail', 'remeasured_state':'compile-fail'}
+        repaired = coordinator(changed).measure(1,consumers,boundary=True)['reset','g'][0]
+        assert repaired['state'] == 'pass' and not usable_lines(repaired)
+
+
 def test_policy_resume_requires_logical_rows_and_direct_physical_origin(tmp_path):
     from test_survival.policy.affected import logical_path, records_complete
     from test_survival.policy.segments import segment, execution_id

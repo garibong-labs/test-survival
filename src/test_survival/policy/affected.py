@@ -145,7 +145,15 @@ class Decisions:
                     row = physical[k]
                     prior = previous[slot].get(k)
                     verdict = {n:prior[n] for n in ('state','message','flaky') if n in prior} if prior else None
-                    rows[k] = settle({**t, **row}, verdict, [])
+                    evidence = ('state','message','flaky','lines','dependency_record',
+                                'last_executed_index','last_executed_sha','remeasured_state')
+                    # Replaying identical cached evidence is not remeasurement.
+                    # In particular, a cached compile failure must not acquire
+                    # an unusable-coverage marker merely because we resumed.
+                    if prior and all(prior.get(n) == row.get(n) for n in evidence):
+                        rows[k] = prior
+                    else:
+                        rows[k] = settle({**t, **row}, verdict, [])
                 rows[k] = {**rows[k], 'id':key(t)}
                 if k in alive: self.history[(*slot,k)] = rows[k]
             record = dict(index=index,sha=sha,segment=s['segment'],selection='affected',methods=list(rows.values()),
