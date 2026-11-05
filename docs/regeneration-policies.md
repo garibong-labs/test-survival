@@ -1,7 +1,7 @@
 # Regeneration policies
 
-Policies run after a completed baseline; the original prepare–report stages and
-artifacts remain unchanged. Add a `policies` section to a new experiment's
+Policies run after a completed baseline; both legacy and batch baselines are accepted. Policy outputs use a separate
+experiment directory from the read-only baseline. Add a `policies` section to a new experiment's
 `experiment.yaml` (the ordinary experiment settings are still required). Paths in
 `baseline` and `baseline_config` resolve relative to `project.repo`.
 
@@ -19,9 +19,9 @@ policies:
   concurrency: {ktester: 3, ouedraogo: 3, dev_selection: 1}
   fill_seed: 20261029
   set:
-    - {name: release-reset, trigger: release, action: reset}
-    - {name: half-reset, trigger: threshold, action: reset}
-    - {name: half-fill, trigger: threshold, action: fill}
+    - {name: release-reset, trigger: release, action: reset, developer: regenerate}
+    - {name: half-reset, trigger: threshold, action: reset, developer: regenerate}
+    - {name: half-fill, trigger: threshold, action: fill, developer: keep}
 ```
 
 ```sh
@@ -59,8 +59,10 @@ inventory, the baseline scope, and its own generation/screening evidence beneath
 `results/policy/pools/<group>/<index>/`. Missing scope classes are omitted without
 substituting other classes. KTester rebuilds its index and focal-method dataset;
 Ouédraogo rebuilds class prompts and dependency signatures. Baseline settings plus
-validated overrides drive generation. Screening always uses three runs and
-exact-body deduplication. Matching targets use the Dev-scope pool at the same
+validated overrides drive generation. Generator pool screening uses the baseline experiment's `screen.stable_runs`;
+developer screening uses `dev.stable_runs`. Every configured run must pass, with
+no flaky rescue, followed by exact-body deduplication. Funnels record
+`stable_runs` and `stable_passed`; old `stable_3_of_3` funnels remain readable. Matching targets use the Dev-scope pool at the same
 point when available, otherwise the Dev-scope segment denominator in force for
 the requesting policy (the maximum if a pool serves policies with different
 targets). For `until_dev_matched` after multiple Dev fill checkpoints, a same-index
@@ -68,18 +70,31 @@ Dev pool is required so the target is known before the commit loop. Developer
 pools are built before dependent generator pools, with one shared concurrency
 limit for developer selection.
 
-With `policies.regenerate_developer: false`, only LLM groups regenerate. New
-plans contain no developer points or threshold triggers. Saved plans retain their
-original bytes and hash; execution filters their developer points and never runs
-`dev-full` selection or developer pools. Existing developer pool artifacts remain
-on disk and are ignored. Matching uses the fixed scoped developer denominator at
-t. Every policy's `dev-scope` curve is the baseline no-regeneration reference;
-tables and coverage outputs label it accordingly. Its coverage comes from the
-baseline when available and is omitted when unavailable.
+Each `policies.set` entry accepts `developer: regenerate | keep`. An omitted
+value falls back to `policies.regenerate_developer` (default true). The example
+above regenerates developers for both reset policies and keeps the baseline
+reference for half-fill despite its LLM regeneration. A keep policy never opens
+a developer segment; its developer curve and coverage remain the no-regeneration
+baseline, labelled per policy in tables and coverage outputs.
 
-The default `true` retains developer regeneration. In that mode developer
-selection runs the full suite with JUnit Platform and Vintage, then screens the
-selected population for strict 3/3 passes.
+Plans include developer release/threshold candidates whenever at least one
+policy regenerates developers. Pools are shared only for requested triggers;
+execution applies each point only to policies that regenerate that group.
+If every policy keeps developers, no developer pools or full-suite selection run.
+Existing developer artifacts remain on disk. Developer regeneration first runs
+full-suite per-test coverage at the checkpoint, selects by the configured
+denominator rule, then screens for the configured number of strict passes.
+
+For generator matching, a same-index developer pool takes precedence. Otherwise
+use the requesting policy's current developer denominator: fixed at t for keep,
+or the reset/fill segment denominator for regenerate. Shared pools use the
+largest requesting target. The existing same-index-pool requirement for targets
+after multiple developer fill checkpoints remains.
+
+Switching per-policy behavior preserves completed pool identities and refreshes
+composition, coverage and report revisions. Saved plan bytes remain unchanged.
+Enabling regeneration when the saved plan lacks required points reports that the
+plan must be rebuilt with `--force`; it does not silently run an incomplete plan.
 
 Policy survival and coverage share one execution pass. Between successive
 regeneration points, commit indices run concurrently with
@@ -96,9 +111,11 @@ members of a source that have no usable row in a current record (a dead or
 not-selected marker, or a row without lines); the other rows are kept. Members
 that entered the regeneration commit keep the first job's rows even without
 lines, because the policies evaluated the commit from them; the next run's
-window measures those rows again. Nothing is taken over
-from baseline raw records or pool screening, because those carry pass/fail only
-and a policy table needs each surviving method's executed lines at every commit.
+window measures those rows again. A batch baseline's current per-test lines can
+seed matching shared source records at the same commit. Source, helper and
+resource execution hashes must match; no test JVM is launched for imported
+usable rows. Legacy baseline records and pool screening without reusable
+per-index lines still require measurement for regenerated compositions.
 The frozen snapshot a fill policy executes is subject to the same screening
 exclusions as a pool (scratch subtrees, rejected candidates), read from the
 baseline experiment's records. The worker compiles each source root (snapshot) once,
@@ -182,11 +199,10 @@ covered changed executable scope lines using the baseline executable universe.
 Totals sum line/commit pairs, rather than deduplicating a line across history.
 Container teardown probes are reset separately and excluded from per-test hits,
 so one class's cleanup cannot contribute coverage to the next class's tests.
-The `none` policy imports baseline survival and coverage unchanged. Imported
-baseline raw and pool screening observations are reused without execution. When
-such evidence has no per-test line hits, coverage of a regenerated composition
-that needs those hits is unavailable, and is listed in `coverage-missing.csv`;
-missing hits are never treated as zero. Before a group's first regeneration,
+The `none` policy imports baseline survival and coverage unchanged. Segment 1 and `none` import baseline evidence without test execution. For later
+compositions, batch baseline hits are reused when identities match; otherwise
+survival measures missing per-test hits. Failed measurements are listed in
+`coverage-missing.csv`; missing hits are never treated as zero. Before a group's first regeneration,
 its complete baseline coverage is used directly. Totals retain `executable` and
 `groups` and add `group_executable` denominators for available observations,
 `reference_groups`, and `missing_indices`. The report uses those denominators
@@ -194,7 +210,7 @@ so partially measured coverage is not presented as a complete total.
 
 `state/policy-*.json` records configuration fingerprints and completion for pools,
 shared runs, coverage jobs, and stages. Changed inputs require `--force`; completed
-work is otherwise reused. `regenerate_developer` is excluded from the digest;
+work is otherwise reused. `regenerate_developer` and per-policy `developer` switches are excluded from the pool digest;
 changing it filters saved plans without invalidating any pool or measured-source
 identity. Aggregate survival/coverage/report steps track their execution revision
 separately. Coverage schema version 2 records the isolated snapshot compilation

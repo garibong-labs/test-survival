@@ -1,5 +1,14 @@
 # Batch baseline: implementation review and comparison plan
 
+**Accepted Part 2 amendments:** batch coverage collects only scope source lines;
+`all` and `other` changed-line columns are unavailable. Batch writes no group
+JaCoCo XML and retains no probe data for XML generation. The comparison adds
+KTester sources from the read-only `commit-survival-run2` and extends to 20
+commits (subject to a one-hour limit per mode). These decisions supersede the
+full-universe/XML proposals and four-commit comparison below, which are retained
+as the Part 1 review record. Current behavior is documented in
+[result formats](result-formats.md#batch-baseline-results).
+
 Part 1 only. Reviewed against `main` at
 `f9459540081a0749adbeca6b7c550bb097e60f1a`, after footprint PR
 [#31](https://github.com/garibong-labs/test-survival/pull/31) merged on

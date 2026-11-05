@@ -194,6 +194,8 @@ def project_coverage(exp, config, index, entering):
     from ..dev_results import imported_for, imported_record, require_record
     from .survive import raw_folder
     provenance, imported = imported_for(exp,config,'cover')
+    adapter = JavaMavenAdapter(exp, config)
+    frozen = read_json(exp/'results/frozen-denominators.json')
     for g in group_names(config):
         output = exp/f'results/coverage/{index}-{g}-lines.csv'
         if g in imported:
@@ -209,6 +211,7 @@ def project_coverage(exp, config, index, entering):
             raise RuntimeError('Batch omitted a method alive entering the index')
         missing = any('lines' not in t or t.get('remeasured_state') not in (None,'pass','fail') for t in rows)
         record = {**raw, 'phase':'B', 'methods':rows, 'requested_ids':sorted(wanted),
+                  'input_sha256':adapter.run_fingerprint([t for t in frozen[g] if t['id'] in wanted]),
                   'status':'coverage-missing' if missing else 'evaluated',
                   'coverage_status':'missing' if missing else 'complete'}
         write_json(exp/f'results/raw-coverage/{index}-{g}.json',record,compress=True)
@@ -237,6 +240,14 @@ def stage_complete(exp, config, stage):
         record = m.cached(i,r['sha'],known)
         if record is None:
             return False
+        from .survive import raw_folder
+        for g, tests in m.frozen.items():
+            if g in m.imported:
+                continue
+            folder = 'control' if stage == 'control' else raw_folder(g,config,m.provenance)
+            projected = read_json(exp/f'results/{folder}/{i}-{g}.json', {})
+            if projected.get('batch_input_sha256') != m.digest or {t['id'] for t in projected.get('methods', [])} != {t['id'] for t in tests}:
+                return False
         for t in record['methods']:
             if t['state'] in FAILURES:
                 known.setdefault(identity(t),i)

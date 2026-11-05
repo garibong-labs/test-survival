@@ -71,6 +71,14 @@ def test_batch_scope_projection_carries_and_resume(tmp_path,monkeypatch,workers)
     assert len(jobs)==before
     complete,total,_=items(tmp_path,'survive',config,{})
     assert len(complete)==total==6
+    complete,total,_=items(tmp_path,'cover',config,{})
+    assert len(complete)==total
+    assert batch.stage_complete(tmp_path,config,'survive')
+    from test_survival.io import resolve_path
+    resolve_path(tmp_path/'results/raw/2-dev.json').unlink()
+    assert not batch.stage_complete(tmp_path,config,'survive')
+    survive.run(tmp_path,config)
+    assert len(jobs)==before
 
 
 def test_missing_lines_remain_unavailable_and_remeasure_keeps_verdict(tmp_path,monkeypatch):

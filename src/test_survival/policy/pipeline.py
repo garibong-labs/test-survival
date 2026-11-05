@@ -10,7 +10,7 @@ from ..display import UTC_DISPLAY
 from ..io import logical_glob, resolve_path, atomic_text, now, read_json, write_json
 from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
-from .config import COVERAGE_VERSION, digest_options, digest_plan, regenerates, active_plan, reusable_run
+from .config import COVERAGE_VERSION, digest_options, digest_plan, active_plan, reusable_run
 from . import plan as planning
 from .progress import LiveProgress, description
 
@@ -32,7 +32,7 @@ class Steps:
         # survive=2: carried and pool members are executed for their lines; records
         # with lines stay reusable, so bumping this only re-runs the step itself.
         revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=2)
-        revision['developer'] = {p['name']:regenerates(self.b,next(iter(self.b.dev)),p) for p in self.b.options['set']}
+        revision['developer'] = {p['name']:p.get('developer', 'regenerate' if self.b.options.get('regenerate_developer', True) else 'keep') for p in self.b.options['set']}
         fresh = True
         if name.startswith('run-'):
             fresh = all(reusable_run(read_json(p, {}), required_methods=required_methods) for p in outputs)
