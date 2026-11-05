@@ -170,6 +170,9 @@ def policy_timing(root):
     from test_survival.io import read_json,read_csv,write_csv,resolve_path,logical_glob
     for mode in ('all','affected'):
         exp=root/f'repo/experiments/{mode}-policies';batches=defaultdict(list)
+        commits=[r for r in read_csv(root/f'repo/experiments/{mode}/results/survival.csv')
+                 if int(r['index']) and r['evaluated']=='yes']
+        evaluated={int(r['index']) for r in commits}
         stage_started=datetime.fromisoformat(read_json(exp/'state/policy-survive.json')['started']).timestamp()
         def production_seconds(index):
             # Pool preparation can already have built the same index. Its
@@ -186,20 +189,22 @@ def policy_timing(root):
             ended={}
             for line in (root/f'{mode}-policies-run.log').read_text().splitlines():
                 match=re.search(r'policy-run-[^:]+-(\d+): (?:completed|already completed; skipped)',line)
-                if match:ended[int(match[1])]=datetime.fromisoformat(line.split()[0]).timestamp()
+                if match and int(match[1]) in evaluated:
+                    ended[int(match[1])]=datetime.fromisoformat(line.split()[0]).timestamp()
             previous=stage_started
             for index,end in sorted(ended.items()):spans[index]=end-previous;previous=end
         else:
             ended={}
             for folder in (exp/'results/policy').glob('*/decisions/*/*'):
                 for path in logical_glob(folder,'*.json'):
-                    index=int(read_json(path)['index']);ended[index]=max(ended.get(index,0),resolve_path(path).stat().st_mtime)
+                    index=int(read_json(path)['index'])
+                    if index in evaluated:
+                        ended[index]=max(ended.get(index,0),resolve_path(path).stat().st_mtime)
             previous=stage_started
             for index,end in sorted(ended.items()):spans[index]=end-previous;previous=end
         rows=[];first=min(batches,default=None)
-        for commit in read_csv(root/f'repo/experiments/{mode}/results/survival.csv'):
+        for commit in commits:
             index=int(commit['index'])
-            if not index or commit['evaluated']!='yes':continue
             attempts={a['log']:a['seconds'] for b in batches[index] for c in b.get('compile',[]) for a in c.get('attempts',[c])}
             compilation=sum(attempts.values());jvm=sum(r['seconds'] for b in batches[index] for r in b.get('runs',[]))
             production=production_seconds(index)
