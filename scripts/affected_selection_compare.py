@@ -57,6 +57,16 @@ def run(root,mode,tool,policy=False):
     exp=root/'repo/experiments'/((mode+'-policies') if policy else mode)
     label=mode+('-policies' if policy else '')
     timing_path=root/f'{label}-timing.json'
+    owner_path=exp/'state/run.json'
+    waiting=False
+    while owner_path.exists():
+        owner=json.loads(owner_path.read_text())
+        if owner.get('status')!='running':break
+        from test_survival.pipeline import process_alive
+        if not process_alive(owner.get('pid')):break
+        if not waiting:print(label,'awaiting the existing run; preserving its logs',flush=True)
+        waiting=True;time.sleep(2)
+    if waiting:time.sleep(2)  # The owning harness writes timings after CLI exit.
     prior=json.loads(timing_path.read_text()) if timing_path.exists() else {}
     if prior.get('steps') and prior['steps'][-1]['stage']==('run' if policy else 'report') and all(s['exit_code']==0 for s in prior['steps']):
         print(label,'already measured; preserving original timings',flush=True)

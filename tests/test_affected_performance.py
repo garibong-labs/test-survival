@@ -32,3 +32,35 @@ def test_per_index_wall_components_deduplicate_shared_snapshot_compiles(tmp_path
     assert float(rows[1]['total_seconds'])==12
     assert read_csv(tmp_path/'affected-per-index-performance.csv')[1]['ratio']==''
     assert read_json(tmp_path/'performance-summary.json')['all']['max_ratio']==1.2
+
+
+def test_policy_timing_keeps_both_measurements_at_regeneration(tmp_path):
+    import os
+    from test_survival.io import write_csv
+    spec=importlib.util.spec_from_file_location('affected_performance',Path(__file__).parents[1]/'scripts/affected_selection_performance.py')
+    performance=importlib.util.module_from_spec(spec);spec.loader.exec_module(performance)
+    start='2026-01-01T00:00:00+00:00'
+    for mode in ('all','affected'):
+        exp=tmp_path/f'repo/experiments/{mode}-policies'
+        write_json(exp/'state/policy-survive.json',dict(started=start))
+        write_json(exp/'results/builds/0.json',dict(attempts=[dict(seconds=2)]))
+        for index,end in ((1,14),(2,20)):
+            write_json(exp/f'results/builds/{index}.json',dict(attempts=[dict(seconds=1)]))
+            write_json(exp/f'results/policy/batches/{index}.json',dict(index=index,methods=[{}],
+                compile=[dict(attempts=[dict(log='shared',seconds=2)])]*2,runs=[dict(seconds=1)]))
+            decision=exp/f'results/policy/reset/decisions/dev/2/{index}.json'
+            write_json(decision,dict(index=index))
+            stamp=performance.datetime.fromisoformat(start).timestamp()+end
+            os.utime(decision,(stamp,stamp))
+        write_csv(tmp_path/f'repo/experiments/{mode}/results/survival.csv',
+                  [dict(index=i,sha=str(i),evaluated='yes') for i in (1,2)],['index','sha','evaluated'])
+    (tmp_path/'all-policies-run.log').write_text(
+        '2026-01-01T00:00:10+00:00 policy-run-abc-1: completed\n'
+        '2026-01-01T00:00:14+00:00 policy-run-abc-1: completed\n'
+        '2026-01-01T00:00:20+00:00 policy-run-abc-2: completed\n')
+    performance.policy_timing(tmp_path)
+    for mode in ('all','affected'):
+        rows=read_csv(tmp_path/f'{mode}-policies-per-index-performance.csv')
+        assert [float(r['total_seconds']) for r in rows]==[14,6]
+        assert [float(r['production_build_seconds']) for r in rows]==[3,1]
+        assert [float(r['other_seconds']) for r in rows]==[8,2]

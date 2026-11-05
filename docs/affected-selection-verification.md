@@ -76,6 +76,10 @@ fresh successful attempt.
 
 ## Per-index performance target
 
+The reference timings below are provisional: they overlapped DNS anchor
+selection. They will be replaced by quiet-host measurements after the ongoing
+baseline and policy runs finish.
+
 The 1.5× target applies to the two baseline checks, as clarified by the user;
 regenerated policy snapshots do not use a reference at the original t.
 For JSV, the anchor references execute all **169 frozen methods** in a single
@@ -130,8 +134,9 @@ bytecode closure and source constants, nested classes, unknown mappings,
 selection triggers and non-triggers, endpoint renames, segment/control history,
 carried lines, invalid origins, iterative compilation beyond 100 errors,
 concurrent resource-isolated chunks, and nonzero JVM memory evidence.
-A subsequent timing fixture also passes, checking shared-compilation
-deduplication, component reconciliation, and full-execution ratio eligibility.
+Two subsequent timing fixtures pass, checking shared-compilation
+deduplication, component reconciliation, full-execution ratio eligibility, and
+both measurements at a policy regeneration boundary.
 
 The [affected lifecycle fixture](affected-selection-verification/lifecycle.json)
 uses real Docker workers, `survival stop`, status while running/stopped, and

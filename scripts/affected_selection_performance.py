@@ -173,10 +173,15 @@ def policy_timing(root):
             batch=read_json(path);batches[int(batch['index'])].append(batch)
         spans=defaultdict(float)
         if mode=='all':
-            for path in (exp/'state').glob('policy-run-*.json'):
-                state=read_json(path);index=int(path.stem.rsplit('-',1)[1])
-                if state.get('finished') and state.get('started'):
-                    spans[index]+=(datetime.fromisoformat(state['finished'])-datetime.fromisoformat(state['started'])).total_seconds()
+            # Regeneration can rewrite a child's state at the same index.
+            # Keep the complete chronological interval from the append-only
+            # events, including both its evaluation and boundary measurements.
+            ended={}
+            for line in (root/f'{mode}-policies-run.log').read_text().splitlines():
+                match=re.search(r'policy-run-[^:]+-(\d+): (?:completed|already completed; skipped)',line)
+                if match:ended[int(match[1])]=datetime.fromisoformat(line.split()[0]).timestamp()
+            previous=datetime.fromisoformat(read_json(exp/'state/policy-survive.json')['started']).timestamp()
+            for index,end in sorted(ended.items()):spans[index]=end-previous;previous=end
         else:
             ended={}
             for folder in (exp/'results/policy').glob('*/decisions/*/*'):
