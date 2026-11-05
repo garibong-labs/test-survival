@@ -8,6 +8,13 @@ not an implementation or a claim that the equality checks have passed.
 No experiment, policy run, pool construction, model call, or archive operation
 was performed for this review. Finished target experiments remain read-only.
 
+**Accepted compilation addendum:** Part 2 will replace selected-file-plus-all-
+helpers fallback with iterative removal of javac-error source files, compiling
+the remaining root together. This applies to both batch baseline and policy
+execution, for fresh `all` and `affected` runs. It supersedes this review's
+original selected-source-closure proposal and resolves the compilation design
+decision previously left open. The Part 1 stopping point remains in effect.
+
 The public setting is `survival.selection: all | affected`, default `all`.
 Batch baselines and policy survival use affected selection; preparation,
 denominator selection, screening, and pool construction retain their purposes
@@ -26,7 +33,7 @@ All paths below are repository-relative unless identified as experiment paths.
 | Policy survival | [`policy/execute.py`](../src/test_survival/policy/execute.py): `Runs.register/seed_baseline/run_index/prefetch`, `survive` | Compute demand per policy/group/segment, then deduplicate the required executions by snapshot identity and method. Preserve a logical selection decision per consumer even when physical execution is shared. |
 | Shared worker | [`adapters/java_worker.py`](../src/test_survival/adapters/java_worker.py) routes `policy-survive` to [`adapters/policy_coverage.py`](../src/test_survival/adapters/policy_coverage.py): `run(w, job)` with `job['survival']=True` | Both callers use this worker. Add an opt-in dependency collection contract and return build-context identity with observations. There are not separate Java baseline and policy engines to extend. |
 | Frozen sources | Baseline `catalog()` and [`policy/artifacts.py`](../src/test_survival/policy/artifacts.py): `snapshot`, `tree_hash` | Retain `execution_hash`, source-tree and resource-tree hashes. Identify a method by `(execution_hash, class, method)`, not its possibly reused class name or storage path. |
-| Compilation | [`adapters/snapshot_compile.py`](../src/test_survival/adapters/snapshot_compile.py): `filtered_roots`, `compile_snapshot` | Filter screened-out sources as today; compile executed source files and their required test-tree closure. A root with no executed methods must never enter snapshot compilation. Whole-tree compilation is a substantive conflict discussed below. |
+| Compilation | [`adapters/snapshot_compile.py`](../src/test_survival/adapters/snapshot_compile.py): `filtered_roots`, `compile_snapshot` | Filter screened-out sources as today; compile each demanded snapshot root once, then iteratively remove error files and recompile the remaining root together. Share the final classes and per-file removals across that root's selected methods. A root with no executed methods never enters snapshot compilation. |
 | Test JVM | [`adapters/java/PerTestCoverage.java`](../src/test_survival/adapters/java/PerTestCoverage.java): `batch`, `executionFinished` | Derive runtime class hits from the same per-invocation probe dump as the verdict and scope lines. Keep isolated snapshot loaders and bounded chunks. |
 | Coverage projection | `batch.project_coverage`, [`stages/cover.py`](../src/test_survival/stages/cover.py): `aggregate`, [`policy/cover.py`](../src/test_survival/policy/cover.py): `run` | Consume the merged rows, including carried lines; do not launch tests from a coverage reader. Retain existing population rules and executable universes. |
 
@@ -35,6 +42,71 @@ groups by source root and execution hash, and runs methods sequentially in each
 isolated loader. Its failed-JVM fallback calls `run_file` without instrumentation
 and deliberately drops lines. Batch baseline requests `scope_universe=True`;
 policy coverage gets the baseline's durable universe instead.
+
+### Accepted compilation fallback
+
+For each snapshot root with execution demand at the current index:
+
+1. Compile the whole eligible frozen root once, with `-Xmaxerrs` high enough to
+   avoid javac's default diagnostic cap (use the maximum supported value and
+   verify a fixture with more than 100 errors). Preserve the complete diagnostic
+   stream and each diagnostic's source-file association.
+2. If compilation fails, remove **every source file with an error diagnostic in
+   that attempt** from the compilation input, whether a test or a helper. Compile
+   all remaining files together again. Repeat until compilation succeeds or no
+   source files remain. This is a root-level retry sequence, not one fallback
+   invocation per selected test file. Remove all error files reported in a round
+   simultaneously; do not choose a preferred culprit or restore removed files.
+3. A selected method receives `compile-fail` only when its own source file was
+   removed. All methods declared in a removed file, including nested test
+   classes, get that file's diagnostics. Methods in retained files run against
+   the final successful output. Removing an unrelated helper must not assign
+   `compile-fail` to the rest of the root.
+4. Reflection-only and service-loaded helpers remain in the root while they
+   compile. A failing helper is removed by exactly the same rule as a failing
+   test file. A retained test that subsequently fails to load that helper gets
+   the actual runtime result, not a fabricated compilation failure.
+
+Use a worker-owned scratch copy of the eligible root. Removing a file means
+excluding it there, never deleting a frozen source, pool member, or imported
+artifact. Keep the original source-path/hash mapping for every file. Restrict
+`-sourcepath` to the remaining scratch files so javac cannot implicitly rediscover
+a removed source. Each retry uses a fresh class output directory; discard all
+partial classes from unsuccessful attempts, including classes emitted from
+removed sources. Only the successful output reaches the test classloader or
+static dependency analysis.
+
+Store the command (including `-Xmaxerrs`), input files, exit/timeout status,
+duration, complete log, removed files, and each removed file's error diagnostics
+for every round. Keep these per-file diagnostics even if method messages are
+truncated. Prefer structured compiler diagnostics or a verified machine-readable
+javac diagnostic format; do not mistake warnings, diagnostic continuation lines,
+or mentions of another file inside a message for that file's own error. If a
+failed compile has no attributable error file (for example timeout, OOM, invalid
+flags, or an unmapped diagnostic), stop as an infrastructure/analysis failure
+with evidence; do not loop without progress or mark the entire root compile-fail.
+Every normal failed round strictly shrinks the input set, bounding the loop by
+the initial number of files; an empty root launches no tests.
+
+`policy_coverage.run` currently caches the first `full_suite=True` attempt and
+then calls `compile_snapshot` again per selected file. Replace that split with
+one cached root result containing final classes and a removal map. Construct
+selectors only for retained test sources and reject only methods whose source
+is in the removal map, even when the final retry succeeds. Audit shared callers,
+including the `full_suite` path and `run_file` fallback, so neither bypasses the
+new algorithm or reintroduces the old all-helpers failure. Preserve isolation
+between snapshot roots and their distinct classloaders. Completed pool and
+measurement artifacts remain immutable; the changed algorithm applies to new
+compilations, not an automatic repair of finished experiments.
+
+The addendum deliberately allows compilation of unselected files within a root
+that has an executed method. It supersedes the earlier requirement to compile
+only executed tests' source closures at that granularity. The optimization still
+skips an entire snapshot root when none of its methods execute, and carried
+methods keep their recorded state even if their files are removed while compiling
+the root for another method. Record those removals as compile evidence; they are
+not new observations of carried methods. Equality checks must detect any resulting
+disagreement rather than silently overriding a carry decision.
 
 ## 2. Dependency production and cost
 
@@ -90,12 +162,13 @@ references; unresolved project/test-tree references make the result unbounded.
 existing compiled-reference graph. `SourceInventory.java` alone is likewise
 insufficient. Neither should be represented as already providing this feature.
 
-Compilation closures need an initial source analysis before compiled output
-exists. Use frozen source relationships to supply selected sources and helpers
-to javac, then verify/augment the closure from the successful bytecode. Cache
-graphs only with the source snapshot, compiler, and classpath context that made
-them valid. Previously compiled bytecode is dependency evidence, not a substitute
-for compiling selected sources against the current production classes.
+The accepted fallback compiles a whole root and iteratively removes error files;
+it does not require a source dependency graph to prune helpers before compiling.
+Build the static dependency graph from the final successful output, retaining
+the removal map so missing project/test-tree references are not misclassified as
+external. Cache graphs only with the source snapshot, retained/removed file set,
+compiler, and classpath context that made them valid. Previously compiled bytecode
+is dependency evidence, not a substitute for the current root compilation.
 
 ### Source-name references and class-to-file mapping
 
@@ -144,6 +217,7 @@ dependency-file count, and L existing scope-line evidence per method.
 | Broader runtime instrumentation | Extra class transformation and probe writes outside scope; scan up to O(P) probes per invocation | Agent probe arrays plus transient dump O(P), hit names O(C); only O(D) dependency paths and existing O(L) lines persist per method. No retained matrix of probes by method. |
 | Production inventory and binary/source map | O(source + class bytes) per changed production tree | O(C) map, shared across methods; durable compact mapping/context metadata. |
 | Static graph | O(B + E) per compiled snapshot; memoized reachability per test class | O(test classes + E), bounded to the active snapshot/chunk; not a graph per method. |
+| Compilation fallback | One full-root attempt on success; on failure, successively smaller root compilations, at most one failed removal round per initial file | One active compiler/output at a time; persist round logs and per-file errors. May save repeated per-file fallback compiles, but cascades can require several rounds. Measure rather than assume a speedup. |
 | Source identifiers | O(S) once per frozen tree, then matching/reachability joins | Distinct identifier sets cached by source hash; union files stored, not repeated source text. |
 | Selection | One Git endpoint diff per distinct `(last executed SHA, current SHA)`, then set intersections; one context extraction per commit | O(changed paths + active methods' D); direct pointers avoid chains proportional to commit count. |
 | Build context | Artifact metadata lookup and effective compiler extraction per commit, cached only under verified inputs | Small ordered artifact list and compiler tuple per commit; rows can reference its digest. |
@@ -362,13 +436,17 @@ Fingerprint work must cover more than the new schema default:
   Add affected identity at control and later stages, not generation/screening.
 - `Measurements.digest` hashes the entire `batch.py` file and runner provenance.
   Editing that file alone changes compatibility for completed batch experiments.
-  Use explicit, pinned pre-selection compatibility for unchanged `all` behavior,
-  or separate stable all-mode identity from the new selector implementation.
+  Separate stable historical observation identity from the new selector and
+  compilation implementation, with explicit, pinned compatibility rules.
   Do not simply bump a global version and demand that completed runs be rerun.
 - `JavaMavenAdapter.provenance()` includes Java helpers, worker, cache, and
   compilation files. Add narrowly verified historical mappings for every
   changed component to `run_reuse.py`; preserve exact checks of unrelated files.
   Historical compatibility proves old observations, never new dependencies.
+  The accepted fallback intentionally changes fresh `all` outcomes: record a
+  compiler-strategy revision on new evidence and do not claim old fallback
+  results were produced by the new algorithm. Keep finished fingerprints and
+  recorded verdicts intact; use fresh scratch runs for correction verification.
 - Separate dependency schema/version from `COVERAGE_VERSION=3`; existing usable
   line evidence does not become obsolete just because it lacks dependency sets.
   Extend field-copy allowlists in baseline `measure/project`, derived records,
@@ -390,24 +468,17 @@ each other is insufficient evidence of historical compatibility.
 
 ## 7. Conflicts and alternatives requiring attention in Part 2
 
-1. **Minimal compilation versus current batch outcomes.** The merged worker
-   first compiles an entire source root; fallback explicitly compiles every
-   non-test helper, including reflection-only helpers. The recorded baseline
-   comparison already found three developer losses caused by unrelated frozen
-   helpers at JSV index 10. Compiling only an executed test's reachable closure
-   can remove those compile failures, even with perfect selection dependencies.
-   Conversely, preserving whole-helper compilation can fail an executed method
-   on a production dependency not present in that method's requested union.
-   Proposed direction: selected sources plus required helpers for affected
-   mode, with explicit handling of reflection/service providers and conservative
-   uncertainty. Keep `all` unchanged initially and reproduce this conflict in a
-   fixture before the real equality runs. If it causes a difference, the literal
-   combination of unchanged all behavior, minimal compilation, and exact equality
-   needs a design decision: either apply the corrected compilation boundary to
-   both fresh modes (a documented all-mode behavior change), or retain helper
-   compilation and extend dependency tracking to its compilation footprint
-   (broader than the specified dependency union). Neither is silently approved
-   by this map, and unexplained differences cannot be called a successful check.
+1. **Compilation conflict resolved by the addendum.** Implement the root-level
+   iterative error-file removal described in section 1 for both fresh selection
+   modes and both execution consumers. Do not retain the old selected-file-plus-
+   all-helpers fallback or implement the previously proposed source closure.
+   Healthy reflection-only helpers stay compiled; broken helpers and tests are
+   removed individually with evidence. This is an authorized fresh-run behavior
+   change to `all`, while completed fingerprints/results remain preserved.
+   Verify the three documented JSV developer methods against legacy and then
+   compare corrected batch `all` against corrected batch `affected`. Neither
+   equal aggregate counts nor a known cause excuses a remaining method/line
+   mismatch from the acceptance check.
 2. **Fill survivors crossing segments.** Existing regeneration skips methods
    already evaluated at that index, even if their rows lack usable lines. The
    new rule distinguishes an actual same-index execution from a selection carry.
@@ -454,6 +525,70 @@ changes; carried lines and pre-images; no compilation of all-carried snapshots;
 first post-t evaluation; reset/fill/same-source new segments; shared-policy
 origins; remeasurement disagreement; missing-coverage repair; compressed records;
 default fingerprints, read-only status, interruption, and deterministic resume.
+
+Compilation fixtures must cover: a healthy root compiled once; multiple failing
+files removed together; cascading errors discovered on a later retry; all files
+removed; a removed helper with unrelated tests retained; a compiling reflection-
+only helper still loadable; a removed reflection-only helper causing a runtime
+failure rather than unrelated compile failures; multiple/nested test classes in
+one removed source; more than 100 diagnostics; per-file diagnostics retained
+through success; no stale class output or implicit source rediscovery; no-progress
+and infrastructure failures; and one shared retry sequence across selected files
+of the same root in both batch baseline and policy execution. Assert scratch-only
+removals and unchanged frozen source bytes. Also test an all-carried root is not
+compiled, and a carried method is not reclassified because compilation for a
+different method removed its source file.
+
+### Compilation fallback acceptance and timing
+
+Use the full batch comparison configuration in
+[`batch-baseline-verification.md`](batch-baseline-verification.md), including all
+three groups, imported generated tests, and no model calls, in new scratch
+experiments. Measure the compilation change separately from affected selection:
+
+- **Before:** pin the pre-fallback tool revision and run batch `selection: all`
+  (omission on the old revision), preserving its measurements and logs.
+- **After:** use the new iterative fallback with batch `selection: all`, identical
+  inputs, worker counts, image/JDK, timeout/heap settings, and equivalent initial
+  dependency caches. Save the exact revision and final retained/removed sources.
+- **Selection comparison:** run batch `selection: affected` with the same new
+  compiler strategy; the corrected after/all run can serve as equality check 1's
+  all reference. Do not attribute selection savings to the compiler change.
+
+The three methods listed in
+[`survival-differences.csv`](verification/batch-baseline/survival-differences.csv)
+must have the legacy states at every listed index, not merely pass at index 10:
+
+| Class under `com.networknt.schema` | Method |
+|---|---|
+| `PropertiesValidatorTest` | `testDoesNotThrowWhenApplyingDefaultPropertiesToNonObjects` |
+| `TypeValidatorTest` | `testNumeicValues` |
+| `TypeValidatorTest` | `testNonNumeicValues` |
+
+The existing ledger has 33 cumulative differences across indices 10–20; legacy
+is `pass` for all of them. Verify first-failure histories too. Every developer
+scope-line difference in
+[`scope-line-differences.csv`](verification/batch-baseline/scope-line-differences.csv)
+must disappear: 3,315 listed line/index differences, plus the changed-line
+covered counts/percentages at indices 10, 13, 15, and 18. Check complete scope
+universes and coverage availability, not only these totals, and enumerate any
+remaining or newly introduced difference in every group with its cause. Retain
+the legacy reference evidence; never rewrite the original ledgers to make the
+comparison pass. Any legacy `error`/`timeout` normalization used by the original
+cross-mode harness must stay explicit and cannot excuse a `compile-fail` or
+`absent` difference. The subsequent batch-to-batch checks require exact states.
+
+Report **survive-stage wall time before and after the fallback change**, its
+absolute and percentage difference, and total wall time separately. The published
+historical before value is **465.941 seconds (7m 45.941s)** for batch survival
+(legacy survival was 461.384 seconds); these are recorded measurements from the
+earlier comparison, not new measurements. Report the new paired scratch timings
+alongside that historical reference, with compiler attempt counts and surviving
+populations: recovering three tests also adds later execution work, so a stage
+timing difference is not purely compiler overhead. An after time and the claimed
+disappearance of differences remain pending Part 2 execution.
+
+### Affected-selection equality checks
 
 For equality check 1, reuse the configuration in
 [`scripts/batch_baseline_compare.py`](../scripts/batch_baseline_compare.py) and
