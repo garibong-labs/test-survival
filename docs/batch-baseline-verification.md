@@ -187,7 +187,24 @@ funnel, checks and timings. This fixture is separate from the timed comparison;
 it covers segment execution, while the real-project command below is restricted
 to pool construction as requested.
 
-The real-project developer pool exercise is recorded after it completes.
+The real-project exercise also completed. The harness created a separate
+`experiments/policies` directory, read the batch comparison baseline, and ran
+`survival policy plan` followed by `survival policy run --until pools`, restricted
+to `policies.groups: [dev]`. Global developer regeneration was false, with the
+three requested per-policy settings. A scratch-only release tag points to index
+2; the baseline threshold schedules index 10. There were no generator pools or
+model calls. Plan took 0.182 seconds; both pools took 823.753 seconds (13m 43.753s).
+
+| Point | Discovered methods | Selected | Stable runs | Stable passes | Kept |
+|---|---:|---:|---:|---:|---:|
+| Release, index 2 | 219 | 22 | 1 | 15 | 15 |
+| Threshold, index 10 | 290 | 22 | 1 | 18 | 18 |
+
+Both points measured the full current developer suite before denominator
+selection and screening. The real-project run stopped at pools as requested;
+the smaller fixture above verifies opening and executing the new segments.
+[policy-pools.json](verification/batch-baseline/policy-pools.json) preserves the
+exact plan, funnel counts, durations and implementation revision.
 
 ## Automated checks and limits
 
@@ -196,6 +213,9 @@ The complete suite passed: **792 tests, zero skips, 175.82 seconds**, with Pytho
 the CI fixture-report guard also accepted the extracted Java results. The
 scope-universe fixture is included in the required Java CI workflow. See
 [tests.json](verification/batch-baseline/tests.json) for the exact command.
+GitHub's Python and Java workflows both passed on `bdfff28`, which contains all
+implementation, tests and comparison evidence; the final follow-up adds only
+this completed pool report.
 
 Coverage includes historical legacy fingerprints/layouts, scope-only batch
 projection, derived groups, skipped aliases, mocked build failures, dead-method

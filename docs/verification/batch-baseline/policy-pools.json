@@ -1,0 +1,100 @@
+{
+  "steps": [
+    {
+      "stage": "plan",
+      "seconds": 0.182
+    },
+    {
+      "stage": "pools",
+      "seconds": 823.753
+    }
+  ],
+  "funnels": [
+    {
+      "index": 2,
+      "discovered": 219,
+      "selected": 22,
+      "stable_runs": 1,
+      "stable_passed": 15,
+      "kept": 15
+    },
+    {
+      "index": 10,
+      "discovered": 290,
+      "selected": 22,
+      "stable_runs": 1,
+      "stable_passed": 18,
+      "kept": 18
+    }
+  ],
+  "plan": {
+    "version": 1,
+    "baseline": "/private/tmp/batch-baseline-comparison/repo/experiments/batch",
+    "groups": [
+      "dev"
+    ],
+    "policies": [
+      {
+        "name": "release-reset",
+        "trigger": "release",
+        "action": "reset",
+        "developer": "regenerate"
+      },
+      {
+        "name": "half-reset",
+        "trigger": "threshold",
+        "action": "reset",
+        "developer": "regenerate"
+      },
+      {
+        "name": "half-fill",
+        "trigger": "threshold",
+        "action": "fill",
+        "developer": "keep"
+      }
+    ],
+    "points": [
+      {
+        "group": "dev",
+        "trigger": "release",
+        "tag": "batch-comparison-release",
+        "tag_sha": "48ca8c3c4eb89e1d00ea0e8097daac187caff142",
+        "requested_index": 2,
+        "index": 2,
+        "sha": "48ca8c3c4eb89e1d00ea0e8097daac187caff142",
+        "baseline_alive": 15,
+        "baseline_denominator": 15,
+        "missing_classes": []
+      },
+      {
+        "group": "dev",
+        "trigger": "threshold",
+        "requested_index": 10,
+        "index": 10,
+        "sha": "7f1ec11b7a4b391577595e0d31d5825548c9a64f",
+        "baseline_alive": 0,
+        "baseline_denominator": 15,
+        "missing_classes": []
+      }
+    ],
+    "pools": [
+      {
+        "group": "dev",
+        "index": 2,
+        "sha": "48ca8c3c4eb89e1d00ea0e8097daac187caff142",
+        "missing_classes": []
+      },
+      {
+        "group": "dev",
+        "index": 10,
+        "sha": "7f1ec11b7a4b391577595e0d31d5825548c9a64f",
+        "missing_classes": []
+      }
+    ],
+    "denominators": {
+      "dev": 15
+    },
+    "threshold_basis": "baseline survival; after a trigger, remaining baseline alive is the planning segment denominator"
+  },
+  "tool_head": "bdfff28001d348b9fdd6115059f9c2a7b526aeae"
+}
