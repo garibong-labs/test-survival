@@ -58,8 +58,12 @@ def executed(row, index, sha, context=None):
 
 
 def counts(rows):
-    return {action:sum(t.get('selection_action') == action and t.get('state') not in ('dead','not-selected') for t in rows)
-            for action in ('executed','carried')}
+    result = dict(executed=0, carried=0)
+    for row in rows:
+        action = row.get('selection_action')
+        if action in result and row.get('state') not in ('dead','not-selected'):
+            result[action] += 1
+    return result
 
 
 class Selector:

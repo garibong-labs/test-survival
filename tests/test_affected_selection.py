@@ -91,6 +91,21 @@ def test_carried_lines_and_direct_origin_do_not_advance():
     assert counts([first,fresh,{'state':'dead'}]) == {'executed':1,'carried':1}
 
 
+def test_selection_progress_counts_both_actions_from_a_single_pass_iterator():
+    # Policy progress flattens per-policy ledgers with a generator.
+    ledgers = {
+        'reset': [{'state':'pass', 'selection_action':'executed'},
+                  {'state':'pass', 'selection_action':'carried'}],
+        'fill': [{'state':'compile-fail', 'selection_action':'executed'},
+                 {'state':'pass', 'selection_action':'carried'},
+                 {'state':'dead', 'selection_action':'carried'},
+                 {'state':'not-selected', 'selection_action':'executed'}],
+    }
+    result = counts(row for rows in ledgers.values() for row in rows)
+    assert result == {'executed':2, 'carried':2}
+    assert sum(result.values()) == 4
+
+
 @pytest.mark.parametrize('fragment', [
     '<parent><version>2</version></parent>',
     '<properties><maven.compiler.release>21</maven.compiler.release></properties>',

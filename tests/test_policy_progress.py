@@ -8,9 +8,11 @@ from test_survival.policy.progress import LiveProgress, description
 
 
 def test_affected_progress_counts_carried_methods_and_ignores_other_inputs(tmp_path):
+    from test_survival.selection import counts
     state = dict(status='running', config_hash='current')
+    rows = ({'state':'pass', 'selection_action':'executed' if i < 3 else 'carried'} for i in range(10))
     write_json(tmp_path/'results/policy/selection-progress.json',
-               dict(config_hash='current', index=4, executed=3, carried=7))
+               dict(config_hash='current', index=4, **counts(rows)))
     assert '10 methods completed (3 executed, 7 carried)' in description(tmp_path,'survive',state).prefix
     assert 'methods completed' not in description(tmp_path,'survive',{**state,'config_hash':'changed'}).prefix
 
