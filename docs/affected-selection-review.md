@@ -260,6 +260,13 @@ filesystem reads. Runtime class
 hits still inspect all instrumented production probes independently of this
 line-analysis cache.
 
+Progress verification also caches parsed carried-row origin maps, bounded to 32
+batches per reader. Each lookup checks the resolved path, inode, modification
+time, and size; replacing or removing evidence invalidates the cached map. This
+retains the existing state/line/dependency checks while avoiding a full JSON
+decompression for every carried method. The memory bound applies to existing
+scope-line/dependency records, not additional production coverage.
+
 ## 3. Per-commit classpath and compiler context
 
 The existing evidence is useful but does **not** yet satisfy the requested

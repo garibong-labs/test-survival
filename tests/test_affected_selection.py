@@ -17,6 +17,33 @@ def observation():
                 files=['src/main/java/p/A.java'],context=dict(known=True,entries=[['g','a','1','','jar']])))
 
 
+def test_carried_origin_is_read_once_and_revalidated_after_replacement(tmp_path, monkeypatch):
+    from test_survival.stages import batch
+    m = batch.Measurements.__new__(batch.Measurements)
+    from collections import OrderedDict
+    m.exp, m.digest, m.origins = tmp_path, 'input', OrderedDict()
+    actual = dict(observation(), execution_hash='snapshot', **{'class':'Example'}, method='test')
+    path = tmp_path/'results/baseline-batches/0.json'
+    write_json(path, dict(input_sha256='input', methods=[actual]), compress=True)
+    reads = []
+    original = batch.read_json
+    def read(*args, **kwargs):
+        reads.append(args[0])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(batch, 'read_json', read)
+    for _ in range(50): assert m.valid_origin(carry(actual))
+    assert len(reads) == 1
+    changed = {**actual, 'lines':[['src/main/java/p/A.java',5]]}
+    write_json(path, dict(input_sha256='input', methods=[changed]), compress=True)
+    assert not m.valid_origin(carry(actual))
+    assert len(reads) == 2
+    assert m.valid_origin(carry(changed))
+    assert len(reads) == 2
+    from test_survival.io import resolve_path
+    resolve_path(path).unlink()
+    assert not m.valid_origin(carry(changed))
+
+
 @pytest.mark.parametrize('change,paths,compiler,expected', [
     ({},[],False,None),
     ({},['src/main/java/p/A.java'],False,'dependency changed'),

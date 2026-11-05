@@ -3,7 +3,7 @@
 Only measuring sites launch workers. Coverage/reporting consume durable scope
 line evidence, including the exact chronological alive-entry population.
 """
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 import hashlib
 from pathlib import Path
 
@@ -54,6 +54,7 @@ class Measurements:
         self.adapter = JavaMavenAdapter(exp, config)
         self.selector = Selector(self.adapter) if affected(config) else None
         self.history = {}
+        self.origins = OrderedDict()
         self.provenance, self.imported = imported_for(exp, config, phase)
         self.frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json'))
         self.tests = catalog(exp, config, self.frozen)
@@ -72,10 +73,23 @@ class Measurements:
 
     def valid_origin(self, row, *, historical=False):
         if row.get('selection_action') != 'carried': return True
-        origin = read_json(self.exp/f'results/baseline-batches/{row.get("carried_from_index")}.json', {})
-        sources = {identity(t):t for t in origin.get('methods', [])}
+        index = row.get('carried_from_index')
+        path = resolve_path(self.exp/f'results/baseline-batches/{index}.json')
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return False
+        signature = (str(path), stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        cached = self.origins.get(index)
+        if cached is None or cached[0] != signature:
+            origin = read_json(path, {})
+            cached = (signature, origin.get('input_sha256'), {identity(t):t for t in origin.get('methods', [])})
+            self.origins[index] = cached
+            if len(self.origins) > 32: self.origins.popitem(last=False)
+        self.origins.move_to_end(index)
+        _, digest, sources = cached
         source = sources.get(identity(row), {})
-        return ((historical or origin.get('input_sha256') == self.digest)
+        return ((historical or digest == self.digest)
                 and source.get('selection_action') == 'executed'
                 and all(source.get(n) == row.get(n) for n in
                         ('state','lines','dependency_record','last_executed_sha','last_executed_index')))
