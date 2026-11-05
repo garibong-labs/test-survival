@@ -27,6 +27,20 @@ def changed_lines(diff, module='.'):
     return {k:sorted(v) for k,v in pre.items()},{k:sorted(v) for k,v in post.items()}
 
 
+def validate_index(exp, index, groups):
+    """Check the durable line universe before releasing a completed index."""
+    universes = []
+    for group in groups:
+        rows = read_csv(exp/f'results/coverage/{index}-{group}-lines.csv')
+        universe = {(r['file'], int(r['line'])) for r in rows}
+        if len(universe) != len(rows):
+            raise RuntimeError('Duplicate coverage lines')
+        universes.append(universe)
+    if universes and any(u != universes[0] for u in universes):
+        write_json(exp/'results/coverage-universe-mismatches.json', [index])
+        raise RuntimeError('Executable line universes differ across groups')
+
+
 def aggregate(exp,config):
     groups=group_names(config)
     commits=read_csv(exp/'results/commits.csv')
@@ -125,6 +139,7 @@ def run(exp,config):
             i, _ = item
             remaining[i] -= 1
             if remaining[i] == 0:
+                validate_index(exp, i, frozen)
                 release_checkout(exp, config, i)
         dispatch(pending, config['runner']['workers']['cover'], lambda item, active: (None, None),
                  lambda item, context: job(*item), completed)

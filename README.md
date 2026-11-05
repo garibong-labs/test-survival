@@ -552,6 +552,6 @@ compiler output stays complete, and legacy event folders remain readable. See
 
 Large coverage XML/lines, raw measurement JSON and per-method developer coverage
 are written as `.gz`, including inside policy pools. Logical record paths keep
- their original names; built-in status, reports, imports and policy readers accept
+their original names; built-in status, reports, imports and policy readers accept
 both plain and compressed results. Use `gzip -dc FILE.gz` for external tools.
 Summary CSV/JSON, state, report/Sheets inputs and `generated/` retain their formats.

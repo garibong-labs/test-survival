@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .config import range_fingerprint, execution_groups, derived_source
 from .display import UTC_DISPLAY
-from .io import result_exists, read_csv, read_json
+from .io import result_exists, resolve_path, read_csv, read_json
 from .adapters.run_reuse import survival_provenance_matches
 
 
@@ -187,7 +187,7 @@ def description(exp, stage, config, *, at=None):
     try:
         completed, total, unit = items(exp, stage, config, state)
         # Cached evidence contributes to done/total, but not this attempt's rate.
-        fresh = sum(bool(paths) and max(p.stat().st_mtime for p in paths) >= start.timestamp()
+        fresh = sum(bool(paths) and max(resolve_path(p).stat().st_mtime for p in paths) >= start.timestamp()
                     for paths in completed) if start else 0
     except (OSError, ValueError, KeyError, TypeError):
         # A live worker may be replacing a record. Reporting must not fail work.
@@ -348,7 +348,7 @@ def snapshot(exp, stage, config, *, at=None):
     elapsed = max(0, ((finish or at)-start).total_seconds()) if start else 0
     try:
         completed, total, unit, extra = panel_items(exp, stage, config, state)
-        fresh = sum(bool(paths) and max(p.stat().st_mtime for p in paths) >= start.timestamp()
+        fresh = sum(bool(paths) and max(resolve_path(p).stat().st_mtime for p in paths) >= start.timestamp()
                     for paths in completed) if start else 0
     except (OSError, ValueError, KeyError, TypeError):
         completed, total, unit, extra, fresh = [], None, UNITS[stage], {}, 0

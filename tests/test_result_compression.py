@@ -89,3 +89,35 @@ def test_import_report_progress_and_coverage_accept_both_layouts(experiments, co
     if compressed:
         assert (target/'results/coverage/0-dev-all.xml.gz').is_file()
         assert not (target/'results/coverage/0-dev-all.xml').exists()
+
+
+def test_progress_stats_compressed_paths(experiments):
+    from test_survival.config import load
+    from test_survival.progress import description, snapshot
+    from datetime import datetime, timezone
+    source,_,_=experiments
+    for path in list(source.rglob('*')):
+        if path.is_file() and io.compressed_result(path) and path.suffix != '.gz':io.compress_file(path)
+    # Imported provenance makes these archived records current for this fixture.
+    from test_survival.dev_results import import_results
+    # Test the physical-stat boundary independently of fingerprint calculations.
+    from unittest.mock import patch
+    path=source/'results/raw/1-dev-all.json'
+    io.write_json(source/'state/survive.json',dict(status='running',started='2026-01-01T00:00:00+00:00'))
+    with patch('test_survival.progress.items',return_value=([[path]],1,'commits')):
+        assert '1/1 commits' in description(source,'survive',load(source)).render()
+    with patch('test_survival.progress.panel_items',return_value=([[path]],1,'commits',{})):
+        assert snapshot(source,'survive',load(source))['done']==1
+
+
+def test_coverage_coordinator_rejects_bad_universe_before_release(tmp_path):
+    from test_survival.stages.cover import validate_index
+    fields=['file','line','covered']
+    row=dict(file='A.java',line=1,covered='yes')
+    for group in ('dev','dev-scope'):
+        io.write_csv(tmp_path/f'results/coverage/2-{group}-lines.csv',[row],fields,compress=True)
+    validate_index(tmp_path,2,['dev','dev-scope'])
+    io.write_csv(tmp_path/'results/coverage/2-dev-lines.csv',[row,row],fields,compress=True)
+    with pytest.raises(RuntimeError,match='Duplicate'):validate_index(tmp_path,2,['dev','dev-scope'])
+    io.write_csv(tmp_path/'results/coverage/2-dev-lines.csv',[dict(row,line=2)],fields,compress=True)
+    with pytest.raises(RuntimeError,match='universes differ'):validate_index(tmp_path,2,['dev','dev-scope'])
