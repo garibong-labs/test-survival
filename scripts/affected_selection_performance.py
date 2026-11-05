@@ -170,6 +170,12 @@ def policy_timing(root):
     from test_survival.io import read_json,read_csv,write_csv,resolve_path,logical_glob
     for mode in ('all','affected'):
         exp=root/f'repo/experiments/{mode}-policies';batches=defaultdict(list)
+        stage_started=datetime.fromisoformat(read_json(exp/'state/policy-survive.json')['started']).timestamp()
+        def production_seconds(index):
+            # Pool preparation can already have built the same index. Its
+            # durable build record is not another execution in this stage.
+            return sum(a['seconds'] for a in read_json(exp/f'results/builds/{index}.json',{}).get('attempts',[])
+                       if resolve_path(exp/a['log']).stat().st_mtime >= stage_started)
         for path in logical_glob(exp/'results/policy/batches','*.json'):
             batch=read_json(path);batches[int(batch['index'])].append(batch)
         spans=defaultdict(float)
@@ -181,14 +187,14 @@ def policy_timing(root):
             for line in (root/f'{mode}-policies-run.log').read_text().splitlines():
                 match=re.search(r'policy-run-[^:]+-(\d+): (?:completed|already completed; skipped)',line)
                 if match:ended[int(match[1])]=datetime.fromisoformat(line.split()[0]).timestamp()
-            previous=datetime.fromisoformat(read_json(exp/'state/policy-survive.json')['started']).timestamp()
+            previous=stage_started
             for index,end in sorted(ended.items()):spans[index]=end-previous;previous=end
         else:
             ended={}
             for folder in (exp/'results/policy').glob('*/decisions/*/*'):
                 for path in logical_glob(folder,'*.json'):
                     index=int(read_json(path)['index']);ended[index]=max(ended.get(index,0),resolve_path(path).stat().st_mtime)
-            previous=datetime.fromisoformat(read_json(exp/'state/policy-survive.json')['started']).timestamp()
+            previous=stage_started
             for index,end in sorted(ended.items()):spans[index]=end-previous;previous=end
         rows=[];first=min(batches,default=None)
         for commit in read_csv(root/f'repo/experiments/{mode}/results/survival.csv'):
@@ -196,8 +202,8 @@ def policy_timing(root):
             if not index or commit['evaluated']!='yes':continue
             attempts={a['log']:a['seconds'] for b in batches[index] for c in b.get('compile',[]) for a in c.get('attempts',[c])}
             compilation=sum(attempts.values());jvm=sum(r['seconds'] for b in batches[index] for r in b.get('runs',[]))
-            production=sum(a['seconds'] for a in read_json(exp/f'results/builds/{index}.json',{}).get('attempts',[]))
-            if index==first:production+=sum(a['seconds'] for a in read_json(exp/'results/builds/0.json',{}).get('attempts',[]))
+            production=production_seconds(index)
+            if index==first:production+=production_seconds(0)
             wall=spans[index]
             rows.append(dict(index=index,sha=commit['sha'],production_build_seconds=production,
                 test_compile_seconds=compilation,test_jvm_seconds=jvm,other_seconds=wall-production-compilation-jvm,

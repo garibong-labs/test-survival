@@ -43,9 +43,13 @@ def test_policy_timing_keeps_both_measurements_at_regeneration(tmp_path):
     for mode in ('all','affected'):
         exp=tmp_path/f'repo/experiments/{mode}-policies'
         write_json(exp/'state/policy-survive.json',dict(started=start))
-        write_json(exp/'results/builds/0.json',dict(attempts=[dict(seconds=2)]))
+        epoch=performance.datetime.fromisoformat(start).timestamp()
+        for index,seconds,offset in ((0,2,1),(1,1,3),(2,1,-60)):
+            log=exp/f'results/builds/logs/{index}.txt';log.parent.mkdir(parents=True,exist_ok=True)
+            log.write_text('build evidence')
+            os.utime(log,(epoch+offset,epoch+offset))
+            write_json(exp/f'results/builds/{index}.json',dict(attempts=[dict(seconds=seconds,log=str(log.relative_to(exp)))]))
         for index,end in ((1,14),(2,20)):
-            write_json(exp/f'results/builds/{index}.json',dict(attempts=[dict(seconds=1)]))
             write_json(exp/f'results/policy/batches/{index}.json',dict(index=index,methods=[{}],
                 compile=[dict(attempts=[dict(log='shared',seconds=2)])]*2,runs=[dict(seconds=1)]))
             decision=exp/f'results/policy/reset/decisions/dev/2/{index}.json'
@@ -62,5 +66,5 @@ def test_policy_timing_keeps_both_measurements_at_regeneration(tmp_path):
     for mode in ('all','affected'):
         rows=read_csv(tmp_path/f'{mode}-policies-per-index-performance.csv')
         assert [float(r['total_seconds']) for r in rows]==[14,6]
-        assert [float(r['production_build_seconds']) for r in rows]==[3,1]
-        assert [float(r['other_seconds']) for r in rows]==[8,2]
+        assert [float(r['production_build_seconds']) for r in rows]==[3,0]
+        assert [float(r['other_seconds']) for r in rows]==[8,3]
