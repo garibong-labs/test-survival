@@ -431,6 +431,13 @@ GENERATOR_SCRATCH_DIRS = ('temp',)
 
 
 def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources"):
+    """Calculate exclusions and publish their summary at a measuring site."""
+    excluded, summary = screening_exclusion_details(exp, pools, frozen, baseline, methods, baseline_prefix)
+    write_json(exp/'results/policy/excluded-sources.json', summary)
+    return excluded
+
+
+def screening_exclusion_details(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources"):
     """Exclude rejected test candidates and generator scratch files from policy jobs.
 
     `pools` maps (group, index) to the pool's tests; `frozen` maps a group to its
@@ -445,8 +452,8 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None, b
     Scratch subtrees are excluded because a snapshot copies every sibling of a
     kept test: without this the whole-root compile fails at every index and an
     unparsable attempt can abort the per-file fallback. Pool artifacts on disk
-    and their stored hashes are not modified; a per-tree summary goes to
-    results/policy/excluded-sources.json.
+    and their stored hashes are not modified. Return exclusions and their
+    per-tree summary without writing either; the measuring caller publishes it.
     """
     if (pools or frozen) and methods is None:
         raise ValueError('screening_exclusions: methods (group -> generation method) is required')
@@ -484,5 +491,4 @@ def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None, b
     for group, tests in (frozen or {}).items():
         if tests and baseline is not None and methods.get(group) != 'dev':
             collect(f'{group}/t', group, Path(baseline), exp/baseline_prefix, tests)
-    write_json(exp/'results/policy/excluded-sources.json', summary)
-    return excluded
+    return excluded, summary

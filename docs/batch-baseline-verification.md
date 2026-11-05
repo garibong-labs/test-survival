@@ -272,3 +272,16 @@ Java fixtures (169.34 seconds). A fresh standalone Java fixture at
 execution and actual stop/status/resume, with byte-identical resumed survival,
 first-failure and changed-line outputs. These checks used disposable fixtures;
 the original timed comparison and finished experiments were not rerun or edited.
+
+The third review reproduced two inspection defects: status crashed before
+screening produced frozen denominators, and completeness audits rewrote the
+exclusion summary. Audits now wait for their prerequisites, and exclusion
+calculation is separate from publication by measuring stages. Twelve regression
+cases cover fresh/prepared/scoped status, missing audit inputs, and completed
+audits with or without an existing summary and with writes denied. The read-only
+checks compare inode, modification/change timestamps and contents, detecting
+rewrites even when the bytes would remain identical.
+
+The full suite passed: **822 tests, zero skips**, including all 14 required Java
+fixtures (149.84 seconds). The checks use disposable fixtures; no finished
+experiments or original comparison measurements were rerun or modified.

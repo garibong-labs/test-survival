@@ -12,7 +12,7 @@ from ..adapters.policy_coverage import COVERAGE_VERSION
 from ..config import canonical_hash, derived_source, execution_groups, group_names
 from ..io import read_csv, read_json, write_csv, write_json, resolve_path
 from ..policy.artifacts import tree_hash
-from ..policy.execute import screening_exclusions, settle
+from ..policy.execute import screening_exclusion_details, settle
 from ..rules.survival import FAILURES, dead_method
 from ..runner import measurement_session
 from ..runner.dispatch import dispatch
@@ -59,7 +59,7 @@ class Measurements:
         self.tests = catalog(exp, config, self.frozen)
         self.scope = read_json(exp/'population/scope.json')['classes']
         methods = {g['name']: g['method'] for g in config['generators']}
-        self.excluded = screening_exclusions(exp, {}, self.tests, exp,
+        self.excluded, self.exclusion_summary = screening_exclusion_details(exp, {}, self.tests, exp,
                                             {g: methods.get(g, 'dev') for g in self.tests}, baseline_prefix='')
         self.runner = self.adapter.provenance()
         self.digest = canonical_hash(dict(version=1, implementation=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), coverage=COVERAGE_VERSION, tests=self.tests,
@@ -174,6 +174,7 @@ class Measurements:
 def control(exp, config):
     from ..io import atomic_text
     m = Measurements(exp, config, 'control')
+    write_json(exp/'results/policy/excluded-sources.json', m.exclusion_summary)
     sha = read_json(exp/'results/anchor.json')['sha']
     with measurement_session(m.adapter, 'control', bool(m.unique or not m.imported)):
         raw = m.cached(0, sha, {}) or m.measure(0, sha, {})
@@ -194,6 +195,7 @@ def survive(exp, config):
     from .survive import aggregate, raw_folder, skipped_commits
     from ..pipeline import log
     m = Measurements(exp, config, 'survive')
+    write_json(exp/'results/policy/excluded-sources.json', m.exclusion_summary)
     commits = read_csv(exp/'results/commits.csv'); skipped = skipped_commits(exp,config,commits)
     write_csv(exp/'results/skipped-commits.csv', [dict(index=r['index'],sha=r['sha'],reason=skipped[int(r['index'])]) for r in commits if int(r['index']) in skipped], ['index','sha','reason'])
     for r in commits:
@@ -269,10 +271,27 @@ def project_coverage(exp, config, index, entering):
 def completed_items(exp, config, stage):
     """Read-only completeness audit shared by resume, log and panel progress."""
     from .survive import skipped_commits, raw_folder
+    # Status visits every stage, including those whose inputs have not been
+    # produced yet. Missing inputs are pending, not an empty completed batch.
+    frozen = read_json(exp/'results/frozen-denominators.json')
+    scope = read_json(exp/'population/scope.json')
+    anchor = read_json(exp/'results/anchor.json')
+    if (not isinstance(frozen, dict) or not isinstance(scope, dict)
+            or not isinstance(scope.get('classes'), list)
+            or not isinstance(anchor, dict) or not anchor.get('sha')):
+        return [], None
+    commits = []
+    if stage == 'survive':
+        path = exp/'results/commits.csv'
+        changes = read_json(exp/'results/commit-paths.json')
+        if not path.exists() or not isinstance(changes, dict):
+            return [], None
+        commits = read_csv(path)
+        if any(r['index'] not in changes for r in commits):
+            return [], None
     m = Measurements(exp, config, stage)
-    commits = read_csv(exp/'results/commits.csv') if stage == 'survive' else []
     skipped = skipped_commits(exp,config,commits) if commits else {}
-    rows = commits if stage == 'survive' else [dict(index=0,sha=read_json(exp/'results/anchor.json')['sha'])]
+    rows = commits if stage == 'survive' else [dict(index=0,sha=anchor['sha'])]
     known = {}; completed = []
     for r in rows:
         i=int(r['index'])
@@ -312,4 +331,4 @@ def stage_complete(exp, config, stage):
     if stage not in ('control', 'survive'):
         return True
     completed, total = completed_items(exp, config, stage)
-    return len(completed) == total
+    return total is not None and len(completed) == total

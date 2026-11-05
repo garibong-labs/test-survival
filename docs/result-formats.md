@@ -121,6 +121,11 @@ and report formats, with these explicit differences:
 - Coverage aggregation and reports never execute Java tests. Index zero's hits
   come from batch control; other indices' hits come from survival. Ordered
   projection removes speculative executions outside the exact alive-entry set.
+- Batch control and survival publish `results/policy/excluded-sources.json`,
+  the per-tree counts of kept, rejected and scratch sources. Status, progress
+  and completed-stage audits calculate exclusions without publishing evidence,
+  even when the summary is absent. Audits wait for the resolved scope, anchor,
+  frozen denominators and (for survival) commit sequence/path records.
 - The final summary includes `execution: batch`, `coverage_scope: scope` and
   `ignored_settings`. Scope-only measurement does not itself mark a run partial;
   genuinely missing scope measurements do. `phase_seconds.cover` is aggregation

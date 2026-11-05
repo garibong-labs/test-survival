@@ -310,3 +310,82 @@ def test_batch_control_progress_requires_reusable_measurement(tmp_path, monkeypa
     assert batch.stage_complete(tmp_path, config, 'control')
     completed, total, _, _ = panel_items(tmp_path, 'control', config, {})
     assert len(completed) == total == 4
+
+
+@pytest.mark.parametrize('checkpoint', ['fresh', 'prepared', 'scoped'])
+def test_batch_status_before_screening(tmp_path, monkeypatch, capsys, checkpoint):
+    import yaml
+    from test_survival.cli import main
+    from test_survival.pipeline import status
+    from test_survival.progress import snapshot
+    if checkpoint == 'fresh':
+        config = validate(dict(name='pending', anchor='t', project={'repo':str(tmp_path)},
+                               survival={'execution':'batch'}))
+    else:
+        config = fixture(tmp_path)
+        (tmp_path/'results/frozen-denominators.json').unlink()
+        if checkpoint == 'prepared':
+            (tmp_path/'population/scope.json').unlink()
+    (tmp_path/'experiment.yaml').write_text(yaml.safe_dump(config))
+    monkeypatch.setattr(JavaMavenAdapter, 'worker', lambda *_: pytest.fail('status launched a worker'))
+    text = status(tmp_path, config)
+    assert all(f'{stage:10} pending' in text for stage in STAGES)
+    for stage in STAGES:
+        assert snapshot(tmp_path, stage, config)['status'] == 'pending'
+    assert snapshot(tmp_path, 'control', config)['total'] is None
+    assert not batch.stage_complete(tmp_path, config, 'control')
+    assert not batch.stage_complete(tmp_path, config, 'survive')
+    assert main(['status', str(tmp_path), '--no-panel']) == 0
+    assert 'survive    pending' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('missing', ['results/frozen-denominators.json', 'population/scope.json',
+                                   'results/anchor.json', 'results/commits.csv', 'results/commit-paths.json'])
+def test_batch_audit_waits_for_prerequisites(tmp_path, monkeypatch, missing):
+    config = fixture(tmp_path)
+    (tmp_path/missing).unlink()
+    monkeypatch.setattr(batch, 'Measurements', lambda *_: pytest.fail('audit constructed measurements without its inputs'))
+    assert batch.completed_items(tmp_path, config, 'survive') == ([], None)
+    assert not batch.stage_complete(tmp_path, config, 'survive')
+
+
+@pytest.mark.parametrize('summary_present', [False, True])
+@pytest.mark.parametrize('deny_writes', [False, True])
+def test_batch_audits_are_read_only(tmp_path, monkeypatch, summary_present, deny_writes):
+    import os
+    from test_survival.pipeline import status
+    from test_survival.progress import snapshot, describe
+    config = fixture(tmp_path)
+    candidate = 'generated/o/round1/sources/A/ZSL/Rejected.java'
+    (tmp_path/candidate).write_text('class Rejected {}')
+    write_json(tmp_path/'generated/o/round1/validation/0.json', {'file':candidate, 'methods':[]})
+    jobs = []; setup_worker(monkeypatch, jobs)
+    control.run(tmp_path, config); survive.run(tmp_path, config)
+    summary = tmp_path/'results/policy/excluded-sources.json'
+    assert read_json(summary) == {'o/t':{'kept':1, 'rejected':1, 'scratch':0}}
+    assert all(j['excluded_files'] == [candidate] for j in jobs)
+    if not summary_present:
+        summary.unlink()
+    def tree():
+        return {p:(p.stat().st_ino, p.stat().st_mtime_ns, p.stat().st_ctime_ns,
+                   p.read_bytes() if p.is_file() else None) for p in tmp_path.rglob('*')}
+    before = tree()
+    attempts = []
+    original = os.open
+    def read_only(path, flags, *args, **kwargs):
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            attempts.append(path)
+            raise PermissionError('read-only experiment')
+        return original(path, flags, *args, **kwargs)
+    if deny_writes:
+        monkeypatch.setattr(os, 'open', read_only)
+    monkeypatch.setattr(batch, 'measurement_session', lambda *_: pytest.fail('audit opened a measurement session'))
+    for stage, total in [('control',1), ('survive',6)]:
+        assert batch.stage_complete(tmp_path, config, stage)
+        assert len(items(tmp_path, stage, config, {})[0]) == total
+    assert snapshot(tmp_path, 'control', config)['done'] == 4
+    assert snapshot(tmp_path, 'survive', config)['done'] == 6
+    assert '6/6 commits' in describe(tmp_path, 'survive', config)
+    assert '6/6 commits' in status(tmp_path, config)
+    assert not attempts
+    assert tree() == before  # Include inode/timestamps: rewriting identical bytes is a mutation.

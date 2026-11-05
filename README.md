@@ -283,6 +283,10 @@ two minutes with methods done/total, responses so far, and the class under repai
 The panel abbreviates repair class names to fit alongside the metrics or stage
 marks. For older workers without per-method repair records, the active class is
 unknown: their log contains repair starts but cannot establish when a class finished.
+
+Batch progress waits for its measurement inputs before auditing completion.
+Status and progress inspection are read-only, including exclusion-summary
+calculation; only measuring stages publish that summary.
 Watching an already-running experiment only reads its evidence; the periodic
 log lines require the run itself to have started with this version.
 
