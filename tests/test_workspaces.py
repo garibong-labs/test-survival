@@ -96,3 +96,48 @@ def test_parent_symlink_never_deletes_other_experiment(tmp_path):
     with pytest.raises(OSError):remove_owned(exp,'work/value')
     assert (outside/'value').read_text()=='keep'
     with pytest.raises(ValueError):remove_owned(exp,'work/../outside')
+
+
+@pytest.mark.parametrize('fail_slow',[False,True])
+def test_survival_waits_for_every_index_consumer_before_release(tmp_path,monkeypatch,fail_slow):
+    from contextlib import nullcontext
+    from test_survival.stages import survive
+    from test_survival.io import write_csv
+    groups=['fast','slow']
+    config=validate(dict(name='consumers',anchor='t',project={'repo':str(tmp_path)},
+                         dev={'groups':[dict(name=g,denominator='project') for g in groups]},
+                         runner={'workers':{'survive':2}}))
+    method=dict(id='T#test',file='T.java',execution_hash='source',**{'class':'T'},method='test',kind='plain')
+    write_json(tmp_path/'results/frozen-denominators.json',{g:[method] for g in groups})
+    write_json(tmp_path/'results/anchor.json',dict(sha='anchor',date='date'))
+    row=dict(index=1,sha='sha',date='date',subject='change',**{'changes-src-main':'yes','changes-pom':'no'})
+    write_csv(tmp_path/'results/commits.csv',[row],list(row))
+    write_json(tmp_path/'results/commit-paths.json',{'1':['src/main/java/T.java']})
+    write_json(tmp_path/'results/builds/1.json',dict(sha='sha',build='ok'))
+    write_json(tmp_path/'results/workspace-identities/1.json',dict(sha='sha',dependencies=[]))
+    checkout=tmp_path/'work/checkouts/1';checkout.mkdir(parents=True)
+    (checkout/'source.java').write_text('evidence')
+    write_json(tmp_path/'work/checkouts/1.json',dict(sha='sha'))
+    barrier=threading.Barrier(2);fast_validated=threading.Event()
+    monkeypatch.setattr(survive,'measurement_session',lambda *args:nullcontext())
+    def log(exp,message,*args):
+        if message=='survive: 1 fast recorded':fast_validated.set()
+    monkeypatch.setattr(survive,'log',log)
+    def worker(self,job):
+        barrier.wait(timeout=5)
+        if job['group']=='slow':
+            assert fast_validated.wait(timeout=5)
+            assert (checkout/'source.java').read_text()=='evidence'
+            if fail_slow:raise RuntimeError('interrupted consumer')
+        result=dict(index=1,sha='sha',group=job['group'],status='evaluated',files=[],
+                    methods=[dict(method,state='pass',flaky=False)])
+        write_json(tmp_path/job['output'],result)
+        return result
+    monkeypatch.setattr(JavaMavenAdapter,'worker',worker)
+    if fail_slow:
+        with pytest.raises(RuntimeError,match='interrupted consumer'):survive.run(tmp_path,config)
+        assert (checkout/'source.java').read_text()=='evidence'
+    else:
+        survive.run(tmp_path,config)
+        assert not checkout.exists()
+        assert not (tmp_path/'work/checkouts/1.json').exists()

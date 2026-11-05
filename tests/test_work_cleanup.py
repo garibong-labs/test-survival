@@ -64,6 +64,7 @@ def test_histories_cache_generated_and_completion_preserved(tmp_path):
 
 def test_resumed_worker_preserves_interrupted_attempt(tmp_path):
     config=fixture(tmp_path)
+    joblog=tmp_path/'work/phase-A/2/dev-job.log';joblog.write_text('interrupted worker')
     retain_previous_work(tmp_path,'work/phase-A/2/dev')
     assert (tmp_path/'work/phase-A/2/dev').exists()
     # The worker clears the original tree; the snapshot has independent inodes.
@@ -73,6 +74,9 @@ def test_resumed_worker_preserves_interrupted_attempt(tmp_path):
     assert len(attempts)==1 and attempts[0].read_bytes()==b'class'
     finish_work(tmp_path,config)
     assert attempts[0].exists()
+    preserved=list((tmp_path/'work/failed-attempts/phase-A/2/dev').glob('*-job.log'))
+    joblog.write_text('resumed worker')
+    assert len(preserved)==1 and preserved[0].read_text()=='interrupted worker'
 
 
 def test_background_forwarding(tmp_path,monkeypatch):
@@ -84,3 +88,12 @@ def test_background_forwarding(tmp_path,monkeypatch):
     from test_survival.cli import parser
     assert parser().parse_args(['run',str(tmp_path),'--keep-work']).keep_work
     assert parser().parse_args(['policy','run',str(tmp_path),'--keep-work']).keep_work
+
+
+def test_retry_preserves_job_failure_even_without_a_work_directory(tmp_path):
+    log=tmp_path/'work/phase-A/2/dev-job.log';log.parent.mkdir(parents=True)
+    log.write_text('worker failed before creating scratch')
+    retain_previous_work(tmp_path,'work/phase-A/2/dev')
+    log.write_text('retry log')
+    saved=list((tmp_path/'work/failed-attempts/phase-A/2/dev').glob('*-job.log'))
+    assert len(saved)==1 and saved[0].read_text()=='worker failed before creating scratch'

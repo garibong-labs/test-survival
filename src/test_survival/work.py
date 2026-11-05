@@ -188,9 +188,9 @@ def retain_previous_work(exp, relative):
     if relative.parts[:1] != ('work',) or relative.is_absolute() or '..' in relative.parts:
         raise ValueError('Unsafe worker work path')
     root = exp/relative
-    if not root.exists():return
-    counts = footprint(root)
-    if not counts['files']:return
+    counts = footprint(root) if root.exists() else dict(files=0, bytes=0)
+    siblings = [root.with_name(root.name+suffix) for suffix in ('-job.json', '-job.log')]
+    if not counts['files'] and not any(p.is_file() for p in siblings):return
     target = exp/'work/failed-attempts'/str(relative.relative_to('work'))/uuid4().hex
     target.parent.mkdir(parents=True, exist_ok=True)
     # Parent chain is validated before moving; run ownership excludes other writers.
@@ -200,7 +200,13 @@ def retain_previous_work(exp, relative):
     # would let the next worker's rmtree reach the moved evidence (or fail on
     # its stale name). Copy to independent inodes; the worker owns clearing
     # the unchanged original directory after this durable snapshot is complete.
-    shutil.copytree(root, target)
+    if root.exists():shutil.copytree(root, target)
+    else:target.mkdir()
+    for suffix in ('-job.json', '-job.log'):
+        sibling = root.with_name(root.name+suffix)
+        if sibling.is_file():
+            if sibling.is_symlink():raise RuntimeError('Refusing symlink job evidence')
+            shutil.copy2(sibling, target.with_name(target.name+suffix))
     write_json(target.with_suffix('.json'),dict(original=str(relative),reason='retained before retry',**counts))
 
 

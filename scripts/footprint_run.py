@@ -5,6 +5,7 @@ Usage: footprint_run.py TOOL_CHECKOUT LABEL [--interrupt]
 Requires footprint_fixture.py setup and footprint-e2e-seed Maven volume.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -83,12 +84,33 @@ def run(tool,label,interrupt=False):
                         child.wait(timeout=30)
                         (saved/'interruption.json').write_text(json.dumps(dict(sample=sample(),work=[str(p.relative_to(experiments)) for p in active],run=json.loads((experiments/'policy/state/run.json').read_text())),indent=2))
                         shutil.copytree(experiments/'policy/state',saved/'interrupted-state')
+                        evidence={}
+                        for manifest in active:
+                            root=manifest.parent
+                            relative=str(root.relative_to(experiments/'policy/work'))
+                            evidence[relative]={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                                                for p in root.rglob('*') if p.is_file()}
+                            shutil.copytree(root,saved/'interrupted-work'/relative)
+                        durable={str(p.relative_to(experiments/'policy')):hashlib.sha256(p.read_bytes()).hexdigest()
+                                 for folder in ('results/builds','results/policy/pools')
+                                 for p in (experiments/'policy'/folder).rglob('*')
+                                 if p.is_file() and '/work/' not in str(p) and '/state/' not in str(p)}
+                        (saved/'interrupted-hashes.json').write_text(json.dumps(dict(work=evidence,durable=durable),indent=2))
                         stopped=True
                         child=subprocess.Popen(cli+args,env=env,stdout=log,stderr=subprocess.STDOUT)
                 time.sleep(.15)
         timings.append(dict(command=args,seconds=round(time.monotonic()-command_start,3),exit_code=child.returncode))
         if child.returncode:raise RuntimeError(f'Command {number} failed: {saved}/command-{number}.log')
     if interrupt and not stopped:raise RuntimeError('Failed to observe interruption window')
+    if interrupt:
+        hashes=json.loads((saved/'interrupted-hashes.json').read_text())
+        for relative,files in hashes['work'].items():
+            candidates=list((experiments/'policy/work/failed-attempts'/relative).glob('*'))
+            assert any(p.is_dir() and all((p/name).is_file() and hashlib.sha256((p/name).read_bytes()).hexdigest()==sha
+                                         for name,sha in files.items()) for p in candidates), ('Interrupted work changed',relative)
+        for name,sha in hashes['durable'].items():
+            assert hashlib.sha256((experiments/'policy'/name).read_bytes()).hexdigest()==sha, ('Durable evidence changed',name)
+        (saved/'resume-evidence-verified.json').write_text(json.dumps(dict(work_files=sum(map(len,hashes['work'].values())),durable_files=len(hashes['durable']))))
     (saved/'timings.json').write_text(json.dumps(dict(total_seconds=time.monotonic()-start,commands=timings),indent=2))
     (saved/'samples.json').write_text(json.dumps(samples))
     shutil.copytree(experiments,saved/'experiments')
