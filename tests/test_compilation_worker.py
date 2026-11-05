@@ -1,3 +1,4 @@
+from test_survival.io import read_bytes
 from test_survival.adapters.compile_events import read_events
 """Exercise worker orchestration with a counted compiler and deterministic JVM reports."""
 import json
@@ -82,7 +83,7 @@ def test_empty_coverage_group_skips_compile_but_preserves_line_universe(group_wo
     assert 'whole_frozen_suite_compile' not in result
     assert result['files'] == result['methods'] == result['requested_ids'] == []
     assert result['status'] == 'evaluated' and result['coverage_report']['exit_code'] == 0
-    assert (root/'results/coverage/0-dev-lines.csv').read_text() == (
+    assert read_bytes(root/'results/coverage/0-dev-lines.csv').decode() == (
         'file,line,covered\nsrc/main/java/p/Production.java,1,no\n')
 
 

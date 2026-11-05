@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .config import range_fingerprint, execution_groups, derived_source
 from .display import UTC_DISPLAY
-from .io import read_csv, read_json
+from .io import result_exists, read_csv, read_json
 from .adapters.run_reuse import survival_provenance_matches
 
 
@@ -52,7 +52,8 @@ def items(exp, stage, config, state):
             if record.get('input_sha256') not in adapter.build_fingerprints(sha):
                 continue
             fresh = started is not None and path.stat().st_mtime >= started
-            cached = record.get('build') == 'ok' and (adapter.folder(index)/'target/classes').exists()
+            identity = read_json(exp/f'results/workspace-identities/{index}.json', {})
+            cached = record.get('build') == 'ok' and ((adapter.folder(index)/'target/classes').exists() or identity.get('sha') == sha)
             if record.get('build') in ('ok', 'fail') and (fresh or cached):
                 completed.append([path])
         return completed, total, 'builds'
@@ -157,7 +158,7 @@ def items(exp, stage, config, state):
                 valid = ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or (raw.get('input_sha256') in fingerprints[key] and runner_matches))
                          and bool(commit.get('sha')) and raw.get('sha') == commit['sha'])
                 if stage == 'cover':
-                    valid = valid and raw.get('status') == 'evaluated' and (exp/f'results/coverage/{index}-{group}-lines.csv').exists()
+                    valid = valid and raw.get('status') == 'evaluated' and result_exists(exp/f'results/coverage/{index}-{group}-lines.csv')
                 if valid:
                     paths.append(path)
             if groups and len(paths) == len(groups):

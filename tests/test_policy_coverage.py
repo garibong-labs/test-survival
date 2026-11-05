@@ -99,10 +99,11 @@ def test_heap_override_is_forwarded_and_recorded_without_hash_changes(baseline, 
         calls.append(command)
         return dict(exit_code=0)
     monkeypatch.setattr(adapter.runner, 'execute', execute)
+    monkeypatch.setattr(adapter, 'build', lambda *args: {'build':'ok'})
     for override in (None, '3g'):
         if override:
             monkeypatch.setenv('SURVIVAL_JVM_JACOCO', override)
-        adapter.worker(dict(action='policy-survive', index=1, methods=[], work='work/heap'))
+        adapter.worker(dict(action='policy-survive', index=1, sha='sha1', methods=[], work='work/heap'))
         evidence = read_json(exp/'work/heap-job.json')
         assert evidence['jvm'] == before['runner']['jvm']
         assert evidence.get('coverage_environment', {}) == ({'SURVIVAL_JVM_JACOCO':'3g'} if override else {})

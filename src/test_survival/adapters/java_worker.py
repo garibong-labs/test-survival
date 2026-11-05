@@ -23,11 +23,16 @@ RUNNER_JAR_BACKOFF_SECONDS = 60
 
 
 try:
+    from .. import io as result_io
     from ..rules.environment import matches as environment_matches
     from . import maven_dependencies
     from .compilation import CompilationService
     from .compiler_session import CompilerSession
 except ImportError:  # This worker is also invoked directly inside the container.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('survival_result_io', Path(__file__).resolve().parents[1]/'io.py')
+    result_io = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(result_io)
     sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
     from rules.environment import matches as environment_matches
     from adapters import maven_dependencies
@@ -53,10 +58,7 @@ def rerun_environment_failures(results, launch_class, settings, wait=time.sleep)
 
 
 def write_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary=path.with_suffix(path.suffix+'.tmp')
-    temporary.write_text(json.dumps(value,indent=2)+'\n')
-    temporary.replace(path)
+    result_io.atomic_text(path, json.dumps(value,indent=2)+'\n', compress=result_io.compressed_result(path))
 
 
 def execute(command,cwd,log,timeout=600):
@@ -335,10 +337,10 @@ def _run_group(job, session):
         folder,_=classpath(index);xml=EXP/job.get('coverage_xml',f'results/coverage/{index}-{group}.xml');xml.parent.mkdir(parents=True,exist_ok=True)
         result['coverage_report']=execute(['java','-Xmx'+JVM['jacoco'],'-jar',str(EXP/f'work/libs/org.jacoco.cli-{jacoco_version(folder/"target/classes")}-nodeps.jar'),'report',*([str(execfile)] if execfile.exists() else []),*[a for d in production_class_dirs(folder/'target/classes') for a in ('--classfiles',str(d))],'--sourcefiles',str(folder/'src/main/java'),'--xml',str(xml)],folder,work/'coverage-report.txt',TIMEOUTS['compile'])
         if result['coverage_report']['exit_code']==0:
-            with xml.with_name(xml.stem+'-lines.csv').open('w',newline='') as stream:
-                writer=csv.DictWriter(stream,fieldnames=['file','line','covered'],lineterminator='\n');writer.writeheader()
-                for row in line_rows(xml):
-                    writer.writerow({'file':row['file'],'line':row['line'],'covered':'yes' if row['covered'] else 'no'})
+            result_io.write_csv(xml.with_name(xml.stem+'-lines.csv'),
+                                ({'file':row['file'],'line':row['line'],'covered':'yes' if row['covered'] else 'no'} for row in line_rows(xml)),
+                                ['file','line','covered'], compress=True)
+            result_io.compress_file(xml)
         else:result['status']='coverage-fail'
     result['seconds']=round(time.monotonic()-start,3)
     write_json(EXP/job['output'],result)

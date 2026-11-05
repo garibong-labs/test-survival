@@ -1,7 +1,7 @@
 from ..config import group_names,group_labels
 """Report tables retain the reference's ordering, punctuation, and rounding."""
 from collections import Counter
-from ..io import read_csv,read_json,atomic_text,write_json
+from ..io import result_exists, read_csv,read_json,atomic_text,write_json
 from ..panel import notify
 
 
@@ -71,7 +71,7 @@ def build(exp,config):
     maps={}
     for g in groups:
         path=exp/f'results/coverage/0-{g}-lines.csv'
-        maps[g]={(r['file'],int(r['line'])):r['covered']=='yes' for r in read_csv(path)} if path.exists() else None
+        maps[g]={(r['file'],int(r['line'])):r['covered']=='yes' for r in read_csv(path)} if result_exists(path) else None
     available=[m for m in maps.values() if m is not None];baseline={}
     for file in sorted(scope):
         keys={p for p in available[0] if p[0]==file} if available else set()

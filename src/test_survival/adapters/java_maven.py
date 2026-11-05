@@ -13,7 +13,7 @@ from uuid import uuid4
 import xml.etree.ElementTree as ET
 
 from ..config import as_written, canonical_hash, record_runner_inputs
-from ..io import read_json, write_json, write_csv
+from ..io import read_json, write_json, write_csv, result_exists
 from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
 from .java_worker import RUNNER_JAR_RETRIES, RUNNER_JAR_BACKOFF_SECONDS, project_jars, runner_test_jars
@@ -283,6 +283,7 @@ class JavaMavenAdapter:
     def provenance(self):
         paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).with_name('compilation.py'), Path(__file__).with_name('maven_dependencies.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py', Path(__file__).parents[1]/'rules/environment.py']
         paths.append(Path(__file__).with_name('compiler_session.py'))
+        paths.append(Path(__file__).parents[1]/'io.py')
         paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py'))
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
@@ -405,7 +406,7 @@ class JavaMavenAdapter:
         previous=read_json(self.exp/output,{})
         provenance=self.provenance()
         anchor=read_json(self.exp/'results/anchor.json')
-        if previous.get('input_sha256') in (fingerprint,legacy) and previous.get('runner_sha256')==provenance and previous.get('sha')==anchor['sha'] and (self.exp/xml).exists():return previous
+        if previous.get('input_sha256') in (fingerprint,legacy) and previous.get('runner_sha256')==provenance and previous.get('sha')==anchor['sha'] and result_exists(self.exp/xml):return previous
         return self.worker(dict(action='run',index=0,sha=anchor['sha'],group=self.config['dev']['groups'][0]['name'],phase='B',methods=[method],repeats=1,retry=False,environment_retry=True,
                                 input_sha256=fingerprint,runner_sha256=provenance,coverage_xml=xml,output=output,work='work/dev-method-coverage-t/'+name))
 

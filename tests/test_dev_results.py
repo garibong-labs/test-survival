@@ -8,7 +8,7 @@ import yaml
 from test_survival.config import load
 from test_survival.dev_results import file_hash
 from test_survival.importer import import_experiment
-from test_survival.io import read_csv, read_json, write_csv, write_json
+from test_survival.io import read_bytes, read_csv, read_json, write_csv, write_json
 from test_survival.pipeline import PipelineError
 from test_survival.rules.dev_denominator import denominator_file, frozen_method
 from test_survival.stages import control, cover, screen, survive
@@ -243,6 +243,8 @@ def test_scope_preserves_imported_populations_without_remeasuring_coverage(exper
     class Adapter:
         def __init__(self, *args):
             self.runner, self.helpers = self, target/'helpers'
+        def ensure_anchor(self):
+            pass
         def folder(self, index):
             return target
         def execute(self, command, cwd, log, timeout):
@@ -265,7 +267,7 @@ def test_import_survives_source_removal_and_changed_derived_execution(experiment
     settings['dev']['groups'][0].pop('derive_from')
     (target/'experiment.yaml').write_text(yaml.safe_dump(settings))
     import_experiment(target, source, 'dev-results')
-    assert (target/'results/raw/1-dev-scope.json').read_bytes() == (source/'results/raw-derived/1-dev-scope.json').read_bytes()
+    assert read_bytes(target/'results/raw/1-dev-scope.json') == read_bytes(source/'results/raw-derived/1-dev-scope.json')
     source.rename(source.with_name('archived-elsewhere'))
     for stage in (control, survive, cover):
         stage.run(target, load(target))
@@ -667,14 +669,14 @@ def test_selection_only_parent_preserves_imported_child_routing(experiments, whe
             group.pop('raw_folder', None)
         write_json(target/'state/import.json', state)
     provenance = read_json(target/'state/import.json')['dev-results']
-    before = {p:(target/p).read_bytes() for p in provenance['files']}
+    before = {p:read_bytes(target/p) for p in provenance['files']}
     folder = 'raw-derived' if when=='after-legacy' else 'raw'
     assert survive.raw_folder('dev-scope',load(target),provenance)==folder
     source.rename(source.with_name('archived'))
     assert 'dev-all' in imported_groups(target,load(target))  # Still available for selection.
     for stage in (control,survive,cover):
         stage.run(target,load(target))
-    assert before == {p:(target/p).read_bytes() for p in before}
+    assert before == {p:read_bytes(target/p) for p in before}
     assert {c[2] for c in calls if len(c)==3} == {'local','llm'}
     assert read_json(target/f'results/{folder}/2-dev-scope.json')['status']=='skipped-untouched'
     assert read_json(target/'results/survival-consistency.json')['raw_count_matches']

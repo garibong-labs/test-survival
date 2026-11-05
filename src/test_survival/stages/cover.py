@@ -2,7 +2,7 @@ from collections import defaultdict, Counter
 import re
 
 from ..adapters.java_maven import JavaMavenAdapter
-from ..io import read_json,read_csv,write_json,write_csv
+from ..io import read_json,read_csv,write_json,write_csv,result_exists
 from ..pipeline import log
 from ..work import release_checkout
 from ..runner import measurement_session
@@ -40,7 +40,7 @@ def aggregate(exp,config):
         failed_build = i != 0 and read_json(exp/f'results/builds/{i}.json', {}).get('build') == 'fail'
         for g in groups:
             path=exp/f'results/coverage/{i}-{g}-lines.csv'
-            if failed_build or not path.exists():maps[i][g]=None;missing.append(dict(index=i,group=g));continue
+            if failed_build or not result_exists(path):maps[i][g]=None;missing.append(dict(index=i,group=g));continue
             rows=read_csv(path);data={(r['file'],int(r['line'])):r['covered']=='yes' for r in rows}
             if len(data)!=len(rows):raise RuntimeError('Duplicate coverage lines')
             maps[i][g]=data
@@ -137,7 +137,7 @@ def run(exp,config):
             image_index=aliases.get(str(image_index),image_index)
             first_dev=group_names(config)[0]
             universe_path=exp/f'results/coverage/{image_index}-{first_dev}-lines.csv'
-            if universe_path.exists():
+            if result_exists(universe_path):
                 universe={(r['file'],int(r['line'])) for r in read_csv(universe_path)}
                 change[key]={f:[n for n in ns if (f,n) in universe] for f,ns in change[key].items()}
         write_json(path,change)

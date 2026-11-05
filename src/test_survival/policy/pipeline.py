@@ -7,7 +7,7 @@ import traceback
 
 from ..config import ConfigError, canonical_hash, load, result_inputs
 from ..display import UTC_DISPLAY
-from ..io import atomic_text, now, read_json, write_json
+from ..io import logical_glob, resolve_path, atomic_text, now, read_json, write_json
 from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
 from .config import COVERAGE_VERSION, digest_options, active_plan, reusable_run
@@ -78,8 +78,9 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
             for path in (b.exp/'state').glob('policy-*-error.txt'):
                 path.unlink()
             # Adapter result caches are beneath this experiment, never the baseline.
-            for path in (b.exp/'results/raw').glob('*-policy-*.json'):
-                path.unlink()
+            for path in logical_glob(b.exp/'results/raw', '*-policy-*.json'):
+                resolve_path(path).unlink()
+                path.unlink(missing_ok=True)
             directory = b.exp/'results/policy-coverage'
             if directory.exists():
                 shutil.rmtree(directory)

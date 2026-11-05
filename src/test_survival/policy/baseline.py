@@ -3,7 +3,7 @@ from pathlib import Path
 import subprocess
 
 from ..config import ConfigError, as_written, load, validate
-from ..io import read_csv, read_json
+from ..io import result_exists, read_csv, read_json
 from .config import merge
 
 
@@ -65,7 +65,7 @@ class Baseline:
             self.skipped = {int(r['index']): r['reason'] for r in read_csv(skip_file)}
         else:
             # Missing metadata is only safe when the complete raw grid is present.
-            missing = [(r['index'], g) for r in self.commits for g in self.groups if not self.raw_path(int(r['index']), g).exists()]
+            missing = [(r['index'], g) for r in self.commits for g in self.groups if not result_exists(self.raw_path(int(r['index']), g))]
             if missing:
                 raise ConfigError(f'Baseline lacks skip metadata and raw records: {missing[:5]}')
             self.skipped = {}
@@ -87,7 +87,7 @@ class Baseline:
     def raw_path(self, index, group):
         for folder in ('raw-derived', 'raw'):
             path = self.path/f'results/{folder}/{index}-{group}.json'
-            if path.exists():
+            if result_exists(path):
                 return path
         return self.path/f'results/raw/{index}-{group}.json'
 

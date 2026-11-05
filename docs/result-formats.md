@@ -385,3 +385,26 @@ record. Already complete members survive a crash between append and checkpoint.
 Readers expose earlier complete records even if a final member is incomplete.
 A killed compile therefore remains visible as a start without a finish. Normal
 appends inspect only the new tail, not the entire historical ledger.
+
+## Bulk result compression
+
+New writes use gzip level 6 for `results/coverage/*.xml.gz` (including
+`<index>-dev-scope.xml.gz`), `results/coverage/*-lines.csv.gz`,
+`results/{raw,raw-coverage,raw-derived}/*.json.gz`, and the JSON, XML and lines CSV
+files inside `results/dev-method-coverage-t/`. The same rules apply inside pools.
+The path names in records and the schemas above remain logical names without
+`.gz`. Compression changes no uncompressed bytes. Failed partial XML may remain
+plain for debugging.
+
+`io.open_result`, `read_json` and `read_csv` read either the logical name or its
+`.gz` representation. Enumeration and existence checks use the same resolution.
+An interrupted conversion can leave equal twins; these count once. Conflicting
+twins or corrupt gzip data raise an error rather than silently selecting stale
+measurements. Writers publish a complete temporary file atomically, then remove
+the previous representation. Import checksums and result hashes cover the
+**uncompressed bytes**; source/resource hashes still cover the original bytes.
+Rehash and stale-stage configuration hashes retain their existing meaning.
+
+Small summaries, all state files, policy tables and direct report/Sheets inputs
+remain plain. No files under `generated/` are compressed or removed. Legacy
+finished experiments continue to load without migration.

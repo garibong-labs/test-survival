@@ -249,8 +249,13 @@ def test_prepare_rejects_invalidated_builds_and_keeps_real_cache_hits(tmp_path, 
     def rebuilding(*args):
         raise RebuildRequired
     monkeypatch.setattr(adapter, 'checkout', rebuilding)
-    with pytest.raises(RebuildRequired):
-        adapter.build(1, shas[1])
+    if change == 'classes':
+        # Old records without dependency identities cannot safely be restored.
+        with pytest.raises(RuntimeError, match='without recorded dependency identity'):
+            adapter.build(1, shas[1])
+    else:
+        with pytest.raises(RebuildRequired):
+            adapter.build(1, shas[1])
     build_record(tmp_path, config, 1, shas[1], age=50)
     text = describe(tmp_path, 'prepare', config, at=AT)
     assert f'{cached+1}/3 builds' in text
