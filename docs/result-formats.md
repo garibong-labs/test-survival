@@ -324,3 +324,36 @@ exist. A SHA, dependency identity or build-verdict disagreement stops execution
 and retains work. Old experiments remain readable; reconstructing an already
 removed legacy workspace without a recorded dependency identity fails closed.
 Report PNG rendering uses the experiment directory and needs no checkout.
+
+## Successful-stage scratch cleanup
+
+`survival run --keep-work` and `survival policy run --keep-work` retain successful
+checkouts and scratch; the option propagates through background runs and pools
+and is excluded from scientific/configuration fingerprints. By default the
+coordinator cleans owned worker scratch after successful stage validation:
+`work/phase-*`, `work/dev-method-coverage-t`, `work/validation`,
+`work/import-repair`, `work/policy-survive`, and pool selection/screening scratch.
+Missing/unverified outputs never authorize cleanup. Cached screening failures
+retain their original diagnostics for later classification. Baseline failed
+file subtrees remain whole; shared failed policy batches remain whole because
+multiple methods can share their compilation and coverage evidence.
+
+On a worker retry, existing scratch is retained under
+`work/failed-attempts/<original-work-relative-path>/<attempt-id>/`, with a sibling
+JSON record identifying the original path. A resumed worker does not erase its
+interrupted attempt. These histories are not removed on successful completion.
+
+`results/work-cleanup.json` records cumulative `removed_files`, `removed_bytes`
+(logical bytes), and `retained_failures` keyed by relative work path with current
+file/byte counts. Parent retained paths subsume children, avoiding double counting.
+This operational report is uncompressed and excluded from scientific comparison.
+
+After full run / verified pool completion, shared libraries, classpath jobs and
+successful runtime scratch can be recreated on demand. Compiler caches (including
+pool-local caches), generation/policy histories, unknown work, and every generated
+artifact remain untouched. KTester dataset scratch is removed only after round
+output matches its generated archive and, for a baseline run, report completion
+has been recorded. `work/ktester/<group>/experiment-result.json` stays in place.
+A partial `--until` run never triggers whole-run cleanup. Failure or interruption
+leaves the owning stage's scratch; previously verified index operations may
+already have released their successful checkouts.

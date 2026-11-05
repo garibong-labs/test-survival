@@ -25,6 +25,7 @@ def parser():
     selection.add_argument('--until', choices=STAGES)
     selection.add_argument('--stage', choices=STAGES)
     execute.add_argument('--force', action='store_true')
+    execute.add_argument('--keep-work', action='store_true', help='Retain successful checkouts and stage scratch')
     execute.add_argument('--background', action='store_true')
     execute.add_argument('--no-panel', action='store_true', help='Disable the terminal progress panel')
     execute.add_argument('--group')
@@ -62,6 +63,7 @@ def parser():
             command.add_argument('--ready-fd', type=int, help=argparse.SUPPRESS)
             command.add_argument('--until', choices=('pools', 'survive', 'cover', 'report'), default='report')
             command.add_argument('--force', action='store_true')
+            command.add_argument('--keep-work', action='store_true', help='Retain successful checkouts and stage scratch')
     dashboard = sub.add_parser('dashboard')
     build = dashboard.add_subparsers(dest='dashboard_command', required=True).add_parser('build')
     build.add_argument('--experiments', type=Path, required=True)
@@ -114,7 +116,7 @@ def main(argv=None):
                 from .summary import show
                 print(show(args.exp_dir, args.stage))
             else:
-                options = {key: getattr(args, key) for key in ('until', 'stage', 'force', 'group')}
+                options = {key: getattr(args, key) for key in ('until', 'stage', 'force', 'group', 'keep_work')}
                 if args.background:
                     pid, log_path = background(args.exp_dir, **options)
                     print(f'PID {pid}; log {log_path}')

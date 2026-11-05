@@ -1,0 +1,83 @@
+from copy import deepcopy
+
+import pytest
+
+from test_survival.config import validate, stage_hash, generator_config
+from test_survival.io import read_json, write_json
+from test_survival.work import cleanup_stage, finish_work, retain_previous_work
+
+
+def fixture(tmp_path, *, failure=False):
+    config=validate(dict(name='scratch',anchor='t',project={'repo':str(tmp_path)}))
+    for number in (0,1):
+        p=tmp_path/f'work/phase-A/2/dev/{number}/classes/T.class';p.parent.mkdir(parents=True);p.write_bytes(b'class')
+        p.with_name('javac.txt').write_text('original diagnostics')
+    write_json(tmp_path/'work/phase-A/2/dev-job.json',dict(action='run',work='work/phase-A/2/dev',output='results/raw/2-dev.json'))
+    write_json(tmp_path/'results/raw/2-dev.json',dict(files=[dict(methods=[dict(state='fail' if failure else 'pass')]),dict(methods=[dict(state='pass')])]))
+    return config
+
+
+def test_success_and_failed_file_subtree_cleanup(tmp_path):
+    config=fixture(tmp_path,failure=True)
+    failed=tmp_path/'work/phase-A/2/dev/0';before={p:p.read_bytes() for p in failed.rglob('*') if p.is_file()}
+    cleanup_stage(tmp_path,config,'survive')
+    assert before=={p:p.read_bytes() for p in before}
+    assert not (tmp_path/'work/phase-A/2/dev/1').exists()
+    metrics=read_json(tmp_path/'results/work-cleanup.json')
+    assert metrics['removed_files']==2
+    assert metrics['retained_failures']['work/phase-A/2/dev/0']['files']==2
+    cleanup_stage(tmp_path,config,'survive')
+    assert read_json(tmp_path/'results/work-cleanup.json')['removed_files']==2
+
+
+def test_missing_result_is_never_cleaned(tmp_path):
+    config=fixture(tmp_path)
+    (tmp_path/'results/raw/2-dev.json').unlink()
+    cleanup_stage(tmp_path,config,'survive')
+    assert (tmp_path/'work/phase-A/2/dev/0/classes/T.class').exists()
+
+
+def test_keep_work_is_operational_and_survives_generator_copy(tmp_path):
+    config=fixture(tmp_path)
+    hashes=[stage_hash(config,s) for s in ('prepare','generate','survive')]
+    config.keep_work=True
+    assert generator_config(config,{}).keep_work
+    assert deepcopy(config).keep_work
+    assert hashes==[stage_hash(config,s) for s in ('prepare','generate','survive')]
+    cleanup_stage(tmp_path,config,'survive');finish_work(tmp_path,config)
+    assert (tmp_path/'work/phase-A/2/dev/0/classes/T.class').exists()
+
+
+def test_histories_cache_generated_and_completion_preserved(tmp_path):
+    config=fixture(tmp_path)
+    protected=['work/compile-cache/v1/entry/classes/X.class','work/generation-history/old/generated/result.json',
+               'work/policy-history/old/generated/result.json','generated/x/result.json',
+               'work/ktester/x/experiment-result.json']
+    for name in protected:
+        p=tmp_path/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'protected')
+    p=tmp_path/'work/ktester/x/projects/source.java';p.parent.mkdir();p.write_text('scratch')
+    before={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in (tmp_path/n for n in protected)}
+    finish_work(tmp_path,config)
+    assert before=={p:(p.read_bytes(),p.stat().st_mtime_ns) for p in before}
+    assert not (tmp_path/'work/ktester/x/projects').exists()
+
+
+def test_resumed_worker_preserves_interrupted_attempt(tmp_path):
+    config=fixture(tmp_path)
+    retain_previous_work(tmp_path,'work/phase-A/2/dev')
+    assert not (tmp_path/'work/phase-A/2/dev').exists()
+    attempts=list((tmp_path/'work/failed-attempts/phase-A/2/dev').glob('*/0/classes/T.class'))
+    assert len(attempts)==1 and attempts[0].read_bytes()==b'class'
+    finish_work(tmp_path,config)
+    assert attempts[0].exists()
+
+
+def test_background_forwarding(tmp_path,monkeypatch):
+    from test_survival import pipeline
+    calls=[]
+    monkeypatch.setattr(pipeline,'launch_background',lambda exp,args: calls.append(args))
+    pipeline.background(tmp_path,keep_work=True)
+    assert '--keep-work' in calls[0]
+    from test_survival.cli import parser
+    assert parser().parse_args(['run',str(tmp_path),'--keep-work']).keep_work
+    assert parser().parse_args(['policy','run',str(tmp_path),'--keep-work']).keep_work

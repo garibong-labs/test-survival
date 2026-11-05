@@ -178,9 +178,10 @@ def run(b, plan, step):
             path = b.exp/f'results/policy/pools/{g}/{i}/pool.json'
             step(f'pool-{g}-{i}', lambda: build_pool(b, point, target), outputs=[path])
             pool = read_json(path)
-            from ..work import finish_checkouts
+            from ..work import finish_checkouts, finish_work
             if verified_pool(b.exp, path.parent, pool):
                 finish_checkouts(path.parent, b.execution_config)
+                finish_work(path.parent, b.execution_config, pool=True)
             return (g,i), pool
         except BaseException:
             stopped.set()

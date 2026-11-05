@@ -305,6 +305,9 @@ class JavaMavenAdapter:
             # result/hash inputs. env also works inside a reused Docker session.
             job['coverage_environment'] = {'SURVIVAL_JVM_JACOCO': os.environ['SURVIVAL_JVM_JACOCO']}
             command = ['env', 'SURVIVAL_JVM_JACOCO='+os.environ['SURVIVAL_JVM_JACOCO'], *command]
+        if job.get('work'):
+            from ..work import retain_previous_work
+            retain_previous_work(self.exp, job['work'])
         write_json(path, job)
         # A stale classpath can require both dependency goals, each offline then online.
         dependency_timeout = resolution_timeout(self.config['runner']['timeouts']['build'])

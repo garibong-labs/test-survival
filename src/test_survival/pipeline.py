@@ -160,12 +160,13 @@ def default_handler(stage):
     return importlib.import_module(f'test_survival.stages.{stage}').run
 
 
-def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False, display=None):
+def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False, display=None, keep_work=False):
+    config.keep_work = keep_work
     display = display or load_display_settings()
     exp = Path(exp).resolve()
     if not locked:
         with run_lock(exp):
-            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel, display=display)
+            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel, display=display, keep_work=keep_work)
     if stage and until:
         raise PipelineError('--stage and --until are mutually exclusive')
     if group and stage != 'generate':
@@ -220,6 +221,9 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
             previous = read_json(path, {})
             if not force and previous.get('status') == 'completed' and previous.get('config_hash') == digest:
                 log(exp, f'{current}: already completed; skipped', config)
+                if handlers is None:
+                    from .work import cleanup_stage
+                    cleanup_stage(exp, config, current)
                 continue
             invalidate(exp, current)
             state = dict(status='running', config_hash=digest, started=now(), finished=None, notes='')
@@ -260,16 +264,20 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
                 state['group_hashes'] = {g['name']: stage_hash(config, 'generate', g['name']) for g in config['generators']}
             write_json(path, state)
             log(exp, f'{current}: {state["notes"]}', config)
+            if handlers is None and state['status'] == 'completed':
+                from .work import cleanup_stage
+                cleanup_stage(exp, config, current)
             completed.append(current)
         if handlers is None and all(read_json(exp/'state'/f'{stage}.json', {}).get('status') == 'completed'
                                     and read_json(exp/'state'/f'{stage}.json', {}).get('config_hash') == stage_hash(config, stage)
                                     for stage in STAGES):
-            from .work import finish_checkouts
+            from .work import finish_checkouts, finish_work
             finish_checkouts(exp, config)
+            finish_work(exp, config)
         return completed
 
 
-def background(exp, *, until=None, stage=None, force=False, group=None):
+def background(exp, *, until=None, stage=None, force=False, group=None, keep_work=False):
     exp = Path(exp).resolve()
     arguments = ['run', str(exp)]
     for option, value in [('--until', until), ('--stage', stage), ('--group', group)]:
@@ -277,6 +285,8 @@ def background(exp, *, until=None, stage=None, force=False, group=None):
             arguments.extend([option, value])
     if force:
         arguments.append('--force')
+    if keep_work:
+        arguments.append('--keep-work')
     return launch_background(exp, arguments)
 
 

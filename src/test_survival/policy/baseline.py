@@ -56,6 +56,7 @@ class Baseline:
         settings['dev'].pop('denominator', None)
         settings['generators'] = [merge(g, self.options['generator_overrides'].get(g['name'], {})) for g in settings['generators']]
         self.execution_config = validate(settings)
+        self.execution_config.keep_work = getattr(config, 'keep_work', False)
         self.execution_config['runner']['workers'] = dict(config['runner']['workers'])
         # Internal execution constraint, propagated through generator config copies.
         self.execution_config['runner']['policy_read_only'] = [str(self.path)]

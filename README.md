@@ -538,3 +538,9 @@ saved results, and restored on demand for later stages. Failed or interrupted
 work stays available. Restoration preserves the original build record/logs and
 stops on a SHA, dependency or build-verdict disagreement. See
 [checkout lifetime and restoration](docs/result-formats.md#checkout-lifetime-and-restoration).
+
+Use `survival run EXP_DIR --keep-work` or `survival policy run EXP_DIR --keep-work`
+to retain successful working files for inspection. Default cleanup preserves
+failed evidence, model outputs, compiler caches, force histories, and KTester
+completion records. `results/work-cleanup.json` reports scratch bytes removed and
+failed subtrees retained; see [scratch cleanup](docs/result-formats.md#successful-stage-scratch-cleanup).
