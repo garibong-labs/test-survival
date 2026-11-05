@@ -1,3 +1,4 @@
+from test_survival.adapters.compile_events import read_events
 """Exercise worker orchestration with a counted compiler and deterministic JVM reports."""
 import json
 from pathlib import Path
@@ -95,5 +96,5 @@ def test_successful_suite_is_shared_and_resume_keeps_execution_history(group_wor
     assert first['whole_frozen_suite_compile']['cache']['status'] == 'miss'
     assert second['whole_frozen_suite_compile']['cache']['status'] == resumed['whole_frozen_suite_compile']['cache']['status'] == 'hit'
     assert len([c for c in calls if c[0] == 'javac']) == 1
-    assert len(list((root/'results/compile-events').glob('*/finished.json'))) == 3
+    assert sum(r['type']=='finish' for r in read_events(root/'results/compile-events')) == 3
     assert all(r['methods'][0]['state'] == 'pass' for r in [first, second, resumed])

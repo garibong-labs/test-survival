@@ -273,7 +273,7 @@ the original compilation's duration. Test runs and method/denominator fields are
 Whole-suite compile records are still referenced by multiple `files[].compile` fields:
 deduplicate by `cache.event` (or command/log for older records) when totaling costs.
 
-`results/compile-events/<unique-id>/` is independent of replaceable worker scratch and
+Legacy `results/compile-events/<unique-id>/` is independent of replaceable worker scratch and
 stage state. `started.json` stores context, command, and start time; `finished.json`
 stores finish time, `executed`, and the command result pointing to a durable `javac.txt`.
 `interrupted.json` records an exception when possible; a start without a finish can mean
@@ -357,3 +357,31 @@ has been recorded. `work/ktester/<group>/experiment-result.json` stays in place.
 A partial `--until` run never triggers whole-run cleanup. Failure or interruption
 leaves the owning stage's scratch; previously verified index operations may
 already have released their successful checkouts.
+
+## Compressed compile-event journal
+
+New compilation history is stored in `results/compile-events/<index>.jsonl.gz`
+(or `stage-<phase>.jsonl.gz` without an index), with a persistent matching `.lock`
+file. Each append is one closed gzip member containing one JSON line. Records
+have `type` (`start`, `finish`, `interrupted`, or `toolchain`) and `event_id`.
+Start retains context, command and start time. Finish retains finish time,
+`executed`, and the command result; interrupted retains the exception type and
+available diagnostics. Toolchain records retain the JDK probe result and log.
+`cache.event` and durable event log references are `<ledger-relative-path>#<id>`;
+`cache.origin_event` continues to identify the originating compilation UUID.
+`adapters.compile_events.read_events` and `read_event` accept both this layout
+and legacy per-event directories.
+
+The `javac`/toolchain log payload contains `text`, original `bytes`, `sha256`, and
+`truncated`. Successful javac text is limited to 16 KiB of UTF-8, without splitting
+a character. Nonzero exits, timeouts and exceptions retain full text. Full
+successful compiler-cache logs remain in the protected compile cache.
+
+Writers serialize using `flock`, fsync each complete member, and checkpoint its
+byte boundary in the same persistent lock inode. An append after interruption
+validates the uncheckpointed tail. Any damaged/incomplete tail is fsynced to a
+`.jsonl.gz.damaged-<id>` evidence file before truncating back to the last complete
+record. Already complete members survive a crash between append and checkpoint.
+Readers expose earlier complete records even if a final member is incomplete.
+A killed compile therefore remains visible as a start without a finish. Normal
+appends inspect only the new tail, not the entire historical ledger.

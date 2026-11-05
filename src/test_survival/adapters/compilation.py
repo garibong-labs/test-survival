@@ -17,6 +17,11 @@ import time
 from uuid import uuid4
 import zipfile
 
+try:
+    from .compile_events import Journal, log_payload
+except ImportError:
+    from adapters.compile_events import Journal, log_payload
+
 
 class Uncacheable(ValueError):
     pass
@@ -85,7 +90,7 @@ class CompilationService:
         if self.toolchain is None or self.toolchain[1][0] != executable:
             probe = self.execute(['javac', '-J-XshowSettings:properties', '-version'], cwd,
                                  event/'toolchain.log', min(timeout, 30))
-            save(event/'toolchain.json', probe)
+            self.probe = dict(result=probe, log=log_payload(event/'toolchain.log'))
             text = (event/'toolchain.log').read_text(errors='replace')
             home = re.search(r'^\s*java.home = (.+)$', text, re.M)
             if probe['exit_code'] or probe.get('timeout') or not home:
@@ -178,12 +183,14 @@ class CompilationService:
         command = ['javac', '-J-Xmx'+heap, '-cp', classpath, '-sourcepath', str(sourcepath),
                    '-d', str(classes), *map(str, sources)]
         event_id = uuid4().hex
-        event = self.exp/'results/compile-events'/event_id
-        event.mkdir(parents=True)
+        journal = Journal(self.exp, self.context)
+        event = log.parent
+        event.mkdir(parents=True, exist_ok=True)
+        self.probe = None
         started = time.monotonic()
-        save(event/'started.json', dict(context=self.context, command=command,
+        journal.append(dict(type='start', event_id=event_id, context=self.context, command=command,
              started=datetime.now(timezone.utc).isoformat()))
-        cache = {'status': 'bypass', 'event': str(event.relative_to(self.exp))}
+        cache = {'status': 'bypass', 'event': journal.reference(event_id)}
         try:
             if classes.exists():
                 shutil.rmtree(classes)
@@ -239,10 +246,15 @@ class CompilationService:
                                 cache['reason'] = 'inputs changed during compilation'
             cache['elapsed_seconds'] = round(time.monotonic()-started, 3)
             result['cache'] = cache
-            shutil.copyfile(log, event/'javac.txt')
-            save(event/'finished.json', dict(finished=datetime.now(timezone.utc).isoformat(),
-                 executed=cache['status'] != 'hit', result={**result, 'log': str((event/'javac.txt').relative_to(self.exp))}))
+            if self.probe:
+                journal.append(dict(type='toolchain', event_id=event_id, **self.probe))
+            journal.append(dict(type='finish', event_id=event_id, finished=datetime.now(timezone.utc).isoformat(),
+                 executed=cache['status'] != 'hit', result={**result, 'log': journal.reference(event_id)},
+                 javac=log_payload(log, success=result['exit_code']==0 and not result.get('timeout'))))
             return result
         except BaseException as exc:
-            save(event/'interrupted.json', {'error_type': type(exc).__name__})
+            if self.probe:
+                journal.append(dict(type='toolchain', event_id=event_id, **self.probe))
+            journal.append(dict(type='interrupted', event_id=event_id, error_type=type(exc).__name__,
+                                javac=log_payload(log)))
             raise

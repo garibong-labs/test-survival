@@ -1,3 +1,4 @@
+from test_survival.adapters.compile_events import read_events, read_event
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
@@ -63,9 +64,9 @@ def test_reuses_success_with_zero_command_time_and_durable_execution_evidence(co
     assert second['cache']['status'] == 'hit' and second['seconds'] == 0
     assert (root/'coverage/classes/Test.class').read_bytes() == b'compiled fixture'
     assert (root/second['log']).read_text() == 'compiler diagnostic\n'
-    events = [json.loads(p.read_text()) for p in (root/'results/compile-events').glob('*/finished.json')]
+    events = [r for r in read_events(root/'results/compile-events') if r['type']=='finish']
     assert sorted(e['executed'] for e in events) == [False, True]
-    assert all((root/e['result']['log']).read_text() == 'compiler diagnostic\n' for e in events)
+    assert all(e['javac']['text'] == 'compiler diagnostic\n' for e in events)
     (root/'coverage/classes/Test.class').write_bytes(b'test changed its own classes')
     assert run('control')['cache']['status'] == 'hit'
     assert (root/'control/classes/Test.class').read_bytes() == b'compiled fixture'
@@ -227,8 +228,8 @@ def test_interrupted_compile_leaves_evidence_but_no_cache(compilation):
         raise KeyboardInterrupt()
     with pytest.raises(KeyboardInterrupt):
         run('first', executor=interrupted)
-    assert len(list((root/'results/compile-events').glob('*/started.json'))) == 1
-    assert len(list((root/'results/compile-events').glob('*/interrupted.json'))) == 1
+    assert sum(r['type']=='start' for r in read_events(root/'results/compile-events')) == 1
+    assert sum(r['type']=='interrupted' for r in read_events(root/'results/compile-events')) == 1
     assert not list((root/'work/compile-cache').rglob('manifest.json'))
     assert run('resumed')['cache']['status'] == 'miss'
 
@@ -255,7 +256,7 @@ def test_same_key_is_compiled_once_under_concurrency(compilation, parallelism):
             child.join(10)
             assert child.exitcode == 0
     assert (root/'subprocess-count').read_text().splitlines() == ['executed']
-    events = [json.loads(p.read_text()) for p in (root/'results/compile-events').glob('*/finished.json')]
+    events = [r for r in read_events(root/'results/compile-events') if r['type']=='finish']
     assert sorted(e['result']['cache']['status'] for e in events) == ['hit', 'miss']
 
 
