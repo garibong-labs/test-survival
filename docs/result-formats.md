@@ -303,10 +303,15 @@ Survival consistency adds measured/derived counts and expected counts, plus skip
 
 A verified successful index build is a durable sub-operation. Nonzero
 `work/checkouts/<index>/` trees and their `<index>.json` markers are released
-when all current consumers and coordinator validation for that index succeed:
-prepare builds, survival groups, coverage groups, and policy batches. Regeneration
-boundaries retain the index through both window and regeneration consumers.
-Workers recreate required production trees on demand through checkout/build.
+only after their last workspace consumers and coordinator validation succeed.
+Prepare retains all successful builds. Survival retains the planned coverage set,
+including predecessors resolved across skipped commits; other nonzero indices
+are released after survival aggregation validates measured, imported and derived
+records. Coverage releases each index after all groups and executable line
+universes validate. Policy windows release non-boundary indices after their last
+batch; regeneration boundaries retain the index through both window and
+regeneration consumers. An uninterrupted run builds each index once. Restoration
+is reserved for resume, legacy workspaces or genuine consumers after release.
 The anchor remains through the run; successful completion releases remaining
 verified successful checkouts. Failed, interrupted and in-flight indices remain.
 Pool anchors are released only after completed pool publication and verification

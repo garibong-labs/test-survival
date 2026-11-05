@@ -63,6 +63,13 @@ def test_runner_setup_finishes_before_parallel_builds(tmp_path, monkeypatch, set
             raise AssertionError(args)
         def build(self, index, sha):
             events.append(f'build-{index}')
+            from test_survival.io import write_json
+            tree = tmp_path/f'work/checkouts/{index}'
+            tree.mkdir(parents=True, exist_ok=True)
+            (tree/'source.java').write_text('keep for survive and cover')
+            write_json(tree.with_suffix('.json'), dict(sha=sha))
+            write_json(tmp_path/f'results/builds/{index}.json', dict(build='ok', sha=sha))
+            write_json(tmp_path/f'results/workspace-identities/{index}.json', dict(sha=sha))
             return {'build': 'ok'}
         def baseline(self):
             assert not has_import, 'Imported baseline was recomputed'
@@ -92,6 +99,9 @@ def test_runner_setup_finishes_before_parallel_builds(tmp_path, monkeypatch, set
     else:
         prepare.run(tmp_path, config)
         assert events == ['build-0', 'setup', 'pool', 'build-1']
+        for index in (0, 1):
+            assert (tmp_path/f'work/checkouts/{index}/source.java').is_file()
+            assert (tmp_path/f'work/checkouts/{index}.json').is_file()
         from test_survival.io import read_json
         anchor = read_json(tmp_path/'results/anchor.json')
         assert anchor['dev_unmapped_excluded'] == (0 if has_import else 1)

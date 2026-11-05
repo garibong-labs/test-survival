@@ -29,7 +29,8 @@ def test_baseline_alive_jobs_preserve_aggregate_bytes_and_reuse_prefix(tmp_path,
     frozen = {'dev':methods, 'scope':methods[1:]}
     write_json(tmp_path/'results/frozen-denominators.json', frozen)
     write_json(tmp_path/'results/anchor.json', dict(sha='anchor', date='date'))
-    commits = [dict(index=i, sha=str(i), date='date', subject='change') for i in range(1,8)]
+    commits = [dict(index=i, sha=str(i), date='date', subject='change',
+                    **{'changes-src-main':'no' if i==2 else 'yes'}) for i in range(1,8)]
     write_csv(tmp_path/'results/commits.csv', commits, list(commits[0]))
     write_json(tmp_path/'results/commit-paths.json', {str(i):['README.md' if i==2 else 'src/main/java/A.java'] for i in range(1,8)})
     for i in range(1,8):
@@ -291,7 +292,8 @@ def test_baseline_skip_change_revalidates_cached_dead_methods(tmp_path, monkeypa
     t=dict(id='a',file='T.java',execution_hash='source',**{'class':'T'},method='a')
     write_json(tmp_path/'results/frozen-denominators.json',{'dev':[t]})
     write_json(tmp_path/'results/anchor.json',dict(sha='anchor',date='date'))
-    commits=[dict(index=i,sha=str(i),date='date',subject='change') for i in (1,2)]
+    commits=[dict(index=i,sha=str(i),date='date',subject='change',
+                  **{'changes-src-main':'yes' if i==2 else 'no'}) for i in (1,2)]
     write_csv(tmp_path/'results/commits.csv',commits,list(commits[0]))
     write_json(tmp_path/'results/commit-paths.json',{'1':['README.md'],'2':['src/main/java/A.java']})
     adapter=JavaMavenAdapter(tmp_path,config); fingerprint=adapter.run_fingerprint([t])

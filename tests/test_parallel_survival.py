@@ -106,7 +106,17 @@ def test_four_policy_workers_preserve_curves_coverage_and_regeneration(baseline,
     pools={('dev-scope',i):tests for i in (1,7)}
     monkeypatch.setattr(execute,'baseline_tests',lambda _: {'dev-scope':[]})
     monkeypatch.setattr(b,'raw',lambda *a:{'methods':[]})
-    monkeypatch.setattr(JavaMavenAdapter,'build',lambda *a:{'build':'ok'})
+    live=set(); builds={}
+    def build(self,index,sha):
+        if index not in live:
+            builds[index]=builds.get(index,0)+1
+            assert builds[index]==1, f'Policy rebuilt released index {index}'
+            live.add(index)
+        return {'build':'ok'}
+    def release(exp,config,index):
+        if index:live.discard(index)
+    monkeypatch.setattr(JavaMavenAdapter,'build',build)
+    monkeypatch.setattr(execute,'release_checkout',release)
     monkeypatch.setattr(JavaMavenAdapter,'setup_runner',lambda *a:None)
     rows=[dict(index=i,sha=b.by_index[i]['sha'],date='date',subject='change',scope_executable=1,
                **{'scope_dev-scope_covered':0}) for i in range(1,10)]
@@ -135,12 +145,14 @@ def test_four_policy_workers_preserve_curves_coverage_and_regeneration(baseline,
                 ('survival.csv','first-failures.csv','alive.json','coverage-commits.csv','coverage-total.json','coverage-missing.csv')}
     b.execution_config['runner']['workers']['survive']=1
     execute.survive(b,plan,pools,Steps(b,plan)); policy_cover.run(b,None); expected=output()
+    assert builds and set(builds.values())=={1} and live=={0}
     shutil.rmtree(exp/'results/policy')
     for path in (exp/'state').glob('policy-*.json'):path.unlink()
-    jobs.clear(); completed.clear(); gate=LaggingWorkers(2)
+    jobs.clear(); completed.clear(); live.clear(); builds.clear(); gate=LaggingWorkers(2)
     b.execution_config['runner']['workers']['survive']=4
     execute.survive(b,plan,pools,Steps(b,plan)); policy_cover.run(b,None)
     assert output()==expected and gate.peak==4
+    assert builds and set(builds.values())=={1} and live=={0}
     requested={j['index']:{t['id'] for t in j['methods']} for j in jobs}
     assert all(requested[i]==set('abc') for i in range(2,6))
     assert requested[6]==set('ac')

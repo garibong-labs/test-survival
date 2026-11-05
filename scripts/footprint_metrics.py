@@ -16,9 +16,26 @@ def seconds(record):
     return round((datetime.fromisoformat(record['finished'])-datetime.fromisoformat(record['started'])).total_seconds(),3) if record.get('finished') and record.get('started') else None
 
 
+def restoration_counts(experiments):
+    """Count attempts, including failed/interrupted ones and nested pool work.
+
+    Fixture runs start with empty experiments; resume stays within the same run.
+    Each diagnostics directory represents one restoration, regardless of how
+    many Maven retries it contains. Empty interrupted attempts count as well.
+    """
+    counts = {}
+    for root in experiments.rglob('workspace-restorations'):
+        if root.parent.name != 'results':
+            continue
+        name = str(root.parent.parent.relative_to(experiments))
+        counts[name] = sum(p.is_dir() for p in root.glob('*/*'))
+    return dict(total=sum(counts.values()), by_experiment=counts)
+
+
 def metrics(label):
     saved=ROOT/label;experiments=saved/'experiments'
     result=dict(total=footprint(experiments),experiments={},timings=read_json(saved/'timings.json'),stages={},peaks={})
+    result['restorations']=restoration_counts(experiments)
     for exp in sorted(experiments.iterdir()):
         result['experiments'][exp.name]=footprint(exp)
         for record in (exp/'state').glob('*.json'):

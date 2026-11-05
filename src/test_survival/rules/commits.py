@@ -2,6 +2,24 @@
 from pathlib import PurePosixPath
 
 
+def coverage_indices(commits, skipped, coverage):
+    """Plan coverage consumers, including aliases past untouched predecessors."""
+    indices = {0} if coverage['at_anchor'] else set()
+    aliases = {}
+    if coverage['changed_line']:
+        for row in commits:
+            if row['changes-src-main'] != 'yes':
+                continue
+            index = int(row['index'])
+            previous = index - 1
+            while previous in skipped:
+                previous -= 1
+            if previous != index - 1:
+                aliases[str(index - 1)] = previous
+            indices.update((index, previous))
+    return indices - set(skipped), aliases
+
+
 def skip_reason(paths, module, mode):
     if mode == 'none':
         return None

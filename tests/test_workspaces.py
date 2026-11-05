@@ -99,12 +99,14 @@ def test_parent_symlink_never_deletes_other_experiment(tmp_path):
 
 
 @pytest.mark.parametrize('fail_slow',[False,True])
-def test_survival_waits_for_every_index_consumer_before_release(tmp_path,monkeypatch,fail_slow):
+@pytest.mark.parametrize('needs_coverage',[False,True])
+def test_survival_waits_for_every_index_consumer_before_release(tmp_path,monkeypatch,fail_slow,needs_coverage):
     from contextlib import nullcontext
     from test_survival.stages import survive
     from test_survival.io import write_csv
     groups=['fast','slow']
     config=validate(dict(name='consumers',anchor='t',project={'repo':str(tmp_path)},
+                         coverage={'at_anchor':False,'changed_line':needs_coverage},
                          dev={'groups':[dict(name=g,denominator='project') for g in groups]},
                          runner={'workers':{'survive':2}}))
     method=dict(id='T#test',file='T.java',execution_hash='source',**{'class':'T'},method='test',kind='plain')
@@ -139,8 +141,8 @@ def test_survival_waits_for_every_index_consumer_before_release(tmp_path,monkeyp
         assert (checkout/'source.java').read_text()=='evidence'
     else:
         survive.run(tmp_path,config)
-        assert not checkout.exists()
-        assert not (tmp_path/'work/checkouts/1.json').exists()
+        assert checkout.exists() == needs_coverage
+        assert (tmp_path/'work/checkouts/1.json').exists() == needs_coverage
 
 
 def test_pool_cleanup_requires_verified_immutable_snapshots(tmp_path):
@@ -164,3 +166,63 @@ def test_pool_cleanup_requires_verified_immutable_snapshots(tmp_path):
     source.write_text('class T { int changed; }')
     with pytest.raises(RuntimeError,match='snapshot changed'):verified_pool(tmp_path,root,[member])
     assert source.exists()
+
+
+def test_survive_and_cover_build_once_including_predecessor_alias(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from test_survival.io import write_csv
+    from test_survival.stages import survive, cover
+    adapter, config, builds = adapter_fixture(tmp_path, monkeypatch)
+    config['range']['skip_untouched'] = 'main-sources'
+    config['dev']['groups'] = [dict(name='dev', denominator='project')]
+    commits = [dict(index=i, sha=str(i), date='date', subject='change',
+                    **{'changes-src-main':'yes' if i == 3 else 'no', 'changes-pom':'yes' if i in (1,4) else 'no'})
+               for i in range(1,5)]
+    method = dict(id='T#test', file='T.java', execution_hash='source', **{'class':'T'}, method='test', kind='plain')
+    write_csv(tmp_path/'results/commits.csv', commits, list(commits[0]))
+    write_json(tmp_path/'results/anchor.json', dict(sha='0', date='date'))
+    write_json(tmp_path/'results/commit-paths.json', {'1':['pom.xml'], '2':['README.md'], '3':['src/main/java/A.java'], '4':['pom.xml']})
+    write_json(tmp_path/'results/frozen-denominators.json', {'dev':[method]})
+    write_json(tmp_path/'population/scope.json', dict(classes=[dict(file='src/main/java/A.java')]))
+    # The successful prepare builds, retained until the final consumer.
+    for i in (0,1,3,4):adapter.build(i,str(i))
+    for stage in (survive, cover):
+        monkeypatch.setattr(stage, 'JavaMavenAdapter', lambda *args:adapter)
+        monkeypatch.setattr(stage, 'measurement_session', lambda *args:nullcontext())
+    monkeypatch.setattr(adapter, 'git', lambda *args:'--- a/src/main/java/A.java\n+++ b/src/main/java/A.java\n@@ -1 +1 @@\n-old\n+new')
+    def worker(job):
+        adapter.build(job['index'], job['sha'])
+        adapter.build(0, '0')
+        result = dict(index=job['index'], sha=job['sha'], group='dev', status='evaluated', files=[],
+                      methods=[dict(t, state='pass', flaky=False) for t in job['methods']])
+        write_json(tmp_path/job['output'], result)
+        if job['phase'] == 'B':
+            write_csv(tmp_path/f'results/coverage/{job["index"]}-dev-lines.csv',
+                      [dict(file='src/main/java/A.java', line=1, covered='yes')], ['file','line','covered'])
+        return result
+    monkeypatch.setattr(adapter, 'worker', worker)
+    survive.run(tmp_path, config)
+    assert all(adapter.folder(i).exists() for i in (0,1,3))
+    assert not adapter.folder(4).exists()
+    cover.run(tmp_path, config)
+    assert read_json(tmp_path/'results/coverage-index-aliases.json') == {'2':1}
+    assert adapter.folder(0).exists()
+    assert all(not adapter.folder(i).exists() for i in (1,3,4))
+    assert len(builds) == 4
+    assert not (tmp_path/'results/workspace-restorations').exists()
+    finish_checkouts(tmp_path, config)
+    assert not (tmp_path/'work/checkouts').exists()
+
+
+def test_verification_counts_all_restoration_attempts_including_pools(tmp_path):
+    import runpy
+    metrics = runpy.run_path(str(Path(__file__).parents[1]/'scripts/footprint_metrics.py'))
+    count = metrics['restoration_counts']
+    assert count(tmp_path) == dict(total=0, by_experiment={})
+    for name, attempts in [('baseline', 2), ('policy/results/policy/pools/dev/2', 1)]:
+        root = tmp_path/name/'results/workspace-restorations/3'
+        # Count completed, failed and empty interrupted attempts alike.
+        for i in range(attempts):
+            (root/str(i)).mkdir(parents=True)
+        write_json(root/'0/result.json', dict(build='ok'))
+    assert count(tmp_path) == dict(total=3, by_experiment={'baseline':2, 'policy/results/policy/pools/dev/2':1})

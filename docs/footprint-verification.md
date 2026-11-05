@@ -6,14 +6,20 @@ records the implementation decisions and verification evidence instead.
 
 ## Decisions
 
-- A verified index build is a durable prepare sub-operation. Prepare releases
-  successful non-anchor indices immediately. Survival waits for every measured
-  group at an index and coordinator method validation; coverage also verifies
-  line uniqueness and identical executable universes before release. Policy
-  prefetch releases verified indices, holding regeneration boundaries until the
-  boundary's additional consumers finish. Index zero remains until successful
-  whole-run completion; a pool releases its anchor after publication and source,
-  resource and execution-hash verification. Failed/in-flight work is retained.
+- Prepare retains every successful index build. Survival releases non-anchor
+  indices outside the planned coverage set only after aggregation validates all
+  measured, imported and derived groups. Coverage retains its indices (including
+  predecessors resolved across skipped commits) until all groups and coordinator
+  line-universe validation succeed. Policy windows release non-boundary indices
+  after their last batch; regeneration boundaries remain through both window and
+  regeneration consumers. Index zero remains until successful whole-run
+  completion; a pool releases its anchor after publication and source, resource
+  and execution-hash verification. Failed/in-flight work is retained.
+- Each index is built once in an uninterrupted run. Peak disk is not a constraint;
+  cleanup prevents accumulation after completion. Verification counts every
+  restoration attempt, including interrupted attempts and nested pools; the
+  uninterrupted run must have zero. Restoration is reserved for resume, legacy
+  workspaces and genuine consumers after release.
 - Later consumers restore a released workspace via checkout/build. Original
   build records/logs remain authoritative. Restoration writes separate
   diagnostics and stops on SHA, dependency-content identity or verdict mismatch.

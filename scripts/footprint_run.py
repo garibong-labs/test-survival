@@ -13,6 +13,8 @@ import subprocess
 import sys
 import time
 
+from footprint_metrics import restoration_counts
+
 ROOT = Path('/tmp/footprint-e2e').resolve()
 TARGET = ROOT/'target'
 
@@ -114,6 +116,10 @@ def run(tool,label,interrupt=False):
     (saved/'timings.json').write_text(json.dumps(dict(total_seconds=time.monotonic()-start,commands=timings),indent=2))
     (saved/'samples.json').write_text(json.dumps(samples))
     shutil.copytree(experiments,saved/'experiments')
+    restorations=restoration_counts(saved/'experiments')
+    (saved/'restorations.json').write_text(json.dumps(restorations,indent=2)+'\n')
+    if not interrupt:
+        assert restorations['total']==0, ('Uninterrupted run restored a workspace',restorations)
     (saved/'tool-sha.txt').write_text(subprocess.check_output(['git','-C',tool,'rev-parse','HEAD'],text=True))
     print(json.dumps(dict(label=label,seconds=time.monotonic()-start,interrupted=stopped)),flush=True)
 

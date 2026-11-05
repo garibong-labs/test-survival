@@ -7,6 +7,7 @@ from ..pipeline import log
 from ..work import release_checkout
 from ..runner import measurement_session
 from ..config import group_names, execution_groups
+from ..rules.commits import coverage_indices
 from .survive import skipped_commits
 
 
@@ -96,23 +97,18 @@ def run(exp,config):
     from ..dev_results import imported_for, imported_record, require_record
     provenance, imported = imported_for(exp, config, 'cover')
     adapter=JavaMavenAdapter(exp,config)
-    commits=read_csv(exp/'results/commits.csv');indices={0} if config['coverage']['at_anchor'] else set()
-    skipped=skipped_commits(exp,config,commits);aliases={}
-    def previous_evaluated(index):
-        original=index
-        while index in skipped:index-=1
-        if original!=index:aliases[str(original)]=index
-        return index
+    commits=read_csv(exp/'results/commits.csv')
+    skipped=skipped_commits(exp,config,commits)
+    indices,aliases=coverage_indices(commits,skipped,config['coverage'])
     if config['coverage']['changed_line']:
         for row in commits:
             if row['changes-src-main']!='yes':continue
-            i=int(row['index']);indices.update([i,previous_evaluated(i-1)]);sha=row['sha'];parent=adapter.git('rev-parse',sha+'^1')
+            i=int(row['index']);sha=row['sha'];parent=adapter.git('rev-parse',sha+'^1')
             module=config['project']['module'].removeprefix('./').rstrip('/')
             prefix=module+'/' if module not in ['', '.'] else ''
             diff=adapter.git('diff','--no-ext-diff','--find-renames','-U0',parent,sha,'--',prefix+'src/main/java')
             pre,post=changed_lines(diff,module)
             write_json(exp/f'results/changes/{i}.json',dict(index=i,sha=sha,parent=parent,pre_image=pre,post_image=post,diff=diff))
-    indices-=set(skipped)
     write_json(exp/'results/coverage-index-aliases.json',aliases)
     write_csv(exp/'results/coverage-commits.csv',[dict(index=i) for i in sorted(indices)],['index'])
     alive=read_json(exp/'results/alive-entering.json');frozen=execution_groups(config, read_json(exp/'results/frozen-denominators.json'))
@@ -131,6 +127,10 @@ def run(exp,config):
                 raise RuntimeError('Imported coverage report failed')
             require_record(exp, provenance, f'results/coverage/{i}-{g}-lines.csv')
     pending = [(i, g) for i in buildable for g in frozen if g not in imported]
+    for i in buildable:
+        if all(g in imported for g in frozen):
+            validate_index(exp, i, frozen)
+            release_checkout(exp, config, i)
     with measurement_session(adapter, 'cover', bool(pending)):
         # Bound queued work so only active workers can materialize checkouts.
         from ..runner.dispatch import dispatch

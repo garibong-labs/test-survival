@@ -1,5 +1,3 @@
-from collections import Counter
-
 from ..work import release_checkout
 from ..adapters.java_maven import JavaMavenAdapter
 from ..adapters.run_reuse import cached_survival_record
@@ -9,7 +7,7 @@ from ..pipeline import log
 from ..runner import measurement_session
 from ..runner.dispatch import dispatch
 from ..rules.survival import FAILURES, advance
-from ..rules.commits import skip_reason
+from ..rules.commits import skip_reason, coverage_indices
 from ..rules.dev_denominator import derive_record,validate_derived_subsets
 
 
@@ -97,7 +95,6 @@ def run(exp,config):
         for g in imported:
             imported_record(exp, f'results/{raw_folder(g,config,provenance)}/{row["index"]}-{g}.json', sha=row['sha'], method_ids=[m['id'] for m in frozen[g]], provenance=provenance)
     measured=[g for g in groups if raw_folder(g,config,provenance)=='raw' and g not in imported]
-    remaining = Counter({int(r['index']): len(measured) for r in evaluated})
     known={g:{} for g in measured}
     def prepare(item,pending):
         row,g=item; i=int(row['index']); dead_at=dict(known[g])
@@ -125,9 +122,6 @@ def run(exp,config):
             if m['state'] in FAILURES:
                 known[g][m['id']]=min(i,known[g].get(m['id'],i))
         log(exp,f'survive: {i} {g} recorded',config)
-        remaining[i] -= 1
-        if remaining[i] == 0:
-            release_checkout(exp, config, i)
     with measurement_session(adapter, 'survive', bool(measured and evaluated)):
         dispatch([(row,g) for row in evaluated for g in measured],config['runner']['workers']['survive'],prepare,job,completed)
     pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g['name'] in groups and derived_source(config, g['name']) and g['name'] not in imported}
@@ -140,4 +134,10 @@ def run(exp,config):
                 raw=read_json(exp/f'results/{raw_folder(source,config,provenance)}/{row["index"]}-{source}.json')
                 write_json(exp/f'results/raw-derived/{row["index"]}-{g}.json',derive_record(raw,g,frozen[g]),compress=True)
     curves=aggregate(exp,config)
+    # Prepare's builds remain live through their final workspace consumer.
+    # Validate measured, imported and derived records before releasing anything.
+    coverage, _ = coverage_indices(commits, skipped, config['coverage'])
+    for row in evaluated:
+        if int(row['index']) not in coverage:
+            release_checkout(exp, config, row['index'])
     return 'Final survivors: '+', '.join(f'{g}={curves[-1][g+"_alive"]}' for g in groups)
