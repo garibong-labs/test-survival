@@ -538,7 +538,10 @@ released after its last consumer validates the saved results: coverage (includin
 skipped-commit predecessor aliases), otherwise survival; policy indices wait for
 their last window/regeneration batch. An uninterrupted run builds each index
 once. Failed or interrupted work stays available. Restoration preserves the original build record/logs and
-stops on a SHA, dependency or build-verdict disagreement. See
+stops on a SHA, dependency or build-verdict disagreement. Changing build inputs
+instead creates a new build record and preserves prior records in
+`results/build-history/`, with separate logs for each replacement attempt.
+Retained legacy checkouts keep their classpaths for later baseline inventory. See
 [checkout lifetime and restoration](docs/result-formats.md#checkout-lifetime-and-restoration).
 
 Use `survival run EXP_DIR --keep-work` or `survival policy run EXP_DIR --keep-work`

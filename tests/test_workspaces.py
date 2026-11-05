@@ -8,7 +8,7 @@ import pytest
 from test_survival.adapters.java_maven import JavaMavenAdapter
 from test_survival.config import validate
 from test_survival.io import read_json, write_json
-from test_survival.work import release_checkout, finish_checkouts, remove_owned
+from test_survival.work import release_checkout, finish_checkouts, finish_work, remove_owned
 
 
 def adapter_fixture(tmp_path, monkeypatch):
@@ -44,6 +44,103 @@ def test_release_restore_preserves_original_build_and_logs(tmp_path,monkeypatch)
     assert len(calls)==2
     assert len(list((tmp_path/'results/workspace-restorations/2').glob('*/result.json')))==1
     assert read_json(tmp_path/'state/workspace-2.json')['status']=='completed'
+
+
+@pytest.mark.parametrize('released', [False, True])
+@pytest.mark.parametrize('verdict', ['ok', 'fail'])
+def test_changed_build_inputs_replace_record_without_restoration(tmp_path, monkeypatch, released, verdict):
+    adapter, config, calls = adapter_fixture(tmp_path, monkeypatch)
+    first = adapter.build(2, 'sha')
+    original = (tmp_path/'results/builds/2.json').read_bytes()
+    identity = (tmp_path/'results/workspace-identities/2.json').read_bytes()
+    logs = {p: p.read_bytes() for p in (tmp_path/'results/builds/logs').rglob('*') if p.is_file()}
+    if released:
+        release_checkout(tmp_path, config, 2)
+    write_json(tmp_path/'state/workspace-2.json', dict(status='failed', sha='sha'))
+    config['runner']['jvm']['javac'] = '777m'
+    execute = adapter.runner.execute
+    def rebuild(command, folder, log, timeout):
+        result = execute(command, folder, log, timeout)
+        log.write_text('new configuration log')
+        result['exit_code'] = 0 if verdict == 'ok' else 1
+        return result
+    monkeypatch.setattr(adapter.runner, 'execute', rebuild)
+    monkeypatch.setattr(adapter, 'dependency_identity', lambda *a: [dict(path='jar', sha256='new')])
+    rebuilt = adapter.build(2, 'sha')
+    assert rebuilt['build'] == verdict
+    assert rebuilt['input_sha256'] == adapter.build_fingerprint('sha') != first['input_sha256']
+    assert read_json(tmp_path/'results/builds/2.json') == rebuilt
+    assert logs == {p: p.read_bytes() for p in logs}
+    saved = list((tmp_path/'results/build-history/2').glob('*/build.json'))
+    assert len(saved) == 1 and saved[0].read_bytes() == original
+    assert saved[0].with_name('identity.json').read_bytes() == identity
+    assert saved[0].with_name('workspace-state.json').is_file()
+    assert not (tmp_path/'results/workspace-restorations').exists()
+    assert not (tmp_path/'state/workspace-2.json').exists()
+    if verdict == 'ok':
+        count = len(calls)
+        assert adapter.build(2, 'sha') == rebuilt
+        assert len(calls) == count
+
+
+@pytest.mark.parametrize('pool', [False, True])
+def test_retained_legacy_anchor_keeps_classpath_for_baseline(tmp_path, monkeypatch, pool):
+    adapter, config, calls = adapter_fixture(tmp_path, monkeypatch)
+    built = adapter.build(0, 'sha')
+    (tmp_path/'results/workspace-identities/0.json').unlink()
+    cp = tmp_path/built['classpath']
+    cp.write_text('/m2/junit/junit/4.13.2/junit-4.13.2.jar')
+    for relative in ('src/main/java/Main.java', 'src/test/java/Test.java'):
+        path = adapter.folder(0)/relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('class Placeholder {}')
+    finish_checkouts(tmp_path, config)
+    finish_work(tmp_path, config, pool=pool)
+    assert adapter.folder(0).is_dir()
+    assert adapter.build(0, 'sha') == built
+    assert len(calls) == 1
+    inventories = []
+    def inventory(command, folder, log, timeout):
+        assert command[-1] == 'junit4'
+        inventories.append(command)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text('')
+        return dict(exit_code=0)
+    monkeypatch.setattr(adapter.runner, 'execute', inventory)
+    # Force the real baseline inventory path, as prepare does before setup_runner.
+    config['dev']['stable_runs'] += 1
+    for repeat in range(1, config['dev']['stable_runs'] + 1):
+        write_json(tmp_path/f'results/baseline-run{repeat}.json', dict(attempts=[]))
+    assert adapter.baseline() == []
+    assert len(inventories) == 2
+    remove_owned(tmp_path, 'work/checkouts/0', config)
+    finish_work(tmp_path, config, pool=pool)
+    assert not cp.exists()
+
+
+def test_interrupted_invalidated_build_preserves_evidence_then_resumes(tmp_path, monkeypatch):
+    adapter, config, calls = adapter_fixture(tmp_path, monkeypatch)
+    first = adapter.build(2, 'sha')
+    config['runner']['jvm']['javac'] = '777m'
+    execute = adapter.runner.execute
+    def interrupted(command, folder, log, timeout):
+        execute(command, folder, log, timeout)
+        log.write_text('interrupted rebuild')
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(adapter.runner, 'execute', interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        adapter.build(2, 'sha')
+    assert read_json(tmp_path/'results/builds/2.json') == first
+    assert adapter.folder(2).is_dir()
+    evidence = {p: p.read_bytes() for p in (tmp_path/'results/builds/logs').rglob('*') if p.is_file()}
+    assert b'interrupted rebuild' in evidence.values()
+    monkeypatch.setattr(adapter.runner, 'execute', execute)
+    rebuilt = adapter.build(2, 'sha')
+    assert rebuilt['input_sha256'] == adapter.build_fingerprint('sha')
+    assert adapter.build(2, 'sha') == rebuilt
+    assert len(calls) == 3
+    assert evidence == {p: p.read_bytes() for p in evidence}
+    assert not (tmp_path/'results/workspace-restorations').exists()
 
 
 @pytest.mark.parametrize('mismatch',['dependency','verdict','sha'])

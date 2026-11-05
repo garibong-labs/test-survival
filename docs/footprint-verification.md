@@ -332,3 +332,31 @@ The full local suite passes **761 tests**, including all 11 real Java fixtures.
 The nine KTester lifecycle cases also pass with archived request/response payloads
 included in the byte-and-timestamp preservation checks. Python compilation and
 `git diff --check` pass.
+
+### Build invalidation and legacy cleanup follow-up
+
+Two further review findings affected configuration changes and retained legacy
+workspaces. A changed build fingerprint now starts a replacement build instead
+of workspace restoration. Prior build/identity/state records are archived and
+replacement diagnostics use a distinct directory, including on interruption.
+The new record carries the current fingerprint; subsequent calls reuse a
+successful build. Restoration under unchanged inputs still rejects SHA,
+dependency and verdict disagreements.
+
+Final cleanup retains classpaths while any checkout remains. This allows the
+actual baseline inventory path to detect the test framework from a cached legacy
+build before runner setup, including in pools. Once no checkouts remain, cleanup
+can remove those classpaths.
+
+Seven new regression cases cover successful and failed replacement builds with
+present/released trees, interrupted replacement and resume, and baseline inventory
+after baseline/pool cleanup of legacy layouts. The six configuration/legacy cases
+failed before the fixes. The focused workspace/cleanup suite passes 32 tests.
+These cases use disposable fixtures and mocked builds; no models or real experiment
+folders are involved. The three-run measurements above remain attributed to
+`65b3466`; they do not exercise configuration invalidation or legacy cleanup.
+
+The full local suite passes **768 tests**, including all 11 real Java fixtures.
+The 66 workspace, cleanup and progress tests also pass together, covering legacy
+commit-range invalidation as well as the new cases. Python compilation and
+`git diff --check` pass.

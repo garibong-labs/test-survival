@@ -330,6 +330,16 @@ and retains work. Old experiments remain readable; reconstructing an already
 removed legacy workspace without a recorded dependency identity fails closed.
 Report PNG rendering uses the experiment directory and needs no checkout.
 
+Changed build inputs invalidate the build instead of restoring it. Before replacing
+the authoritative record, the previous build, dependency identity and any restoration
+state are copied to `results/build-history/<index>/<attempt-id>/{build,identity,workspace-state}.json`
+(only existing files are copied). Replacement build and classpath diagnostics use
+`results/builds/logs/<index>/<attempt-id>/`, preserving earlier logs in place.
+The replacement record carries the new input fingerprint and may have a different
+verdict or dependency identity. Interrupted attempts retain their logs and workspace;
+the next attempt uses a new diagnostics directory. Build history is operational
+evidence, not a scientific result.
+
 ## Successful-stage scratch cleanup
 
 `survival run --keep-work` and `survival policy run --keep-work` retain successful
@@ -359,7 +369,10 @@ file/byte counts. Parent retained paths subsume children, avoiding double counti
 This operational report is uncompressed and excluded from scientific comparison.
 
 After full run / verified pool completion, shared libraries, classpath jobs and
-successful runtime scratch can be recreated on demand. Compiler caches (including
+successful runtime scratch can be recreated on demand. `work/classpaths/` is retained
+while any checkout remains, including legacy trees without workspace identities,
+so cached builds can support baseline inventory before runner setup. It is removed
+when no checkout remains. Compiler caches (including
 pool-local caches), generation/policy histories, unknown work, and every generated
 artifact remain untouched. KTester dataset scratch is removed only after round
 output matches its generated archive and, for a baseline run, report completion

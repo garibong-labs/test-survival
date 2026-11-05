@@ -252,7 +252,11 @@ def finish_work(exp, config, *, pool=False):
                              'dev-method-coverage-t','dev-screen','policy-coverage','policy-survive'])
     removed=dict(files=0,bytes=0)
     retained=read_json(exp/'results/work-cleanup.json',{}).get('retained_failures',{})
-    for name in ('libs','classpaths','classpath-jobs','runner-setup-job.json','runner-setup-job.log',
+    # Legacy/failed workspaces survive checkout cleanup. Their cached builds
+    # still reference these classpaths, including baseline inventory before setup.
+    retained_checkouts = any(p.is_dir() for p in (exp/'work/checkouts').glob('*'))
+    for name in ('libs',*(() if retained_checkouts else ('classpaths',)),
+                 'classpath-jobs','runner-setup-job.json','runner-setup-job.log',
                  *(() if retained else ('runtime',))):
         path=exp/'work'/name
         if path.exists():

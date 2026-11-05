@@ -115,8 +115,23 @@ class JavaMavenAdapter:
         unsettled = read_json(restoration_state, {}).get('status') in ('running', 'failed')
         if compatible and previous.get('build') == 'ok' and present and not unsettled:
             return previous
-        restoration = previous.get('build') == 'ok' and (compatible or recorded_identity is not None)
+        # An identity does not make an invalidated build authoritative for new
+        # inputs. Compare using the original SHA so a changed index mapping with
+        # a recorded identity still fails the SHA check under unchanged settings.
+        same_inputs = previous.get('input_sha256') in self.build_fingerprints(previous.get('sha'))
+        restoration = previous.get('build') == 'ok' and (compatible or recorded_identity is not None and same_inputs)
         directory = self.exp/f'results/workspace-restorations/{index}/{uuid4().hex}' if restoration else self.exp/'results/builds/logs'
+        if previous and not restoration:
+            attempt = uuid4().hex
+            history = self.exp/f'results/build-history/{index}/{attempt}'
+            history.mkdir(parents=True)
+            for source, name in ((record, 'build.json'), (identity_path, 'identity.json'),
+                                 (restoration_state, 'workspace-state.json')):
+                if source.is_file():
+                    shutil.copy2(source, history/name)
+            # Preserve all diagnostics referenced by superseded records, even
+            # if this new attempt fails or is interrupted before publication.
+            directory = self.exp/f'results/builds/logs/{index}/{attempt}'
         directory.mkdir(parents=True, exist_ok=True)
         if restoration and (previous.get('sha') != sha or recorded_identity and recorded_identity['sha'] != sha):
             write_json(directory/'result.json', dict(status='failed', reason='SHA disagrees', sha=sha))
@@ -134,12 +149,13 @@ class JavaMavenAdapter:
         folder = self.folder(index)
         try:
             try:
-                digest, cache, runs = self.cache.resolve(folder, index, log_root=directory if restoration else None)
+                digest, cache, runs = self.cache.resolve(folder, index, log_root=directory)
             except RuntimeError as exc:
                 if restoration:
                     raise
                 result = dict(index=index, sha=sha, build='fail', attempts=[], classpath_error=str(exc), input_sha256=fingerprint)
                 write_json(record, result)
+                restoration_state.unlink(missing_ok=True)
                 return result
             attempts = []
             for number, offline in enumerate((True, False), 1):
@@ -163,6 +179,7 @@ class JavaMavenAdapter:
                 write_json(restoration_state, dict(status='completed', sha=sha, diagnostics=str(directory.relative_to(self.exp))))
                 return previous
             write_json(record, result)
+            restoration_state.unlink(missing_ok=True)
             return result
         except BaseException as exc:
             if restoration:
