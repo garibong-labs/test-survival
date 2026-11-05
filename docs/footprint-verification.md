@@ -30,6 +30,10 @@ records the implementation decisions and verification evidence instead.
 - `--keep-work` disables release/cleanup in baseline and policy runs, including
   background runs and pools. Pool-local compile caches, generation/policy
   histories and KTester completion records remain in their existing locations.
+  KTester keeps `dataset_info.json` for report refreshes and reuses completed
+  generated round archives before launching workers or reading credentials.
+  Previously cleaned datasets remain refreshable through their retained
+  completion record even when the dataset sentinel is absent.
   Linux host permission failures retry the same guarded deletion in the effective
   pool/generator container, including pools without a local YAML file. Retries
   retain command diagnostics without changing tree permissions.
@@ -140,7 +144,7 @@ restoration and cleanup files are listed separately from scientific outputs.
 | Tables, README report section, SVG, PNG, final summary | Exact rendered content and normalized metadata comparison. |
 | Policy plans, pool sources/frozen records, batches/runs, selections, segments, curves, coverage, reports | One shared developer pool; reset and fill; resumed pool/build records are hash checked. |
 | Compile events, caches, workspace identities/restoration, stage/run state | Separate operational inventory and lifecycle/provenance checks; concurrent writer and crash-tail unit tests. |
-| KTester datasets/completion, live native responses/provider prompts, generation/policy force histories | Not end-to-end exercised; preservation/configuration/completion and existing generator tests cover these paths. No live model calls. |
+| KTester datasets/completion, live native responses/provider prompts, generation/policy force histories | KTester cleanup, round-limit extension and forced report refresh have mocked lifecycle regressions, including older cleaned layouts; author-tool/model execution is not exercised end to end. Histories/configuration retain their existing tests. No live model calls. |
 | Build failures, mismatching restorations, quarantine, missing/failed coverage, concurrent workers | Dedicated failure/parallel fixtures and unit tests; the end-to-end target has successful builds and intentional test failures. |
 | Archive ZIP/manifests and historical dashboard layouts | Existing archive/dashboard test suites; no archive run against a real experiment. |
 
@@ -161,7 +165,8 @@ This includes the uncompressed dev-scope XML and exact PNG bytes. Baseline final
 survivors are Dev 3/4, Dev-scope 3/4 and synthetic Ouedraogo 1/2. Both reset and
 fill policy outputs are identical across the three runs. The final branch runs
 used commit `65b3466` (runtime fixes in `b1f75e9`, followed by a Linux fixture
-setup correction). The subsequent commit updates this report only.
+setup correction). These measurements precede the KTester-specific follow-up below; the fixture
+uses the synthetic Ouedraogo import and does not execute KTester.
 
 Counts are regular files and logical bytes (`stat().st_size`), including hidden
 files, locks, preserved caches and failed scratch. Directories are not counted.
@@ -298,3 +303,32 @@ are protected debugging artifacts, not scientific output changes. Earlier run
 evidence remains under `last-consumer-*`; the tables above use the new `review-*`
 runs. No checkout release boundary, compression or compile-journal behavior was
 changed by these review fixes.
+
+### KTester lifecycle follow-up
+
+Two later review findings concern paths absent from the measured fixture.
+Completed KTester rounds now load their published archive before preparing any
+worker or accessing credentials. Raising the round limit executes only the new
+round; archived responses and existing sources keep their bytes and timestamps.
+A missing derived source copy can be finished after interrupted publication.
+Incomplete/failed archives stop for inspection without another generation call.
+
+Cleanup retains `dataset_info.json` alongside `experiment-result.json`. Forced
+report regeneration refreshes the completion record's summary hash, denominators
+and verification data. A prior completion record also supports datasets whose
+sentinel was already deleted by older cleanup. Imported generation without an
+author-tool dataset remains excluded from completion-record creation.
+
+Nine new mocked lifecycle cases cover baseline/pool cleanup, round-limit
+extension, new-round preparation, forced report refresh on both current and older
+cleaned layouts, missing source copies, unverified archives and imported results.
+They invoke the real generation/report stage orchestration while mocking worker,
+credential and rendering boundaries. No model calls, author-tool runs or real
+experiment modifications were made. The earlier three-run measurements above
+remain attributed to their recorded revision; these new KTester behaviors are
+validated by the lifecycle regressions rather than by the synthetic import.
+
+The full local suite passes **761 tests**, including all 11 real Java fixtures.
+The nine KTester lifecycle cases also pass with archived request/response payloads
+included in the byte-and-timestamp preservation checks. Python compilation and
+`git diff --check` pass.

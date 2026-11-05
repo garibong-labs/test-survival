@@ -258,8 +258,9 @@ def finish_work(exp, config, *, pool=False):
         if path.exists():
             counts=footprint(path);remove_owned(exp,path.relative_to(exp),config)
             for key in removed:removed[key]+=counts[key]
-    # KTester uses its dataset again for report completion. Keep the completion
-    # record in place; only remove other children after every round is archived.
+    # Keep KTester's report sentinel and completion record in place. Preparation
+    # and round scratch can go once archived; generation reuses completed archives
+    # before consulting its disposable worker markers or accessing credentials.
     for dataset in (exp/'work/ktester').glob('*'):
         if not dataset.is_dir():continue
         if not pool and not (dataset/'experiment-result.json').is_file():continue
@@ -274,7 +275,7 @@ def finish_work(exp, config, *, pool=False):
                     if not archived.is_file() or archived.read_bytes()!=file.read_bytes():verified=False;break
         if not verified:continue
         for child in list(dataset.iterdir()):
-            if child.name=='experiment-result.json':continue
+            if child.name in ('experiment-result.json','dataset_info.json'):continue
             counts=footprint(child);remove_owned(exp,child.relative_to(exp),config)
             for key in removed:removed[key]+=counts[key]
     failures = {}

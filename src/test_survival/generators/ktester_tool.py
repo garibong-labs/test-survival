@@ -11,6 +11,19 @@ from ..model.credentials import _read
 from ..lifecycle import launch
 
 
+def round_result(directory, *, reuse=False):
+    """Flatten a new round, or finish only missing copies in an archived round."""
+    sources=sorted(directory.rglob('test_classes/*.java'))
+    flat=directory/'sources';flat.mkdir(parents=True,exist_ok=True)
+    import shutil
+    # Preserve the old sorted-copy winner when filenames collide, without
+    # overwriting already published sources when revisiting a completed round.
+    for name,file in {file.name:file for file in sources}.items():
+        if not reuse or not (flat/name).exists():shutil.copy2(file,flat/name)
+    calls=[read_json(p) for p in sorted((directory/'raw-responses').glob('*/call.json'))]
+    return RoundResult(files=sources,calls=calls)
+
+
 class KTesterTool:
     def __init__(self,exp,config,generator):
         self.exp,self.config,self.group=exp,generator_config(config,generator),generator
@@ -19,6 +32,12 @@ class KTesterTool:
     def generate(self,round_no):
         label=f'round{round_no}'
         directory=self.exp/'generated'/self.group['name']/label
+        # Whole-run/pool cleanup removes disposable preparation and worker
+        # markers. The published round must win before any worker or key access.
+        if directory.exists():
+            if read_json(directory/'run.json',{}).get('status')!='completed':
+                raise RuntimeError('KTester archive is incomplete or failed; inspect '+str(directory))
+            return round_result(directory,reuse=True)
         project_name=Path(self.config['project']['repo']).name
         script=Path(__file__).parents[1]/'adapters/ktester_worker.py'
         job=dict(experiment=self.adapter.runner.path(self.exp),module=self.config['project']['module'],tool=self.adapter.runner.path(self.group['tool_path']),project_name=project_name,group=self.group['name'],round=round_no,retry=0,label=label,params=self.group['params'],model=self.config['model']['name'],env_key=self.config['model']['env_key'])
@@ -40,9 +59,4 @@ class KTesterTool:
                     result.wait()
             write_json(state,dict(status='completed' if result.returncode==0 else 'failed',exit_code=result.returncode))
             if result.returncode:raise RuntimeError('KTester '+action+' failed; archived output retained')
-        sources=sorted(directory.rglob('test_classes/*.java'))
-        flat=directory/'sources';flat.mkdir(parents=True,exist_ok=True)
-        import shutil
-        for file in sources:shutil.copy2(file,flat/file.name)
-        calls=[read_json(p) for p in sorted((directory/'raw-responses').glob('*/call.json'))]
-        return RoundResult(files=sources,calls=calls)
+        return round_result(directory)

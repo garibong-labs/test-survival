@@ -547,6 +547,10 @@ failed evidence, model outputs, compiler caches, force histories, and KTester
 completion records. `results/work-cleanup.json` reports scratch bytes removed and
 failed subtrees retained; see [scratch cleanup](docs/result-formats.md#successful-stage-scratch-cleanup).
 
+After KTester cleanup, increasing `rounds.max` reuses completed archived rounds
+without repeating model calls. Report regeneration refreshes the retained
+completion record, including when an older cleanup removed dataset metadata.
+
 Compiler history uses one append-only gzip journal per index instead of one
 folder per javac call. Start/finish records preserve interrupted calls, failed
 compiler output stays complete, and legacy event folders remain readable. See

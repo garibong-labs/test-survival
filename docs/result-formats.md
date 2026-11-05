@@ -363,7 +363,19 @@ successful runtime scratch can be recreated on demand. Compiler caches (includin
 pool-local caches), generation/policy histories, unknown work, and every generated
 artifact remain untouched. KTester dataset scratch is removed only after round
 output matches its generated archive and, for a baseline run, report completion
-has been recorded. `work/ktester/<group>/experiment-result.json` stays in place.
+has been recorded. `work/ktester/<group>/experiment-result.json` and
+`dataset_info.json` stay in place. Completed rounds are reused from
+`generated/<group>/round<N>/run.json` before any worker launch or credential
+access, even when cleanup removed their workspace markers. Raising `rounds.max`
+rebuilds preparation/index/dataset scratch only for the new round. Existing
+archived sources and responses are not rewritten; missing derived source copies
+can be completed after an interrupted publication. An incomplete/failed archive
+requires inspection before generation can continue.
+
+Forcing the report stage refreshes the retained KTester completion record and its
+`final_summary_sha256`. A prior completion record also identifies datasets cleaned
+by older versions that removed `dataset_info.json`; imported generation without
+either dataset record does not create a KTester completion record.
 A partial `--until` run never triggers whole-run cleanup. Failure or interruption
 leaves the owning stage's scratch; previously verified index operations may
 already have released their successful checkouts.
