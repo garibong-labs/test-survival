@@ -387,3 +387,26 @@ def test_container_owned_scratch_cleanup(tmp_path, java_environment, monkeypatch
     assert not (tmp_path/'work/owned').exists()
     records=list((tmp_path/'results/work-cleanup-commands').glob('*.json'))
     assert len(records)==1 and json.loads(records[0].read_text())['exit_code']==0
+    # Real pools have no experiment.yaml, and may use a generator-specific
+    # image. Exercise both checkout and successful scratch cleanup there.
+    from test_survival.io import write_json
+    pool=tmp_path/'results/policy/pools/dev/2'
+    pool.mkdir(parents=True)
+    config=validate(raw)
+    runner=JavaMavenAdapter(pool,config).runner
+    created=runner.execute(['python3','-c',
+        'from pathlib import Path; '
+        'paths=[Path("work/checkouts/0/target/classes/A.class"),Path("work/libs/runtime.jar")]; '
+        '[(p.parent.mkdir(parents=True,exist_ok=True),p.write_bytes(b"compiled")) for p in paths]'],
+        pool,pool/'create.log',30)
+    assert created['exit_code']==0
+    assert not (pool/'experiment.yaml').exists()
+    write_json(pool/'work/checkouts/0.json',dict(sha='sha'))
+    write_json(pool/'results/builds/0.json',dict(sha='sha',build='ok'))
+    write_json(pool/'results/workspace-identities/0.json',dict(sha='sha'))
+    work.finish_checkouts(pool,config)
+    work.finish_work(pool,config,pool=True)
+    assert not (pool/'work/checkouts').exists()
+    assert not (pool/'work/libs').exists()
+    records=list((pool/'results/work-cleanup-commands').glob('*.json'))
+    assert len(records)==4 and all(json.loads(p.read_text())['exit_code']==0 for p in records)

@@ -38,6 +38,20 @@ def coverage(adapter, index, tests, name, full_suite=False):
     return combined
 
 
+def pool_config(b, point):
+    """Use identical runner settings for pool execution and host cleanup retries."""
+    config = deepcopy(b.execution_config)
+    config['anchor'] = point['sha']
+    config['screen']['stable_runs'] = 3
+    config['dev']['stable_runs'] = 3
+    config['runner']['reuse'] = {'checkouts':None, 'classpath_cache':None}
+    g = next((g for g in config['generators'] if g['name'] == point['group']), None)
+    if g is not None:
+        config = generator_config(config, g)
+        config['generators'] = [g]
+    return config
+
+
 def build_pool(b, point, dev_target):
     group, index = point['group'], point['index']
     exp = b.exp/f'results/policy/pools/{group}/{index}'
@@ -45,15 +59,8 @@ def build_pool(b, point, dev_target):
     if owner.get('status') != 'running' or not owner.get('run_id'):
         raise RuntimeError('Pool generation requires a registered policy run')
     write_json(exp/'state/run-owner.json', dict(experiment=str(b.exp), run_id=owner['run_id']))
-    config = deepcopy(b.execution_config)
-    config['anchor'] = point['sha']
-    config['screen']['stable_runs'] = 3
-    config['dev']['stable_runs'] = 3
-    config['runner']['reuse'] = {'checkouts':None, 'classpath_cache':None}
+    config = pool_config(b, point)
     g = next((g for g in config['generators'] if g['name'] == group), None)
-    if g is not None:
-        config = generator_config(config, g)
-        config['generators'] = [g]
     adapter = JavaMavenAdapter(exp, config)
     write_json(exp/'results/anchor.json', dict(sha=point['sha'], date=b.by_index[index]['date']))
     if adapter.build(0, point['sha'])['build'] != 'ok':
@@ -180,8 +187,9 @@ def run(b, plan, step):
             pool = read_json(path)
             from ..work import finish_checkouts, finish_work
             if verified_pool(b.exp, path.parent, pool):
-                finish_checkouts(path.parent, b.execution_config)
-                finish_work(path.parent, b.execution_config, pool=True)
+                config = pool_config(b, point)
+                finish_checkouts(path.parent, config)
+                finish_work(path.parent, config, pool=True)
             return (g,i), pool
         except BaseException:
             stopped.set()

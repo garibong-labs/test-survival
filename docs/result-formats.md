@@ -341,7 +341,11 @@ coordinator cleans owned worker scratch after successful stage validation:
 Missing/unverified outputs never authorize cleanup. Cached screening failures
 retain their original diagnostics for later classification. Baseline failed
 file subtrees remain whole; shared failed policy batches remain whole because
-multiple methods can share their compilation and coverage evidence.
+multiple methods can share their compilation and coverage evidence. Failed
+developer tests also retain shared `suite-classes` and `suite-javac.txt` when
+whole-suite compilation succeeded; their numbered classes folder can be empty.
+Cleanup retries use the effective runner configuration, including generator
+Docker overrides, even for nested pools without an `experiment.yaml`.
 
 On a worker retry, existing scratch is copied to independent files under
 `work/failed-attempts/<original-work-relative-path>/<attempt-id>/`, with a sibling

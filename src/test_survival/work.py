@@ -41,7 +41,7 @@ def _remove_owned(exp, relative):
         os.close(fd)
 
 
-def remove_owned(exp, relative):
+def remove_owned(exp, relative, config=None):
     """Delete owned work, including Linux files created by the root container."""
     try:
         _remove_owned(exp, relative)
@@ -49,14 +49,20 @@ def remove_owned(exp, relative):
         # Host coordinators cannot traverse/unlink root-owned Maven/worker
         # subtrees on Linux. Re-run the same descriptor-relative, no-follow
         # deletion in the configured container; never change tree permissions.
-        if os.geteuid() == 0 or not (Path(exp)/'experiment.yaml').is_file():
+        if os.geteuid() == 0:
             raise
         from uuid import uuid4
         from .config import load
         from .runner.docker import DockerRunner
         from .io import write_json
         exp=Path(exp)
-        runner=DockerRunner(exp,load(exp))
+        # Nested policy pools have no YAML; their caller supplies the same
+        # effective runner settings (including generator overrides) as the build.
+        if config is None:
+            if not (exp/'experiment.yaml').is_file():
+                raise
+            config=load(exp)
+        runner=DockerRunner(exp,config)
         script=('import importlib,sys; sys.path.insert(0,"/"); '
                 'importlib.import_module("survival-package.work").remove_owned(sys.argv[1],sys.argv[2])')
         log=exp/'results/work-cleanup-commands'/(uuid4().hex+'.log')
@@ -77,8 +83,8 @@ def release_checkout(exp, config, index, *, final=False):
     # are not retroactively pruned. Never lose a failed build's working evidence.
     if record.get('build') != 'ok' or not identity or identity.get('sha') != record.get('sha'):
         return
-    remove_owned(exp, f'work/checkouts/{index}')
-    remove_owned(exp, f'work/checkouts/{index}.json')
+    remove_owned(exp, f'work/checkouts/{index}', config)
+    remove_owned(exp, f'work/checkouts/{index}.json', config)
 
 
 def finish_checkouts(exp, config):
@@ -93,7 +99,7 @@ def finish_checkouts(exp, config):
         if path.stem.isdigit():
             release_checkout(exp, config, path.stem, final=True)
     if root.exists() and not any(root.iterdir()):
-        remove_owned(exp, 'work/checkouts')
+        remove_owned(exp, 'work/checkouts', config)
 
 
 def footprint(path):
@@ -137,7 +143,7 @@ def record_cleanup(exp, removed, retained):
     write_json(path, prior)
 
 
-def cleanup_job(exp, job_path):
+def cleanup_job(exp, job_path, config=None):
     """Keep failed file subtrees whole. Unknown/missing results never permit pruning."""
     exp = Path(exp)
     job = read_json(job_path, {})
@@ -157,7 +163,10 @@ def cleanup_job(exp, job_path):
         if result.get('files') and job.get('action') == 'run':
             for i, record in enumerate(result['files']):
                 if failed(record):protected.add(str(i))
-            if failed(result.get('whole_frozen_suite_compile')):
+            suite = result.get('whole_frozen_suite_compile')
+            # Successful whole-suite compilation supplies the actual classes
+            # to every numbered file; its private classes directory is empty.
+            if suite is not None and (protected or failed(suite)):
                 protected.update(p.name for p in root.glob('suite-*'))
             if failed(result.get('coverage_report')):protected.add('.')
             if not protected:protected.add('.')
@@ -174,13 +183,13 @@ def cleanup_job(exp, job_path):
                 retained[str(child.relative_to(exp))] = footprint(child)
                 continue
             counts = footprint(child)
-            remove_owned(exp, child.relative_to(exp))
+            remove_owned(exp, child.relative_to(exp), config)
             for key in removed:removed[key] += counts[key]
-        if not any(root.iterdir()):remove_owned(exp,relative)
+        if not any(root.iterdir()):remove_owned(exp,relative,config)
     if not retained:
         for path in (Path(job_path), Path(job_path).with_suffix('.log')):
             if path.exists():
-                counts = footprint(path);remove_owned(exp,path.relative_to(exp))
+                counts = footprint(path);remove_owned(exp,path.relative_to(exp),config)
                 for key in removed:removed[key] += counts[key]
     record_cleanup(exp,removed,retained)
 
@@ -193,9 +202,9 @@ def cleanup_jobs(exp, config, bases):
         if root.is_symlink():raise RuntimeError('Refusing symlink scratch')
         if root.is_dir():
             for job in sorted(root.rglob('*-job.json')):
-                cleanup_job(exp,job)
+                cleanup_job(exp,job,config)
         job = root.with_name(root.name+'-job.json')
-        if job.is_file():cleanup_job(exp,job)
+        if job.is_file():cleanup_job(exp,job,config)
 
 
 def cleanup_stage(exp, config, stage):
@@ -247,7 +256,7 @@ def finish_work(exp, config, *, pool=False):
                  *(() if retained else ('runtime',))):
         path=exp/'work'/name
         if path.exists():
-            counts=footprint(path);remove_owned(exp,path.relative_to(exp))
+            counts=footprint(path);remove_owned(exp,path.relative_to(exp),config)
             for key in removed:removed[key]+=counts[key]
     # KTester uses its dataset again for report completion. Keep the completion
     # record in place; only remove other children after every round is archived.
@@ -266,7 +275,7 @@ def finish_work(exp, config, *, pool=False):
         if not verified:continue
         for child in list(dataset.iterdir()):
             if child.name=='experiment-result.json':continue
-            counts=footprint(child);remove_owned(exp,child.relative_to(exp))
+            counts=footprint(child);remove_owned(exp,child.relative_to(exp),config)
             for key in removed:removed[key]+=counts[key]
     failures = {}
     for name in ('failed-attempts', *(() if not retained else ('runtime',))):

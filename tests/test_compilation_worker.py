@@ -99,3 +99,25 @@ def test_successful_suite_is_shared_and_resume_keeps_execution_history(group_wor
     assert len([c for c in calls if c[0] == 'javac']) == 1
     assert sum(r['type']=='finish' for r in read_events(root/'results/compile-events')) == 3
     assert all(r['methods'][0]['state'] == 'pass' for r in [first, second, resumed])
+
+
+def test_failed_test_retains_its_successfully_precompiled_suite(group_worker, monkeypatch):
+    from test_survival.work import cleanup_job
+    from test_survival.io import write_json, read_json
+    root, run, calls = group_worker
+    (root/'dev/src-test-t/java/Bad.java').unlink()
+    row = dict(id='Good', file='dev/src-test-t/java/Good.java', **{'class':'Good'}, method='test', kind='plain')
+    monkeypatch.setattr(worker, 'parse_reports', lambda _: {('Good','test'):[dict(state='fail',message='assertion failed')]})
+    result = run('A', [row])
+    assert result['whole_frozen_suite_compile']['exit_code'] == 0
+    assert result['methods'][0]['state'] == 'fail'
+    assert not list((root/'work/A/0/classes').iterdir())
+    evidence = {p:p.read_bytes() for pattern in ('suite-*','0') for tree in (root/'work/A').glob(pattern)
+                for p in ([tree] if tree.is_file() else tree.rglob('*')) if p.is_file()}
+    assert root/'work/A/suite-classes/Good.class' in evidence
+    job = root/'work/A-job.json'
+    write_json(job, dict(action='run', output='results/A.json', work='work/A'))
+    cleanup_job(root, job)
+    assert evidence == {p:p.read_bytes() for p in evidence}
+    retained = read_json(root/'results/work-cleanup.json')['retained_failures']
+    assert 'work/A/suite-classes' in retained and 'work/A/suite-javac.txt' in retained

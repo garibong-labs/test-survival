@@ -97,3 +97,50 @@ def test_retry_preserves_job_failure_even_without_a_work_directory(tmp_path):
     log.write_text('retry log')
     saved=list((tmp_path/'work/failed-attempts/phase-A/2/dev').glob('*-job.log'))
     assert len(saved)==1 and saved[0].read_text()=='worker failed before creating scratch'
+
+
+def test_pool_cleanup_uses_supplied_runner_without_yaml(tmp_path, monkeypatch):
+    from test_survival import work
+    from test_survival.runner.docker import DockerRunner
+    config = fixture(tmp_path, failure=False)
+    config['runner']['docker']['image'] = 'pool-specific-image'
+    assert not (tmp_path/'experiment.yaml').exists()
+    original = work._remove_owned
+    monkeypatch.setattr(work.os, 'geteuid', lambda:1000)
+    monkeypatch.setattr(work, '_remove_owned', lambda *args: (_ for _ in ()).throw(PermissionError('container owner')))
+    calls = []
+    def execute(runner, command, cwd, log, timeout):
+        assert runner.config is config
+        assert runner.config['runner']['docker']['image'] == 'pool-specific-image'
+        calls.append(command[-1])
+        original(tmp_path, command[-1])
+        return dict(exit_code=0)
+    monkeypatch.setattr(DockerRunner, 'execute', execute)
+    for name in ('work/checkouts/0/target/classes/A.class', 'work/libs/runtime.jar'):
+        path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'compiled')
+    write_json(tmp_path/'work/checkouts/0.json', dict(sha='sha'))
+    write_json(tmp_path/'results/builds/0.json', dict(sha='sha',build='ok'))
+    write_json(tmp_path/'results/workspace-identities/0.json', dict(sha='sha'))
+    work.finish_checkouts(tmp_path, config)
+    work.finish_work(tmp_path, config, pool=True)
+    assert not (tmp_path/'work/checkouts').exists()
+    assert not (tmp_path/'work/phase-A/2/dev').exists()
+    assert not (tmp_path/'work/libs').exists()
+    assert 'work/checkouts/0' in calls and 'work/libs' in calls
+    assert len(list((tmp_path/'results/work-cleanup-commands').glob('*.json'))) == len(calls)
+
+
+def test_pool_build_and_cleanup_configuration_keeps_generator_override(tmp_path):
+    from types import SimpleNamespace
+    from test_survival.policy.pools import pool_config
+    config = validate(dict(name='pool', anchor='t', project={'repo':str(tmp_path)},
+                           runner={'docker':{'image':'baseline-image'}},
+                           generators=[dict(name='llm',method='ouedraogo',impl='native',docker={'image':'generator-image'})]))
+    config.keep_work=True
+    config['runner']['policy_read_only']=[str(tmp_path/'baseline')]
+    effective=pool_config(SimpleNamespace(execution_config=config),dict(group='llm',sha='pool-sha'))
+    assert effective['runner']['docker']['image']=='generator-image'
+    assert effective['runner']['policy_read_only']==[str(tmp_path/'baseline')]
+    assert effective['anchor']=='pool-sha' and effective.keep_work
+    assert effective['runner']['reuse']==dict(checkouts=None,classpath_cache=None)
+    assert config['runner']['docker']['image']=='baseline-image' and config['anchor']=='t'

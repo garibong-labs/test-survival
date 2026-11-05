@@ -226,3 +226,28 @@ def test_verification_counts_all_restoration_attempts_including_pools(tmp_path):
             (root/str(i)).mkdir(parents=True)
         write_json(root/'0/result.json', dict(build='ok'))
     assert count(tmp_path) == dict(total=3, by_experiment={'baseline':2, 'policy/results/policy/pools/dev/2':1})
+
+
+@pytest.mark.parametrize('status', ['failed', 'running'])
+def test_anchor_readiness_revalidates_unsettled_restoration(tmp_path, monkeypatch, status):
+    adapter, config, calls = adapter_fixture(tmp_path, monkeypatch)
+    write_json(tmp_path/'results/anchor.json', dict(sha='sha'))
+    adapter.build(0, 'sha')
+    original = {p:p.read_bytes() for p in (tmp_path/'results/builds').rglob('*') if p.is_file()}
+    release_checkout(tmp_path, config, 0, final=True)
+    identity = adapter.dependency_identity
+    monkeypatch.setattr(adapter, 'dependency_identity', lambda *args: [])
+    with pytest.raises(RuntimeError, match='dependency identity disagrees'):
+        adapter.ensure_anchor()
+    assert (adapter.folder(0)/'target/classes').is_dir()
+    write_json(tmp_path/'state/workspace-0.json', dict(status=status))
+    with pytest.raises(RuntimeError, match='dependency identity disagrees'):
+        adapter.ensure_anchor()
+    assert len(calls) == 3
+    monkeypatch.setattr(adapter, 'dependency_identity', identity)
+    adapter.ensure_anchor()
+    assert len(calls) == 4
+    adapter.ensure_anchor()
+    assert len(calls) == 4  # A validated anchor still uses the build cache.
+    assert original == {p:p.read_bytes() for p in original}
+    assert read_json(tmp_path/'state/workspace-0.json')['status'] == 'completed'

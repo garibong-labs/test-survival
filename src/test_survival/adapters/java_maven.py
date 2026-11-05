@@ -96,7 +96,10 @@ class JavaMavenAdapter:
 
     def ensure_anchor(self):
         anchor = read_json(self.exp/'results/anchor.json', {})
-        if anchor.get('sha') and not (self.folder(0)/'target/classes').exists():
+        # Rejected/interrupted restorations can leave classes behind. Preserve
+        # ready legacy trees, but never bypass build validation for unsettled work.
+        unsettled = read_json(self.exp/'state/workspace-0.json', {}).get('status') in ('running', 'failed')
+        if anchor.get('sha') and (unsettled or not (self.folder(0)/'target/classes').exists()):
             if self.build(0, anchor['sha'])['build'] != 'ok':
                 raise RuntimeError('Anchor workspace build failed')
 
