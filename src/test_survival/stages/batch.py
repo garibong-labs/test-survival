@@ -27,6 +27,10 @@ def usable_lines(row):
     return 'lines' in row and row.get('remeasured_state') in (None, 'pass', 'fail')
 
 
+def complete_lines(raw, dead):
+    return all(usable_lines(t) for t in raw['methods'] if identity(t) not in dead)
+
+
 def catalog(exp, config, frozen):
     """The same content identity as policy snapshots, without copying sources."""
     developers = {g['name'] for g in config['dev']['groups']}
@@ -66,7 +70,7 @@ class Measurements:
         self.unique = {identity(t):t for g,ts in self.tests.items()
                        if g not in self.imported and g not in self.derived for t in ts}
 
-    def cached(self, index, sha, dead):
+    def cached(self, index, sha, dead, *, require_lines=True):
         raw = read_json(self.exp/f'results/baseline-batches/{index}.json', {})
         if (raw.get('input_sha256') != self.digest or raw.get('sha') != sha
                 or raw.get('coverage_version') != COVERAGE_VERSION or 'universe' not in raw):
@@ -76,7 +80,7 @@ class Measurements:
             return None
         if any(rows[k]['state'] == 'dead' and k not in dead for k in rows):
             return None
-        if any(not usable_lines(rows[k]) for k in rows if k not in dead):
+        if require_lines and not complete_lines(raw, dead):
             return None
         return raw
 
@@ -262,32 +266,50 @@ def project_coverage(exp, config, index, entering):
         write_csv(output,[dict(file=f,line=n,covered='yes' if (f,n) in hits else 'no') for f,n in raw['universe']],['file','line','covered'],compress=True)
 
 
-def stage_complete(exp, config, stage):
-    """Completed aggregate state must not hide a batch needing coverage repair."""
-    if stage not in ('control', 'survive'):
-        return True
-    from .survive import skipped_commits
+def completed_items(exp, config, stage):
+    """Read-only completeness audit shared by resume, log and panel progress."""
+    from .survive import skipped_commits, raw_folder
     m = Measurements(exp, config, stage)
     commits = read_csv(exp/'results/commits.csv') if stage == 'survive' else []
     skipped = skipped_commits(exp,config,commits) if commits else {}
     rows = commits if stage == 'survive' else [dict(index=0,sha=read_json(exp/'results/anchor.json')['sha'])]
-    known = {}
+    known = {}; completed = []
     for r in rows:
         i=int(r['index'])
-        if i in skipped or (i and read_json(exp/f'results/builds/{i}.json',{}).get('build') != 'ok'):
+        paths = [exp/f'results/{"control" if stage == "control" else raw_folder(g,config,m.provenance)}/{i}-{g}.json' for g in m.frozen]
+        if i in skipped:
+            if all((raw := read_json(p, {})).get('status') == 'skipped-untouched' and raw.get('sha') == r['sha'] for p in paths):
+                completed.append(paths)
             continue
-        record = m.cached(i,r['sha'],known)
+        build = read_json(exp/f'results/builds/{i}.json',{})
+        if i and build.get('build') != 'ok':
+            if build.get('build') == 'fail' and build.get('sha') == r['sha']:
+                completed.append([])
+            continue
+        # Coverage repair preserves recorded survival verdicts. They still
+        # justify later dead omissions while this index remains incomplete.
+        record = m.cached(i,r['sha'],known,require_lines=False)
         if record is None:
-            return False
-        from .survive import raw_folder
+            continue
+        valid = complete_lines(record, known)
         for g, tests in m.frozen.items():
             if g in m.imported:
                 continue
             folder = 'control' if stage == 'control' else raw_folder(g,config,m.provenance)
             projected = read_json(exp/f'results/{folder}/{i}-{g}.json', {})
             if projected.get('batch_input_sha256') != m.digest or {t['id'] for t in projected.get('methods', [])} != {t['id'] for t in tests}:
-                return False
+                valid = False
+        if valid:
+            completed.append([exp/f'results/baseline-batches/{i}.json', *paths])
         for t in record['methods']:
             if t['state'] in FAILURES:
                 known.setdefault(identity(t),i)
-    return True
+    return completed, len(rows)
+
+
+def stage_complete(exp, config, stage):
+    """Completed aggregate state must not hide a batch needing coverage repair."""
+    if stage not in ('control', 'survive'):
+        return True
+    completed, total = completed_items(exp, config, stage)
+    return len(completed) == total

@@ -26,6 +26,13 @@ Headers below follow the archived experiment and are checked by `tests/test_form
 
 Both `dev-baseline` and `dev-results` imports include `dev/dev-unmapped-excluded.csv` in `state/import.json` file checksums when the source has it, remove stale destination audits when absent, and immediately refresh the anchor count and deviation note. Imported audit bytes are verified before baseline reuse. `dev-results` compatibility records store the resolved policy as `measurement_settings.unmapped`; an omitted field in an older manifest means `error`.
 
+Batch `dev-results` compatibility additionally stores `resolved_scope`: sorted,
+distinct `{class, file}` pairs from `population/scope.json`. Both experiments
+must have resolved scope before importing. This proof is checked before copying,
+on subsequent reuse, and against any newly selected scope before retaining
+imported denominators. Batch manifests missing it require reimport; legacy
+compatibility records and layouts remain unchanged.
+
 `dev/dev-denominator.csv`: `class,method,kind`.
 
 `population/class-survey.csv`: `class,file,m,has_test,d,c` where `m` is the focal method count, `has_test` `yes`/`no`, `d` the dedicated-test method count, `c` the number of commits in range that change the class.

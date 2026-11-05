@@ -250,3 +250,25 @@ pool/segment execution and stop/status/resume with byte-identical resumed
 survival, first-failure and changed-line outputs. The timed comparison above
 remains the original measurement; no finished experiments were rerun or edited
 for these fixes.
+
+The second review reproduced two further issues in disposable fixtures: batch
+developer imports accepted a different resolved coverage scope, and progress
+reported all commits complete while a batch still needed coverage repair.
+Import compatibility now records the selected class/source-file pairs, checks
+them before copying and reuse, and rejects a changed scope selection before
+retaining imported denominators. Legacy import identity remains unchanged.
+Batch imports now require the destination to run through `--until scope`.
+
+Resume, log progress, and panel progress share the batch completeness audit.
+It checks measurement identity, usable per-test lines and group projections,
+and carries valid failure verdicts forward even while their coverage needs
+repair. Twelve new regression cases cover scope mismatches and missing scope
+proof, reselection, read-only progress, stale identity, missing projections,
+missing lines and non-executing repairs, including control at t.
+
+The full suite passed with **810 tests, zero skips**, including all 14 required
+Java fixtures (169.34 seconds). A fresh standalone Java fixture at
+`/tmp/batch-baseline-second-review-e2e` also passed developer pool/segment
+execution and actual stop/status/resume, with byte-identical resumed survival,
+first-failure and changed-line outputs. These checks used disposable fixtures;
+the original timed comparison and finished experiments were not rerun or edited.

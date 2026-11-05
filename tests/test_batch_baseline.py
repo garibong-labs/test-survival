@@ -254,3 +254,59 @@ def test_empty_local_populations_still_measure_scope_universe(tmp_path,monkeypat
     lines=read_csv(tmp_path/'results/coverage/2-child-lines.csv')
     assert len(lines)==2 and all(r['covered']=='no' for r in lines)
     assert batch.stage_complete(tmp_path,config,'survive')
+
+
+@pytest.mark.parametrize('damage', ['missing-lines', 'nonexecuting-repair', 'projection', 'identity'])
+def test_batch_progress_matches_resume_and_is_read_only(tmp_path, monkeypatch, damage):
+    from test_survival.progress import panel_items, describe
+    from test_survival.io import resolve_path
+    config = fixture(tmp_path); config['runner']['workers']['survive'] = 1
+    jobs = []; setup_worker(monkeypatch, jobs)
+    control.run(tmp_path, config); survive.run(tmp_path, config)
+    path = tmp_path/'results/baseline-batches/2.json'
+    raw = read_json(path)
+    if damage == 'projection':
+        resolve_path(tmp_path/'results/raw-derived/2-child.json').unlink()
+    else:
+        if damage == 'missing-lines':
+            raw['methods'][0].pop('lines')
+        elif damage == 'nonexecuting-repair':
+            raw['methods'][0].update(lines=[], remeasured_state='compile-fail')
+        else:
+            raw['input_sha256'] = 'outdated'
+        write_json(path, raw, compress=True)
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    before_jobs = len(jobs)
+    assert not batch.stage_complete(tmp_path, config, 'survive')
+    completed, total, unit = items(tmp_path, 'survive', config, {})
+    assert total == 6 and unit == 'commits' and len(completed) < total
+    if damage != 'identity':
+        assert len(completed) == 5  # Death verdict still proves later dead omissions.
+    assert panel_items(tmp_path, 'survive', config, {})[:3] == (completed, total, unit)
+    assert f'{len(completed)}/6 commits' in describe(tmp_path, 'survive', config)
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    assert len(jobs) == before_jobs
+    survive.run(tmp_path, config)
+    assert batch.stage_complete(tmp_path, config, 'survive')
+    assert len(items(tmp_path, 'survive', config, {})[0]) == 6
+    if damage == 'projection':
+        assert len(jobs) == before_jobs
+    elif damage != 'identity':
+        assert [(j['index'], [t['method'] for t in j['methods']]) for j in jobs[before_jobs:]] == [(2, ['a'])]
+
+
+def test_batch_control_progress_requires_reusable_measurement(tmp_path, monkeypatch):
+    from test_survival.progress import panel_items
+    config = fixture(tmp_path)
+    jobs = []; setup_worker(monkeypatch, jobs)
+    control.run(tmp_path, config)
+    path = tmp_path/'results/baseline-batches/0.json'
+    raw = read_json(path); raw['methods'][0].pop('lines')
+    write_json(path, raw, compress=True)
+    assert not batch.stage_complete(tmp_path, config, 'control')
+    assert items(tmp_path, 'control', config, {'status':'completed'})[:2] == ([], 1)
+    assert panel_items(tmp_path, 'control', config, {})[:3] == ([], 4, 'methods')
+    control.run(tmp_path, config)
+    assert batch.stage_complete(tmp_path, config, 'control')
+    completed, total, _, _ = panel_items(tmp_path, 'control', config, {})
+    assert len(completed) == total == 4

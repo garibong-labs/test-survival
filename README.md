@@ -454,6 +454,11 @@ survival import /absolute/path/to/target-fork/experiments/weekly --from /absolut
 survival run /absolute/path/to/target-fork/experiments/weekly
 ```
 
+For batch baselines, run the destination through `--until scope` before the
+import instead of `--until prepare`. Batch evidence contains only the resolved
+scope's lines, so both experiments must select the same classes and source
+files. Legacy imports still require only preparation.
+
 Before copying evidence, `dev-results` requires identical project repo paths,
 anchor SHAs, ordered commit SHAs in `results/commits.csv`, `skip_untouched`, and
 `dev/src-test-t` tree hashes (relative file paths and contents). It refuses an
@@ -463,6 +468,10 @@ survival rules, and coverage settings must also match. Scheduling and host wirin
 may differ. Archived generation/report options are not validated; unknown measurement
 options are refused instead of silently assuming compatibility.
 Saved compatibility manifests without `dev.unmapped` are treated as `error`.
+Batch manifests also record the resolved coverage scope; older batch manifests
+without that proof must be reimported. Scope order and survey statistics may
+differ. Scope changes after import, including reselection by the scope stage,
+refuse reuse before imported denominators or coverage are used.
 Changing the policy after import also refuses reuse until compatible evidence is imported
 or the import is detached.
 

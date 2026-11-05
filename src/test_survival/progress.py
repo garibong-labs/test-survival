@@ -20,6 +20,20 @@ def items(exp, stage, config, state):
     lists represent build failures that require no work in this stage.
     """
     completed = []
+    if stage in ('control', 'survive') and config['survival'].get('execution') == 'batch':
+        from .stages.batch import completed_items
+        from .pipeline import PipelineError
+        total = 1
+        if stage == 'survive':
+            path = exp/'results/commits.csv'
+            total = len(csv_rows(path)) if path.exists() else None
+        try:
+            completed, _ = completed_items(exp, config, stage)
+        except PipelineError:
+            # Incompatible imports are pending, not reusable evidence. The
+            # measuring stage reports the actionable compatibility error.
+            completed = []
+        return completed, total, 'commits' if stage == 'survive' else 'items'
     if stage == 'prepare':
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
@@ -308,6 +322,11 @@ def panel_items(exp, stage, config, state):
         p = generation_progress(exp, config, state)
         return p['completed'], p['total'], UNITS[stage], p
     if stage == 'control':
+        if config['survival'].get('execution') == 'batch':
+            completed, _, _ = items(exp, stage, config, state)
+            frozen = read_json(exp/'results/frozen-denominators.json')
+            total = sum(map(len, execution_groups(config, frozen).values())) if frozen is not None else None
+            return completed * (total or 0), total, 'methods', {}
         from .dev_results import imported_file_valid, load_provenance
         imports = load_provenance(exp)
         imported_files = imports.get('files', {})
