@@ -394,6 +394,9 @@ def test_container_owned_scratch_cleanup(tmp_path, java_environment, monkeypatch
     pool.mkdir(parents=True)
     config=validate(raw)
     runner=JavaMavenAdapter(pool,config).runner
+    # Checkout/marker publication is host-owned before Maven creates its
+    # root-owned target subtree, matching the production checkout path.
+    write_json(pool/'work/checkouts/0.json',dict(sha='sha'))
     created=runner.execute(['python3','-c',
         'from pathlib import Path; '
         'paths=[Path("work/checkouts/0/target/classes/A.class"),Path("work/libs/runtime.jar")]; '
@@ -401,7 +404,6 @@ def test_container_owned_scratch_cleanup(tmp_path, java_environment, monkeypatch
         pool,pool/'create.log',30)
     assert created['exit_code']==0
     assert not (pool/'experiment.yaml').exists()
-    write_json(pool/'work/checkouts/0.json',dict(sha='sha'))
     write_json(pool/'results/builds/0.json',dict(sha='sha',build='ok'))
     write_json(pool/'results/workspace-identities/0.json',dict(sha='sha'))
     work.finish_checkouts(pool,config)
