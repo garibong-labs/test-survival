@@ -94,6 +94,11 @@ and report formats, with these explicit differences:
 - Batch outcomes are `pass`, `fail`, `absent`, `compile-fail`, with `flaky: false`.
   JVM-failure fallback disables both retry mechanisms. Remeasuring missing hits
   preserves consumed verdicts and records `remeasured_state` on disagreements.
+  Repairs with `remeasured_state: absent` or `compile-fail` remain unavailable
+  and are retried on resume; an empty line list alone does not make them usable.
+- Local derived groups inherit their parent's observations, including when the
+  parent is imported. Chained derivations preserve per-test lines and verdicts
+  without executing the child independently; imported files remain unchanged.
 - `results/coverage/<index>-<group>-lines.csv.gz` contains only executable scope
   source lines. Empty test groups still get the scope executable universe and
   uncovered rows. There is **no** `results/coverage/<index>-<group>.xml` (or gzip

@@ -93,7 +93,7 @@ after multiple developer fill checkpoints remains.
 
 Switching per-policy behavior preserves completed pool identities and refreshes
 composition, coverage and report revisions. Saved plan bytes remain unchanged.
-Enabling regeneration when the saved plan lacks required points reports that the
+Enabling regeneration when the saved plan lacks required points or pool entries reports that the
 plan must be rebuilt with `--force`; it does not silently run an incomplete plan.
 
 Policy survival and coverage share one execution pass. Between successive

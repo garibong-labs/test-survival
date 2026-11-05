@@ -106,6 +106,9 @@ def run(exp, config):
         available = {(p['group'],p['trigger'],p['index']) for p in saved['points']}
         if any((p['group'],p['trigger'],p['index']) not in available for p in required['points'] if p['index'] is not None and requested_point(b,p)):
             raise ConfigError('Saved plan lacks requested regeneration points; use --force to rebuild the plan')
+        available_pools = {(p['group'],p['index'],p.get('sha')) for p in saved['pools']}
+        if any((p['group'],p['index'],p['sha']) not in available_pools for p in required['pools']):
+            raise ConfigError('Saved plan lacks requested regeneration pools; use --force to rebuild the plan')
         print('policy-plan: already completed; skipped', flush=True)
         return saved
     plan = build_plan(b)

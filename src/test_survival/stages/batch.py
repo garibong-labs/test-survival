@@ -9,7 +9,7 @@ from pathlib import Path
 
 from ..adapters.java_maven import JavaMavenAdapter
 from ..adapters.policy_coverage import COVERAGE_VERSION
-from ..config import canonical_hash, execution_groups, group_names
+from ..config import canonical_hash, derived_source, execution_groups, group_names
 from ..io import read_csv, read_json, write_csv, write_json, resolve_path
 from ..policy.artifacts import tree_hash
 from ..policy.execute import screening_exclusions, settle
@@ -21,6 +21,10 @@ from ..work import release_checkout
 
 def identity(t):
     return (t['execution_hash'], t['class'], t['method'])
+
+
+def usable_lines(row):
+    return 'lines' in row and row.get('remeasured_state') in (None, 'pass', 'fail')
 
 
 def catalog(exp, config, frozen):
@@ -57,7 +61,10 @@ class Measurements:
         self.digest = canonical_hash(dict(version=1, implementation=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), coverage=COVERAGE_VERSION, tests=self.tests,
                                          scope=self.scope, excluded=sorted(self.excluded), runner=self.runner,
                                          inputs={g:self.adapter.run_fingerprint(ts) for g,ts in self.tests.items()}))
-        self.unique = {identity(t):t for g,ts in self.tests.items() if g not in self.imported for t in ts}
+        self.derived = {g:source for g in self.tests if g not in self.imported
+                        if (source := derived_source(config, g))}
+        self.unique = {identity(t):t for g,ts in self.tests.items()
+                       if g not in self.imported and g not in self.derived for t in ts}
 
     def cached(self, index, sha, dead):
         raw = read_json(self.exp/f'results/baseline-batches/{index}.json', {})
@@ -69,7 +76,7 @@ class Measurements:
             return None
         if any(rows[k]['state'] == 'dead' and k not in dead for k in rows):
             return None
-        if any('lines' not in rows[k] for k in rows if k not in dead):
+        if any(not usable_lines(rows[k]) for k in rows if k not in dead):
             return None
         return raw
 
@@ -82,14 +89,27 @@ class Measurements:
         for k,t in self.unique.items():
             row = old.get(k)
             if k in dead:
-                kept[k] = row if row and row.get('state') != 'dead' and 'lines' in row else dead_method(t, dead[k])
-            elif row and row.get('state') != 'dead' and 'lines' in row:
+                kept[k] = row if row and row.get('state') != 'dead' and usable_lines(row) else dead_method(t, dead[k])
+            elif row and row.get('state') != 'dead' and usable_lines(row):
                 kept[k] = row
             else:
                 requested.append(t)
                 if row and row.get('state') != 'dead':
                     verdicts[k] = {n:row[n] for n in ('state', 'message', 'flaky') if n in row}
-        measured = self.adapter.worker(dict(action='policy-survive', index=index, sha=sha, group='baseline-batch',
+        if not self.unique and self.imported:
+            # All roots are imported; local children need projections only.
+            # Reuse their parent's universe without starting a Java session.
+            from ..dev_results import imported_record
+            from .survive import raw_folder
+            group = next(iter(self.imported))
+            folder = 'control' if self.phase == 'control' else raw_folder(group, self.config, self.provenance)
+            source = f'results/{folder}/{index}-{group}.json'
+            inherited = imported_record(self.exp, source, sha=sha, provenance=self.provenance)
+            measured = dict(index=index, sha=sha, status='evaluated', universe=inherited['universe'],
+                            coverage_version=COVERAGE_VERSION, methods=[], files=[], compile=[], runs=[],
+                            measurement_source=source)
+        else:
+            measured = self.adapter.worker(dict(action='policy-survive', index=index, sha=sha, group='baseline-batch',
                          methods=requested, scope_files=[c['file'] for c in self.scope],
                          scope_classes=[c['class'] for c in self.scope], excluded_files=sorted(self.excluded),
                          scope_universe=True, output=f'results/baseline-batches/{index}-measurement.json',
@@ -104,20 +124,25 @@ class Measurements:
             raise ValueError('Incomplete baseline batch inventory')
         raw = {**measured, 'execution':'batch', 'input_sha256':self.digest, 'runner_sha256':self.runner,
                'methods':[kept[k] for k in self.unique], 'ignored_settings':['survival.flaky_rerun','survival.environment_errors']}
-        raw['coverage_status'] = 'complete' if all('lines' in t for t in raw['methods']) else 'missing'
+        raw['coverage_status'] = 'complete' if all(usable_lines(t) for t in raw['methods']) else 'missing'
         write_json(path, raw, compress=True)
         return raw
 
     def project(self, index, sha, raw):
         from ..dev_results import imported_record
+        from ..rules.dev_denominator import derive_record
         from .survive import raw_folder
         observed = {identity(t):t for t in raw.get('methods', [])}
+        def path_for(group):
+            folder = 'control' if self.phase == 'control' else raw_folder(group, self.config, self.provenance)
+            return self.exp/f'results/{folder}/{index}-{group}.json'
         for g, tests in self.tests.items():
-            folder = 'control' if self.phase == 'control' else raw_folder(g, self.config, self.provenance)
-            path = self.exp/f'results/{folder}/{index}-{g}.json'
+            path = path_for(g)
             if g in self.imported:
                 imported_record(self.exp, str(path.relative_to(self.exp)), sha=sha,
                                 method_ids=[t['id'] for t in tests], provenance=self.provenance)
+                continue
+            if g in self.derived:
                 continue
             rows = [{**observed[identity(t)], **t} for t in tests]
             record = {**raw, 'group':g, 'phase':'control' if self.phase == 'control' else 'A',
@@ -125,14 +150,28 @@ class Measurements:
                       'input_sha256':self.adapter.run_fingerprint(self.frozen[g]), 'batch_input_sha256':self.digest,
                       'measurement_source':f'results/baseline-batches/{index}.json'}
             if read_json(path) != record:
-                write_json(path, record, compress=folder != 'control')
+                write_json(path, record, compress=self.phase != 'control')
+        pending = dict(self.derived)
+        while pending:
+            ready = [g for g,source in pending.items() if source not in pending]
+            if not ready:
+                raise RuntimeError('Derived group cycle')
+            for g in ready:
+                source = pending.pop(g)
+                record = derive_record(read_json(path_for(source)), g, self.frozen[g])
+                record.update(input_sha256=self.adapter.run_fingerprint(self.frozen[g]),
+                              batch_input_sha256=self.digest,
+                              measurement_source=str(path_for(source).relative_to(self.exp)),
+                              requested_ids=[t['id'] for t in record['methods'] if t['state'] != 'dead'])
+                if read_json(path_for(g)) != record:
+                    write_json(path_for(g), record, compress=self.phase != 'control')
 
 
 def control(exp, config):
     from ..io import atomic_text
     m = Measurements(exp, config, 'control')
     sha = read_json(exp/'results/anchor.json')['sha']
-    with measurement_session(m.adapter, 'control', bool(m.unique)):
+    with measurement_session(m.adapter, 'control', bool(m.unique or not m.imported)):
         raw = m.cached(0, sha, {}) or m.measure(0, sha, {})
         m.project(0, sha, raw)
     records = {}
@@ -178,7 +217,7 @@ def survive(exp, config):
             if t['state'] in FAILURES:
                 k=identity(t); known[k]=min(i,known.get(k,i))
         log(exp,f'survive: {i} batch recorded',config)
-    with measurement_session(m.adapter, 'survive', bool(evaluated)):
+    with measurement_session(m.adapter, 'survive', bool(evaluated and (m.unique or not m.imported))):
         dispatch(evaluated,config['runner']['workers']['survive'],prepare,
                  lambda r,dead:m.measure(int(r['index']),r['sha'],dead),completed)
     curves = aggregate(exp, config)
@@ -209,7 +248,7 @@ def project_coverage(exp, config, index, entering):
         wanted = set(entering[g]); rows = [t for t in raw['methods'] if t['id'] in wanted]
         if {t['id'] for t in rows} != wanted or any(t['state']=='dead' for t in rows):
             raise RuntimeError('Batch omitted a method alive entering the index')
-        missing = any('lines' not in t or t.get('remeasured_state') not in (None,'pass','fail') for t in rows)
+        missing = any(not usable_lines(t) for t in rows)
         record = {**raw, 'phase':'B', 'methods':rows, 'requested_ids':sorted(wanted),
                   'input_sha256':adapter.run_fingerprint([t for t in frozen[g] if t['id'] in wanted]),
                   'status':'coverage-missing' if missing else 'evaluated',

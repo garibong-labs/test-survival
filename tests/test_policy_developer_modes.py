@@ -112,3 +112,20 @@ def test_terminal_checkpoint_is_recorded_without_pool(baseline):
     p=build_plan(b)
     assert not p['pools']
     assert all(x['index'] is None and x['reason']=='no later evaluable commit' for x in p['points'])
+
+
+def test_enabling_candidate_trigger_rejects_missing_saved_pool(baseline):
+    import subprocess
+    exp,config,root=baseline
+    b=Baseline(exp,config)
+    subprocess.run(['git','-C',str(b.repo),'tag','-f','release',b.by_index[1]['sha']],check=True,capture_output=True)
+    config['policies']['set'][0]['developer']='regenerate'
+    config['policies']['set'][1]['developer']='keep'
+    saved=plan(exp,config)
+    assert {(p['trigger'],p['index']) for p in saved['points']}=={('release',1),('threshold',2)}
+    assert [p['index'] for p in saved['pools']]==[1]
+    before=(exp/'results/policy/plan.json').read_bytes()
+    config['policies']['set'][1]['developer']='regenerate'
+    with pytest.raises(ConfigError,match='lacks requested regeneration pools'):
+        plan(exp,config)
+    assert (exp/'results/policy/plan.json').read_bytes()==before

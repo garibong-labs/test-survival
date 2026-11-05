@@ -231,3 +231,22 @@ The timed runs had no build failures or JVM timeout/fallback events, so those
 branches are covered by fixtures rather than claimed as observed in this slice.
 No finished experiment was edited, no model calls were made, and no archive or
 pruning command was run against a real experiment.
+
+## Review follow-up
+
+Disposable regression fixtures reproduced the three review findings: local
+children remeasuring an imported parent's methods, a saved candidate trigger
+without its required pool entry, and non-executing coverage repairs being
+accepted as complete. The fixes derive children in dependency order (including
+import-only runs without Java), validate required pool entries before execution,
+and use the same coverage-usability rule for caching, repair and projection.
+Coverage repair retains the original survival verdict. Additional cases cover
+chained children, untouched imported files, and empty local populations.
+The complete suite passed again: **798 tests, zero skips**, including all 14
+required Java fixtures (138.10 seconds).
+
+A fresh real Java fixture at `/tmp/batch-baseline-review-e2e` passed developer
+pool/segment execution and stop/status/resume with byte-identical resumed
+survival, first-failure and changed-line outputs. The timed comparison above
+remains the original measurement; no finished experiments were rerun or edited
+for these fixes.
