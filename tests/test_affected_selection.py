@@ -282,7 +282,7 @@ exp=Path('/out');w.EXP=exp;w.SHARED=exp;w.HELPERS=Path('/package/adapters/java')
 w.JVM={'javac':'256m','jacoco':'256m','launcher':'256m'};w.TIMEOUTS={'compile':60,'test_class':60}
 (exp/'work').mkdir();(exp/'work/libs').symlink_to('/libs')
 main=exp/'src/main/java';(main/'p').mkdir(parents=True);(main/'outside').mkdir()
-(main/'p/A.java').write_text('package p; public class A { public static int call() { return 1; } }')
+(main/'p/A.java').write_text('package p;\npublic class A {\n public static int call() { return Nested.value()+Sibling.value(); }\n static class Nested { static int value() { return 1; } }\n}\nclass Sibling { static int value() { return 0; } }\n')
 (main/'p/Constant.java').write_text('package p; public class Constant { public static final int VALUE=2; }')
 (main/'outside/Hidden.java').write_text('package outside; public class Hidden { public static int call() { return 3; } }')
 classes=exp/'target/classes';classes.mkdir(parents=True)
@@ -319,10 +319,19 @@ for t in result['methods']:
  assert not t['dependency_record']['unbounded'],t
  assert t['dependency_record']['files']==['src/main/java/outside/Hidden.java','src/main/java/p/A.java','src/main/java/p/Constant.java'],t
  assert all(f=='src/main/java/p/A.java' for f,n in t['lines']),t
+ assert {3,4,6} <= {n for f,n in t['lines']},t
 for run in result['runs']:
  assert run['memory']['peak_rss_bytes']>0 and run['memory']['heap_pool_peak_sum_bytes']>0,run
 assert not list((exp/'job').rglob('*.exec'))
 assert not list((exp/'job').rglob('*.xml'))
+policy_coverage.run(w,dict(index=0,sha='t',selection='affected',chunk_workers=2,methods=methods,survival=True,
+ scope_files=['src/main/java/p/A.java','src/main/java/p/Constant.java','src/main/java/outside/Hidden.java'],
+ scope_classes=['p.A','p.Constant','outside.Hidden'],work='full',output='full.json'))
+full=json.loads((exp/'full.json').read_text())
+by_id={t['id']:t for t in full['methods']}
+for t in result['methods']:
+ assert t['state']==by_id[t['id']]['state']
+ assert t['lines']==[line for line in by_id[t['id']]['lines'] if line[0]=='src/main/java/p/A.java']
 '''
     r=subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival')+':/package:ro',
                       '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script],

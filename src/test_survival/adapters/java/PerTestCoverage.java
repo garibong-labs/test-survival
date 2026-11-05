@@ -10,11 +10,14 @@ import org.junit.platform.launcher.core.*;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.*;
 import org.jacoco.cli.internal.core.analysis.*;
 import org.jacoco.cli.internal.core.tools.ExecFileLoader;
+import org.jacoco.cli.internal.asm.ClassReader;
+import org.jacoco.cli.internal.asm.ClassVisitor;
+import org.jacoco.cli.internal.asm.Opcodes;
 
 /** One test JVM; isolated class loaders allow different versions of the same test class. */
 public final class PerTestCoverage implements TestExecutionListener {
     private final Path output;
-    private final Path production;
+    private final Map<String, byte[]> analysisClasses = new LinkedHashMap<>();
     private final Set<String> scope;
     private final boolean dependencies = Boolean.getBoolean("survival.dependencies");
     private final Map<String, Set<String>> setupHits = new HashMap<>();
@@ -26,9 +29,29 @@ public final class PerTestCoverage implements TestExecutionListener {
 
     PerTestCoverage(Path output, Path production) throws Exception {
         this.output = output;
-        this.production = production;
         String scopeFile = System.getProperty("survival.coverage.scope");
         scope = scopeFile == null ? null : new HashSet<>(Files.readAllLines(Paths.get(scopeFile)));
+        // Production is frozen for this JVM. Read each binary once, and analyze
+        // only scope files when collecting survival lines. Probe-based class
+        // hits below remain independent and include all instrumented production.
+        Path binaryRoot = production.toRealPath();
+        try (var paths = Files.walk(binaryRoot, FileVisitOption.FOLLOW_LINKS)) {
+            for (Path path : paths.filter(p -> p.toString().endsWith(".class")).sorted().toList()) {
+                if (binaryRoot.relativize(path).startsWith("META-INF")) continue;
+                byte[] bytes = Files.readAllBytes(path);
+                if (scope != null) {
+                    ClassReader reader = new ClassReader(bytes);
+                    String[] source = new String[1];
+                    reader.accept(new ClassVisitor(Opcodes.ASM9) {
+                        public void visitSource(String name, String debug) { source[0] = name; }
+                    }, ClassReader.SKIP_CODE | ClassReader.SKIP_FRAMES);
+                    String name = reader.getClassName();
+                    String file = "src/main/java/" + name.substring(0, name.lastIndexOf('/') + 1) + source[0];
+                    if (!scope.contains(file)) continue;
+                }
+                analysisClasses.put(path.toString(), bytes);
+            }
+        }
         Class<?> rt = ClassLoader.getSystemClassLoader().loadClass("org.jacoco.agent.rt.RT");
         agent = rt.getMethod("getAgent").invoke(null);
         dump = ClassLoader.getSystemClassLoader().loadClass("org.jacoco.agent.rt.IAgent").getMethod("getExecutionData", boolean.class);
@@ -85,13 +108,8 @@ public final class PerTestCoverage implements TestExecutionListener {
             ExecFileLoader data = new ExecFileLoader();
             data.load(new ByteArrayInputStream(bytes));
             CoverageBuilder coverage = new CoverageBuilder();
-            // Skip META-INF/versions/<n> copies of a multi-release build: the analyzer
-            // rejects a second class with the same name.
             Analyzer analyzer = new Analyzer(data.getExecutionDataStore(), coverage);
-            List<Path> roots;
-            try (java.util.stream.Stream<Path> stream = Files.list(production)) { roots = stream.sorted().collect(java.util.stream.Collectors.toList()); }
-            for (Path root : roots)
-                if (!root.getFileName().toString().equals("META-INF")) analyzer.analyzeAll(root.toFile());
+            for (var entry : analysisClasses.entrySet()) analyzer.analyzeClass(entry.getValue(), entry.getKey());
             try (BufferedWriter writer = Files.newBufferedWriter(output.resolve(name + ".tsv"))) {
                 for (ISourceFileCoverage file : coverage.getSourceFiles()) {
                     String path = "src/main/java/" + (file.getPackageName().isEmpty() ? "" : file.getPackageName() + "/") + file.getName();

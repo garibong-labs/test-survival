@@ -117,6 +117,7 @@ def measure_reference(root,mode,adapter,expected):
     summary=dict(mode=mode,command=['mvn','-o','-q','test'],seconds=wall,
                  compile_seconds=float((exp/'reference/compile-seconds.txt').read_text()),
                  test_seconds=float((exp/'reference/test-seconds.txt').read_text()),methods=count,
+                 invocations=sum(int(r[2]) for r in rows),snapshots=len(rows),
                  surefire_pid=(exp/'reference/surefire-pid.txt').read_text(),
                  agent=(exp/'reference/agent-settings.txt').read_text().strip(),
                  sources_sha256={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (exp/'reference/helpers').glob('*.java')},

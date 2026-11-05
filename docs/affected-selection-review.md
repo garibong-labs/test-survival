@@ -235,13 +235,23 @@ dependency-file count, and L existing scope-line evidence per method.
 | Selection | One Git endpoint diff per distinct `(last executed SHA, current SHA)`, then set intersections; one context extraction per commit | O(changed paths + active methods' D); direct pointers avoid chains proportional to commit count. |
 | Build context | Artifact metadata lookup per commit and structural comparisons of changed POMs under the approved conservative rule | Small ordered artifact list per commit and cached endpoint POM comparisons. No effective-model extraction. |
 
-The current Java listener already analyzes the full production class directory
+The merged baseline Java listener analyzes the full production class directory
 after each test before filtering scope lines. Extending probe inspection does
 not require adding another full analysis. A later optimization can index scope
 class bytes once and analyze only those for line output. Broad instrumentation
 still increases agent heap and CPU; the original 40–58% execution estimate is
 not a wall-time or memory guarantee. Keep chunking and report measured timings
 and peak memory in scratch verification before claiming a speedup.
+
+Part 2 implementation note: profiling found repeated directory traversal and
+class-file reads in this analysis path. The listener now reads class bytes once
+per isolated snapshot loader and retains only binaries whose `SourceFile` is
+in scope for survival line analysis. Nested and sibling classes in the same
+source file stay together. Full-suite pool coverage caches all production class
+bytes. This adds heap proportional to those retained binaries, bounded by the
+existing snapshot chunks, and removes repeated filesystem reads. Runtime class
+hits still inspect all instrumented production probes independently of this
+line-analysis cache.
 
 ## 3. Per-commit classpath and compiler context
 

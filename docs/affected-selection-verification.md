@@ -89,8 +89,8 @@ result. The corrected fresh run is at `/tmp/affected-selection-dns-exact`.
 
 The 1.5× target applies to the two baseline checks, as clarified by the user;
 regenerated policy snapshots do not use a reference at the original t.
-For JSV, the anchor references execute all **169 frozen methods** in a single
-Surefire fork and pass. The all-agent reference takes **122.518 s** (3.849 s
+For JSV, the anchor references execute all **169 frozen methods (303 invocations)**
+in a single Surefire fork and pass. The all-agent reference takes **122.518 s** (3.849 s
 compilation, 116.722 s in the frozen-test driver); the broader affected-agent
 reference takes **128.705 s** (4.857 s compilation, 121.432 s in the driver).
 One successful timed reference is measured for each distinct agent configuration.
@@ -146,6 +146,10 @@ concurrent resource-isolated chunks, and nonzero JVM memory evidence.
 Two subsequent timing fixtures pass, checking shared-compilation
 deduplication, component reconciliation, full-execution ratio eligibility, and
 both measurements at a policy regeneration boundary.
+A harness regression also verifies that DNS retains its original retry
+settings. The current **861-test** suite passes CI: 845 Python tests on both
+Python 3.12 and 3.14, and all 16 Java 25 fixtures. The Java workflow explicitly
+includes the new affected-selection fixtures and rejects missing/skipped cases.
 
 The [affected lifecycle fixture](affected-selection-verification/lifecycle.json)
 uses real Docker workers, `survival stop`, status while running/stopped, and

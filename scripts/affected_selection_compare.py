@@ -51,7 +51,7 @@ def setup(root, project):
     dump(root/'setup.json',dict(project=project,original_source=str(source),created=time.time()))
 
 
-def run(root,mode,tool,policy=False):
+def run(root,mode,tool,policy=False,*,prepare_tool=None,resume=False):
     exp=root/'repo/experiments'/((mode+'-policies') if policy else mode)
     label=mode+('-policies' if policy else '')
     timing_path=root/f'{label}-timing.json'
@@ -69,6 +69,8 @@ def run(root,mode,tool,policy=False):
     if prior.get('steps') and prior['steps'][-1]['stage']==('run' if policy else 'report') and all(s['exit_code']==0 for s in prior['steps']):
         print(label,'already measured; preserving original timings',flush=True)
         return
+    if resume and prior:
+        shutil.copyfile(timing_path,timing_path.with_suffix('.before-resume-'+str(time.time_ns())+'.json'))
     if not policy and mode=='affected' and json.loads((root/'setup.json').read_text())['project']=='dnsjava':
         # Scope selection is independent of survival.selection. Reuse the first
         # run's checksummed per-method anchor evidence, without rewriting hashes.
@@ -96,18 +98,29 @@ def run(root,mode,tool,policy=False):
         steps=[('prepare-scope',['run',str(exp),'--until','scope','--no-panel']),
                ('import',['import',str(exp),'--from',str(root/'generated-input'),'--what','generated'])]
         steps += [(s,['run',str(exp),'--stage',s,'--no-panel']) for s in ('screen','control','survive','cover','report')]
-    start=time.monotonic();data=dict(mode=mode,policy=policy,tool_head=subprocess.check_output(['git','-C',str(tool),'rev-parse','HEAD'],text=True).strip(),steps=[])
+    start=time.monotonic();retained=0
+    data=dict(mode=mode,policy=policy,tool_head=subprocess.check_output(['git','-C',str(tool),'rev-parse','HEAD'],text=True).strip(),steps=[])
+    previous={s['stage']:s for s in prior.get('steps',[])} if resume else {}
     for name,args in steps:
+        if name in previous and previous[name]['exit_code']==0:
+            saved={**previous[name],'tool_head':previous[name].get('tool_head',prior['tool_head'])}
+            data['steps'].append(saved);retained+=saved['seconds']
+            print(label,name,'already measured; preserving original timing and log',flush=True)
+            continue
         log=root/f'{label}-{name}.log';t=time.monotonic()
+        if resume and log.exists():shutil.copyfile(log,log.with_suffix('.before-resume-'+str(time.time_ns())+'.log'))
+        stage_tool=prepare_tool if prepare_tool and name=='prepare-scope' else tool
+        stage_env={**env,'PYTHONPATH':str(stage_tool.resolve()/'src')}
+        stage_head=subprocess.check_output(['git','-C',str(stage_tool),'rev-parse','HEAD'],text=True).strip()
         print(label,name,flush=True)
         with log.open('w') as output:
-            child=subprocess.Popen([sys.executable,'-m','test_survival.cli',*args],env=env,stdout=output,stderr=subprocess.STDOUT)
+            child=subprocess.Popen([sys.executable,'-m','test_survival.cli',*args],env=stage_env,stdout=output,stderr=subprocess.STDOUT)
             try: code=child.wait(timeout=6*3600)
             except subprocess.TimeoutExpired:
-                subprocess.run([sys.executable,'-m','test_survival.cli','stop',str(exp)],env=env,check=False)
+                subprocess.run([sys.executable,'-m','test_survival.cli','stop',str(exp)],env=stage_env,check=False)
                 child.wait(timeout=60);code=124
-        data['steps'].append(dict(stage=name,seconds=round(time.monotonic()-t,3),exit_code=code,log=str(log)))
-        data['seconds']=round(time.monotonic()-start,3);dump(root/f'{label}-timing.json',data)
+        data['steps'].append(dict(stage=name,seconds=round(time.monotonic()-t,3),exit_code=code,log=str(log),tool_head=stage_head))
+        data['seconds']=round(retained+time.monotonic()-start,3);dump(root/f'{label}-timing.json',data)
         if code: raise SystemExit(f'{label}/{name} failed ({code}); see {log}')
 
 
@@ -211,7 +224,10 @@ def compare(root,policy=False):
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('action',choices=['setup','all','affected','compare','policy-all','policy-affected','policy-compare'])
     p.add_argument('--root',type=Path,required=True);p.add_argument('--project',choices=['json-schema-validator','dnsjava'],default='json-schema-validator')
-    p.add_argument('--tool',type=Path,default=Path(__file__).resolve().parents[1]);a=p.parse_args();a.root.mkdir(parents=True,exist_ok=True)
+    p.add_argument('--tool',type=Path,default=Path(__file__).resolve().parents[1])
+    p.add_argument('--prepare-tool',type=Path,help='Optional pinned tool for reusable preparation/scope evidence')
+    p.add_argument('--resume',action='store_true',help='Keep successfully timed steps of an interrupted run')
+    a=p.parse_args();a.root.mkdir(parents=True,exist_ok=True)
     if a.action=='setup':setup(a.root,a.project)
     elif a.action.endswith('compare'):compare(a.root,a.action.startswith('policy-'))
-    else:run(a.root,a.action.removeprefix('policy-'),a.tool,a.action.startswith('policy-'))
+    else:run(a.root,a.action.removeprefix('policy-'),a.tool,a.action.startswith('policy-'),prepare_tool=a.prepare_tool,resume=a.resume)
