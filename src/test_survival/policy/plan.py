@@ -5,7 +5,7 @@ from pathlib import PurePosixPath
 from ..config import ConfigError, canonical_hash
 from ..io import atomic_text, read_json, write_json, write_csv
 from .baseline import Baseline
-from .config import digest_options, regenerates
+from .config import digest_options, digest_plan, regenerates, requested_point
 
 
 def release_index(commits, tag_sha, contains, *, anchor_sha=None):
@@ -56,6 +56,8 @@ def build_plan(baseline):
             for candidate in candidates:
                 requested = candidate['requested_index']
                 index = next_evaluable(requested, indices, b.evaluable) if requested is not None else None
+                if index is not None and not any(i > index and b.evaluable(i) for i in indices):
+                    index = None
                 point = dict(group=group, trigger=trigger, **candidate, index=index)
                 if index is not None:
                     row = b.by_index[index]
@@ -69,7 +71,7 @@ def build_plan(baseline):
                 points.append(point)
     needed_triggers = {p['trigger'] for p in b.options['set']}
     pools = {(p['group'], p['index']): {k: p[k] for k in ('group', 'index', 'sha', 'missing_classes')}
-             for p in points if p['index'] is not None and p['trigger'] in needed_triggers}
+             for p in points if p['index'] is not None and p['trigger'] in needed_triggers and requested_point(b,p)}
     return dict(version=1, baseline=str(b.path), groups=b.groups, policies=b.options['set'], points=points,
                 pools=[pools[key] for key in sorted(pools)],
                 denominators={g: len(b.frozen[g]) for g in b.groups},
@@ -97,9 +99,13 @@ def run(exp, config):
     saved = read_json(b.exp/'results/policy/plan.json')
     prior = read_json(b.exp/'state/policy-plan.json', {})
     if prior.get('status') == 'completed' and saved is not None:
-        digest = canonical_hash(dict(options=digest_options(b.options), plan=saved))
+        digest = canonical_hash(dict(options=digest_options(b.options), plan=digest_plan(saved)))
         if prior.get('config_hash') != digest:
             raise ConfigError('Policy inputs changed; use --force to rebuild policy evidence')
+        required = build_plan(b)
+        available = {(p['group'],p['trigger'],p['index']) for p in saved['points']}
+        if any((p['group'],p['trigger'],p['index']) not in available for p in required['points'] if p['index'] is not None and requested_point(b,p)):
+            raise ConfigError('Saved plan lacks requested regeneration points; use --force to rebuild the plan')
         print('policy-plan: already completed; skipped', flush=True)
         return saved
     plan = build_plan(b)
@@ -108,5 +114,5 @@ def run(exp, config):
     atomic_text(output/'plan.md', markdown(plan))
     write_json(b.exp/'results/commit-paths.json', b.commit_paths())
     write_csv(b.exp/'results/skipped-commits.csv', [dict(index=i, sha=b.by_index[i]['sha'], reason=reason) for i, reason in b.skipped.items()], ['index', 'sha', 'reason'])
-    write_json(b.exp/'state/policy-plan.json', dict(status='completed', config_hash=canonical_hash(dict(options=digest_options(b.options), plan=plan))))
+    write_json(b.exp/'state/policy-plan.json', dict(status='completed', config_hash=canonical_hash(dict(options=digest_options(b.options), plan=digest_plan(plan)))))
     return plan

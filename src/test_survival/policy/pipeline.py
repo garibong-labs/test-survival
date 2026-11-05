@@ -10,7 +10,7 @@ from ..display import UTC_DISPLAY
 from ..io import logical_glob, resolve_path, atomic_text, now, read_json, write_json
 from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
-from .config import COVERAGE_VERSION, digest_options, active_plan, reusable_run
+from .config import COVERAGE_VERSION, digest_options, digest_plan, regenerates, active_plan, reusable_run
 from . import plan as planning
 from .progress import LiveProgress, description
 
@@ -21,7 +21,7 @@ class Steps:
     def __init__(self, baseline, plan, progress=None):
         self.b = baseline
         self.progress = progress
-        self.digest = canonical_hash(dict(evidence_version=3, config=result_inputs(baseline.execution_config), policies=digest_options(baseline.options), plan=plan,
+        self.digest = canonical_hash(dict(evidence_version=3, config=result_inputs(baseline.execution_config), policies=digest_options(baseline.options), plan=digest_plan(plan),
                                           frozen=baseline.frozen, survival=baseline.curves))
 
     def __call__(self, name, action, *, outputs=(), required_methods=None):
@@ -32,9 +32,12 @@ class Steps:
         # survive=2: carried and pool members are executed for their lines; records
         # with lines stay reusable, so bumping this only re-runs the step itself.
         revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=2)
+        revision['developer'] = {p['name']:regenerates(self.b,next(iter(self.b.dev)),p) for p in self.b.options['set']}
         fresh = True
         if name.startswith('run-'):
             fresh = all(reusable_run(read_json(p, {}), required_methods=required_methods) for p in outputs)
+        elif name == 'pools':
+            fresh = all(p.exists() for p in outputs)
         elif name in ('survive', 'cover', 'report'):
             fresh = prior.get('revision') == revision
         if prior.get('status') == 'completed' and fresh:

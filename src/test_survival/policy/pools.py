@@ -136,6 +136,8 @@ def matching_target(b, plan, group, index, pools):
         relevant = [p for p in plan['points'] if p['trigger'] == policy['trigger'] and p['index'] is not None]
         if not any(p['group'] == group and p['index'] == index for p in relevant):
             continue
+        if not regenerates(b, dev, policy):
+            targets.append(len(b.frozen[dev])); continue
         preceding = sorted({p['index'] for p in relevant if p['group'] == dev and p['index'] < index})
         if not preceding:
             targets.append(len(b.frozen[dev])); continue

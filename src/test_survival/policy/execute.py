@@ -9,7 +9,7 @@ from ..rules.survival import FAILURES, dead_method
 from ..runner.dispatch import dispatch
 from ..work import release_checkout
 from .artifacts import snapshot
-from .config import COVERAGE_VERSION, MARKERS, active_plan, reusable_run, unmet_rows
+from .config import COVERAGE_VERSION, MARKERS, active_plan, regenerates, reusable_run, unmet_rows
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
 
 
@@ -326,7 +326,7 @@ def survive(b, plan, pools, step):
     current = {p:{g:segment(1,0,tests,[]) for g,tests in frozen.items()} for p in policies}
     segments = {p:{g:[s] for g,s in gs.items()} for p,gs in current.items()}
     alive = {p:{g:{key(t) for t in s['tests']} for g,s in gs.items()} for p,gs in current.items()}
-    points = {p:{(x['group'],x['index']) for x in plan['points'] if x['trigger']==policy['trigger'] and x['index'] is not None} for p,policy in policies.items()}
+    points = {p:{(x['group'],x['index']) for x in plan['points'] if x['trigger']==policy['trigger'] and x['index'] is not None and regenerates(b,x['group'],policy)} for p,policy in policies.items()}
     curves = {p:[] for p in policies}; failures = {p:[] for p in policies}; alive_at = {p:{} for p in policies}
     entering_at = {p:{} for p in policies}
     def row_for(commit, p, event, stats):
