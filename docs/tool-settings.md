@@ -210,3 +210,77 @@ selection modes. Affected compiles executed test sources plus non-test helpers;
 all compiles the eligible root. `-Xmaxerrs` is set to 2147483647, diagnostics keep
 source associations, and each retry uses a clean output directory. No frozen
 sources or completed experiment artifacts are removed.
+
+
+## Developer discovery and scope bounds
+
+These are experiment YAML settings, shared by every project:
+
+| Setting | Default | Behavior |
+|---|---|---|
+| `dev.discovery` | `source` | `build` restricts candidates to inventory methods actually executed by Maven Surefire. New experiment templates set `build`. |
+| `scope.max_dev_scope` | `400` | Maximum Dev(scope) union for ranked scope selection. Positive integer. |
+
+Build discovery executes `mvn -o test -Dmaven.test.failure.ignore=true` at t.
+For a configured submodule it invokes the reactor with `-pl <module> -am`, and
+reads only that module's `target/surefire-reports/TEST-*.xml`. Prefetch the
+project's dependencies and Surefire provider into the runner's Maven cache before
+an offline run. A nonzero phase exit or timeout stops preparation; it does not
+produce an empty population. Discovery and every stability repeat require at
+least one Surefire XML report. Custom report destinations, disabled XML reports,
+or test phases that produce no reports are currently unsupported and stop with
+an explicit error. An empty saved report directory is not reusable evidence.
+Reports containing only skipped cases can establish an empty candidate set.
+Failed methods still count as executed candidates,
+and the existing stability screen determines denominator eligibility. Parameterized
+and repeated invocations collapse to their source method. Skipped-only methods
+and unmappable report entries do not enter the candidate set.
+Source inventory expands inherited tests through concrete subclasses, including
+multi-level inheritance and nested classes. Generic superclass/interface bindings
+are applied when matching overrides; compiler-generated bridges do not execute
+as additional tests. Jupiter includes non-private
+superclass tests across package boundaries, including package-private tests. Candidate filtering, denominators,
+survival execution, and regeneration pools use the concrete class/method pair.
+`declaring_class` and `declaring_file` retain the method's source declaration;
+the execution `file` retains the concrete class's inventoried source path, even
+when several top-level classes share a file. Unresolved external
+superclasses and ambiguous overloaded methods remain audited exclusions.
+
+Exclusion reasons use skipped reports and literal module configuration/source
+annotations when available. Maven does not explain every omitted test; uncertain
+causes are recorded as `not-reported-by-build`, not guessed. The discovery phase
+provides the first stability observation; additional configured stability runs
+retain the existing Maven baseline behavior. Regeneration runs discovery at its
+own commit before selecting pool candidates.
+Build-discovered pool coverage selects candidate methods explicitly, so an excluded
+slow or tagged method in the same class is not executed during pool measurement.
+
+Ranked selection checks the union of stable, passing developer methods that cover
+a selected source file (`coverage-scoped`) or match the existing class-name rule
+(`scope-targeted`). When several scoped groups are configured, every such group
+must fit the bound. Project-wide groups do not constrain Dev(scope).
+`explicit` and `all-eligible` scopes ignore this bound. Imported completed
+populations keep their saved denominators and scope-compatibility checks. A Dev
+result import preserves the already validated scope and skipped-class record when
+scope settings are unchanged; it does not rerank after removing imported groups
+from the measurement set.
+
+For source discovery, coverage measurement retains the existing stable-only
+population; audited ambiguous overloads and other unstable source rows are not
+executed. Build discovery measures its full candidate set, then applies stability
+and passing-state requirements to the denominator.
+
+The coverage worker selects only candidate methods, with at most 256 methods per
+snapshot group and eight groups per JVM chunk. It compiles the frozen suite once
+and records coverage of the entire production tree. Candidate methods use separate
+class loaders inside each JVM so discovery, shared setup, static initialization,
+and teardown contribute to every method that executes them. This avoids carrying
+one method's body hits into another method. Unchanged candidate/source/runner
+inputs reuse this measurement when only scope settings change. Class selection uses this
+one measurement; it does not launch a JVM for each tentative class or method.
+
+
+Saved `status` and `show` output does not require a runnable configuration for
+pre-framework completed experiments. Policy `status`/`--watch` reads saved policy
+state without reopening its historical baseline configuration. Running or planning
+an experiment still requires valid configuration and baseline inputs.

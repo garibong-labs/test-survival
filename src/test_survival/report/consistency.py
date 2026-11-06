@@ -44,6 +44,9 @@ def build(exp,config):
         summary['selection_control'] = {g:selection_counts(read_json(exp/f'results/control/0-{g}.json', {}).get('methods', [])) for g in groups}
         summary.update(execution='batch', coverage_scope='scope', ignored_settings=['survival.flaky_rerun','survival.environment_errors'])
     summary.update(dev_unmapped_excluded=excluded,notes=notes)
+    discovery = read_json(exp/'results/dev-build-discovery.json')
+    if discovery is not None and config['dev'].get('discovery', 'source') == 'build':
+        summary['dev_build_discovery'] = discovery
     if imported:
         summary['imported_dev_results'] = dict(source=imported['source'], groups=sorted(g for g in imported['groups'] if g in groups),
                                               imported=imported['imported'], source_sha256=imported['source_sha256'])

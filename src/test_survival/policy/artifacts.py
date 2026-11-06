@@ -80,6 +80,8 @@ def snapshot(source_exp, destination, tests, *, group, method, scope, prefix):
                'execution_hash':execution_hash, 'source_root':str(source_root.relative_to(destination)),
                'source_tree_hash':roots[source_root], 'resource_tree_hash':resources_hash,
                'unit':unit(source_exp, group, t, method, scope), 'origin_id':t['id'], 'resource_root':str(Path(prefix)/'dev/src-test-t')}
+        if t.get('declaring_file'):
+            row['declaring_file'] = str(Path(prefix)/t['declaring_file'])
         if method == 'dev':
             row.update(source_root=str(Path(prefix)/'dev/src-test-t/java'), resource_root=str(Path(prefix)/'dev/src-test-t'))
             row['id'] = t['class']+'#'+t['method']

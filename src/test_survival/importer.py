@@ -79,6 +79,12 @@ def import_experiment(exp, source, what, *, display=None):
                 write_json(exp/'state/generate.json',dict(status=status,config_hash=stage_hash(config,'generate'),started=now(),finished=now(),notes='Imported groups: '+', '.join(imported),source_hash=canonical_hash(copied),group_hashes={g['name']:stage_hash(config,'generate',g['name']) for g in config['generators'] if g['name'] in imported}))
             else:
                 from .dev_results import UNMAPPED_AUDIT, refresh_unmapped_metadata
+                if config['dev'].get('discovery', 'source') == 'build':
+                    discovery = read_json(source/'results/dev-build-discovery.json', {})
+                    if not discovery.get('complete'):
+                        raise PipelineError('dev-baseline: build discovery requires a build-discovered source baseline')
+                    for name in ('results/dev-build-discovery.json', 'dev/dev-not-run-by-build.csv', 'dev/build-report-unmapped.csv'):
+                        copy(source/name, exp/name)
                 for name in ['dev-methods-all.csv','dev-denominator.csv']:
                     copy(source/'dev'/name,exp/'dev'/name)
                 if (source/UNMAPPED_AUDIT).exists():

@@ -31,6 +31,8 @@ public final class PerTestCoverage implements TestExecutionListener {
     private boolean initializerUnbounded;
     private TestPlan plan;
     private int serial;
+    private final boolean isolatedMethod = Boolean.getBoolean("survival.coverage.isolateMethods");
+    private String serialPrefix = "";
     private Throwable failure;
     private final Object agent;
     private final java.lang.reflect.Method dump;
@@ -163,6 +165,7 @@ public final class PerTestCoverage implements TestExecutionListener {
 
     public void testPlanExecutionStarted(TestPlan plan) {
         this.plan = plan;
+        if (isolatedMethod) return; // retain discovery probes for this method
         try {
             byte[] before = (byte[])dump.invoke(agent, true);
             // Vintage parameter providers can execute production during discovery.
@@ -205,14 +208,13 @@ public final class PerTestCoverage implements TestExecutionListener {
 
     public synchronized void executionFinished(TestIdentifier id, TestExecutionResult result) {
         try {
-            byte[] bytes = (byte[]) dump.invoke(agent, true);
+            byte[] bytes = isolatedMethod ? null : (byte[]) dump.invoke(agent, true);
             // Container teardown runs after the last test dump. Clear those probes
             // separately so the next test cannot inherit another class's cleanup.
             if (!id.isTest()) return;
             MethodSource source = method(id);
             if (source == null) throw new IllegalStateException("Unmapped test: " + id.getUniqueId());
-            String name = Integer.toString(serial++);
-            if (scope == null) Files.write(output.resolve(name + ".exec"), bytes);
+            String name = serialPrefix + serial++;
             if (dependencies) {
                 Set<String> names = hits(bytes);
                 names.addAll(discoveryHits);
@@ -227,25 +229,30 @@ public final class PerTestCoverage implements TestExecutionListener {
                     Boolean.getBoolean("survival.initializer.failure"))
                     Files.writeString(output.resolve(name + ".unbounded"), "Incomplete class-initializer attribution");
             }
-            ExecFileLoader data = new ExecFileLoader();
-            data.load(new ByteArrayInputStream(bytes));
-            CoverageBuilder coverage = new CoverageBuilder();
-            Analyzer analyzer = new Analyzer(data.getExecutionDataStore(), coverage);
-            for (var entry : analysisClasses.entrySet()) analyzer.analyzeClass(entry.getValue(), entry.getKey());
-            try (BufferedWriter writer = Files.newBufferedWriter(output.resolve(name + ".tsv"))) {
-                for (ISourceFileCoverage file : coverage.getSourceFiles()) {
-                    String path = "src/main/java/" + (file.getPackageName().isEmpty() ? "" : file.getPackageName() + "/") + file.getName();
-                    if (scope != null && !scope.contains(path)) continue;
-                    for (int line = file.getFirstLine(); line <= file.getLastLine(); line++) {
-                        if (file.getLine(line).getInstructionCounter().getTotalCount() > 0)
-                            writer.write(path + "\t" + line + "\t" + (file.getLine(line).getInstructionCounter().getCoveredCount() > 0) + "\n");
-                    }
-                }
-            }
+            if (!isolatedMethod) writeCoverage(name, bytes);
             String message = result.getThrowable().map(Throwable::toString).orElse("");
             String encoded = Base64.getEncoder().encodeToString(message.getBytes(StandardCharsets.UTF_8));
             Files.writeString(output.resolve("tests.tsv"), name + "\t" + source.getClassName() + "\t" + source.getMethodName() + "\t" + result.getStatus() + "\t" + encoded + "\n", StandardOpenOption.CREATE, StandardOpenOption.APPEND);
         } catch (Throwable ex) { failure = ex; }
+    }
+
+    private void writeCoverage(String name, byte[] bytes) throws Exception {
+        if (scope == null) Files.write(output.resolve(name + ".exec"), bytes);
+        ExecFileLoader data = new ExecFileLoader();
+        data.load(new ByteArrayInputStream(bytes));
+        CoverageBuilder coverage = new CoverageBuilder();
+        Analyzer analyzer = new Analyzer(data.getExecutionDataStore(), coverage);
+        for (var entry : analysisClasses.entrySet()) analyzer.analyzeClass(entry.getValue(), entry.getKey());
+        try (BufferedWriter writer = Files.newBufferedWriter(output.resolve(name + ".tsv"))) {
+            for (ISourceFileCoverage file : coverage.getSourceFiles()) {
+                String path = "src/main/java/" + (file.getPackageName().isEmpty() ? "" : file.getPackageName() + "/") + file.getName();
+                if (scope != null && !scope.contains(path)) continue;
+                for (int line = file.getFirstLine(); line <= file.getLastLine(); line++) {
+                    if (file.getLine(line).getInstructionCounter().getTotalCount() > 0)
+                        writer.write(path + "\t" + line + "\t" + (file.getLine(line).getInstructionCounter().getCoveredCount() > 0) + "\n");
+                }
+            }
+        }
     }
 
     public static void batch(String[] args) throws Exception {
@@ -256,21 +263,48 @@ public final class PerTestCoverage implements TestExecutionListener {
         Path out = Paths.get(args[0]); Files.createDirectories(out);
         PerTestCoverage listener = new PerTestCoverage(out, classes);
         current = listener;
+        if (listener.isolatedMethod) {
+            listener.serialPrefix = args[4] + "-";
+            listener.dump.invoke(listener.agent, true);
+        }
         LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
             .configurationParameter("junit.jupiter.execution.parallel.enabled", "false")
             .configurationParameter("junit.vintage.execution.parallel.enabled", "false");
-        for (String line : Files.readAllLines(Paths.get(args[2]))) {
+        for (String line : listener.isolatedMethod ? List.of(args[3]) : Files.readAllLines(Paths.get(args[2]))) {
             String[] parts = line.split("\t", -1);
             if (parts.length == 1) builder.selectors(selectClass(parts[0]));
             else {
                 Class<?> cls = Class.forName(parts[0], false, Thread.currentThread().getContextClassLoader());
-                for (java.lang.reflect.Method m : cls.getMethods())
-                    if (m.getName().equals(parts[1])) builder.selectors(selectMethod(cls, m));
-                for (java.lang.reflect.Method m : cls.getDeclaredMethods())
-                    if (!java.lang.reflect.Modifier.isPublic(m.getModifiers()) && m.getName().equals(parts[1])) builder.selectors(selectMethod(cls, m));
+                // Include inherited package/protected Jupiter methods as well as
+                // public Vintage methods, while respecting overriding methods.
+                Set<String> seen = new HashSet<>();
+                for (Class<?> type = cls; type != null; type = type.getSuperclass()) {
+                    java.lang.reflect.Method[] declared = type.getDeclaredMethods();
+                    Arrays.sort(declared, Comparator.comparing(java.lang.reflect.Method::isBridge));
+                    for (java.lang.reflect.Method m : declared) {
+                        String signature = m.getName()+Arrays.toString(m.getParameterTypes());
+                        if (!seen.add(signature) || java.lang.reflect.Modifier.isPrivate(m.getModifiers())) continue;
+                        // Retain the erased signature for ancestor shadowing,
+                        // without selecting the compiler-generated bridge.
+                        if (m.isBridge() || m.isSynthetic()) continue;
+                        if (m.getName().equals(parts[1])) builder.selectors(selectMethod(cls, m));
+                    }
+                }
+                java.lang.reflect.Method[] publicMethods = cls.getMethods();
+                Arrays.sort(publicMethods, Comparator.comparing(java.lang.reflect.Method::isBridge));
+                for (java.lang.reflect.Method m : publicMethods)
+                    if (seen.add(m.getName()+Arrays.toString(m.getParameterTypes())) && !m.isBridge() && !m.isSynthetic()
+                            && m.getName().equals(parts[1]))
+                        builder.selectors(selectMethod(cls, m));
             }
         }
         LauncherFactory.create().execute(builder.build(), listener);
+        if (listener.isolatedMethod) {
+            // A source method includes all invocations, discovery, setup and
+            // teardown. Analyze the cumulative probes only after its plan ends.
+            byte[] bytes = (byte[])listener.dump.invoke(listener.agent, true);
+            for (int i = 0; i < listener.serial; i++) listener.writeCoverage(listener.serialPrefix + i, bytes);
+        }
         if (listener.failure != null) throw new IllegalStateException("Per-test coverage failed", listener.failure);
     }
 
@@ -349,12 +383,19 @@ public final class PerTestCoverage implements TestExecutionListener {
             URL[] urls = Arrays.stream(p[3].split(File.pathSeparator)).map(s -> {
                 try { return Paths.get(s).toUri().toURL(); } catch (Exception e) { throw new IllegalArgumentException(e); }
             }).toArray(URL[]::new);
-            ClassLoader prior = Thread.currentThread().getContextClassLoader();
-            try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
-                Thread.currentThread().setContextClassLoader(loader);
-                loader.loadClass("PerTestCoverage").getMethod("batch", String[].class, Map.class)
-                    .invoke(null, new String[]{p[0], p[1], p[2]}, bytecode.get(production));
-            } finally { Thread.currentThread().setContextClassLoader(prior); }
+            boolean isolate = Boolean.getBoolean("survival.coverage.isolateMethods");
+            List<String> selections = isolate ? Files.readAllLines(Paths.get(p[2])) : Collections.singletonList(null);
+            int selector = 0;
+            for (String selection : selections) {
+                ClassLoader prior = Thread.currentThread().getContextClassLoader();
+                try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
+                    Thread.currentThread().setContextClassLoader(loader);
+                    String[] arguments = isolate ? new String[]{p[0], p[1], p[2], selection, Integer.toString(selector++)}
+                                                 : new String[]{p[0], p[1], p[2]};
+                    loader.loadClass("PerTestCoverage").getMethod("batch", String[].class, Map.class)
+                        .invoke(null, arguments, bytecode.get(production));
+                } finally { Thread.currentThread().setContextClassLoader(prior); }
+            }
         }
     }
 }

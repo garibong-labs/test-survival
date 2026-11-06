@@ -17,6 +17,32 @@ def observation():
                 files=['src/main/java/p/A.java'],context=dict(known=True,entries=[['g','a','1','','jar']])))
 
 
+def test_context_resolves_each_index_and_preserves_same_index_resume(tmp_path):
+    calls = []
+    def worker(job):
+        calls.append(job['index'])
+        result = dict(version=1, sha=job['sha'], known=True, entries=[['g','a',str(job['index']),'','jar']])
+        write_json(tmp_path/job['output'], result)
+        return result
+    adapter = SimpleNamespace(exp=tmp_path, worker=worker,
+                              config=validate(dict(name='resume', anchor='t', project=dict(repo=str(tmp_path)))))
+    # Old optimization metadata remains readable, but is not copied to a new index.
+    saved = dict(version=1, sha='zero', known=True, entries=[], input_sha256='legacy', action='reused')
+    write_json(tmp_path/'results/selection-context/0.json', saved)
+    selector = Selector(adapter)
+    assert selector.context(0, 'zero') == saved
+    first = selector.context(1, 'one')
+    assert calls == [1] and first['entries'][0][2] == '1'
+    assert 'action' not in first and 'input_sha256' not in first
+    assert selector.context(1, 'one') == first
+    assert Selector(adapter).context(1, 'one') == first
+    assert calls == [1]  # Both in-memory and persisted same-index resume survive.
+    assert selector.context(2, 'two')['entries'][0][2] == '2'
+    assert calls == [1, 2]
+    assert Selector(adapter).context(1, 'replacement')['sha'] == 'replacement'
+    assert calls == [1, 2, 1]
+
+
 def test_carried_origin_is_read_once_and_revalidated_after_replacement(tmp_path, monkeypatch):
     from test_survival.stages import batch
     m = batch.Measurements.__new__(batch.Measurements)

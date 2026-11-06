@@ -110,7 +110,7 @@ def identity(exp, config):
                 dev_tree_sha256=tree_hash(exp/'dev/src-test-t'),
                 measurement_settings=dict(project={k: v for k, v in config['project'].items() if k != 'repo'},
                                           runner=runner_inputs(config['runner']), survival=survival_inputs(config),
-                                          stable_runs=config['dev']['stable_runs'], unmapped=config['dev']['unmapped'],
+                                          stable_runs=config['dev']['stable_runs'], unmapped=config['dev']['unmapped'], discovery=config['dev'].get('discovery', 'source'),
                                           coverage=config['coverage']))
     if config['survival'].get('execution') == 'batch':
         result['resolved_scope'] = resolved_scope(read_json(exp/'population/scope.json', {}).get('classes'))
@@ -131,8 +131,8 @@ def _divergence(actual, expected, prefix=''):
 
 def check_identity(actual, expected, *, advice=''):
     # Manifests written before dev.unmapped used the default error policy.
-    actual = {**actual, 'measurement_settings': {'unmapped': 'error', **actual.get('measurement_settings', {})}}
-    expected = {**expected, 'measurement_settings': {'unmapped': 'error', **expected.get('measurement_settings', {})}}
+    actual = {**actual, 'measurement_settings': {'unmapped': 'error', 'discovery': 'source', **actual.get('measurement_settings', {})}}
+    expected = {**expected, 'measurement_settings': {'unmapped': 'error', 'discovery': 'source', **expected.get('measurement_settings', {})}}
     labels = dict(project_repo='project repo', anchor_sha='anchor sha', commit_shas='commit sha sequence',
                   skip_untouched='skip_untouched', dev_tree_sha256='dev/src-test-t tree hash',
                   measurement_settings='result-affecting measurement settings', resolved_scope='resolved coverage scope')
@@ -149,6 +149,10 @@ def import_results(exp, source, config):
     source_provenance = load_provenance(source)
     source_identity = identity(source, source_config)
     check_identity(identity(exp, config), source_identity)
+    # Import invalidates scope summaries. Preserve the destination boundary that
+    # just passed compatibility, including ranked skips, without remeasurement.
+    scope_selection = dict(config=config['scope'], population=read_json(exp/'population/scope.json', {}),
+                           selection=read_json(exp/'results/scope-selection.json', {}))
     source_groups = {g['name']: (i, g) for i, g in enumerate(source_config['dev']['groups'])}
     matched = [(i, g) for i, g in enumerate(config['dev']['groups']) if g['name'] in source_groups
                and g['denominator'] == source_groups[g['name']][1]['denominator']]
@@ -156,6 +160,12 @@ def import_results(exp, source, config):
         raise PipelineError('dev-results: no Dev groups have matching names and denominator rules')
     frozen = read_json(source/'results/frozen-denominators.json', {})
     plan, groups = {}, {}
+    if config['dev'].get('discovery', 'source') == 'build':
+        discovery = 'results/dev-build-discovery.json'
+        evidence = read_json(source/discovery, {})
+        if not evidence.get('complete') or evidence.get('sha') != source_identity['anchor_sha']:
+            raise PipelineError('dev-results: missing successful build discovery at the anchor')
+        plan[discovery] = source/discovery
     # Shared baselines/sources are portable. Group-specific denominators must be
     # mapped by name, since the first group's filename is always dev-denominator.
     for path in sorted((source/'dev').rglob('*')):
@@ -226,7 +236,7 @@ def import_results(exp, source, config):
     prepare['dev_baseline'] = dict(status='completed', source=str(source),
                                   source_hash=canonical_hash({p: h for p, h in hashes.items() if p.startswith('dev/')}))
     write_json(prepare_path, prepare)
-    return dict(source=str(source), imported=now(), compatibility=source_identity, groups=groups,
+    return dict(source=str(source), imported=now(), compatibility=source_identity, groups=groups, scope_selection=scope_selection,
                 files=hashes, source_files={target: str(path.relative_to(source)) for target, path in plan.items()},
                 source_sha256=canonical_hash(hashes))
 

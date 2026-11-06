@@ -68,6 +68,13 @@ def run(exp, config):
     elif not imported_baseline(exp, config):
         baseline = adapter.baseline()
         log(exp, f'prepare: baseline has {sum(r["stable"]=="yes" for r in baseline)} stable methods', config)
+    if config['dev'].get('discovery', 'source') == 'build':
+        discovery = read_json(exp/'results/dev-build-discovery.json', {})
+        if not discovery.get('complete') or discovery.get('sha') != anchor_sha:
+            raise RuntimeError('Imported baseline lacks successful build discovery at this anchor; prepare a build-discovered baseline first')
+        saved_anchor = read_json(exp/'results/anchor.json')
+        saved_anchor['dev_build_discovery'] = discovery
+        write_json(exp/'results/anchor.json', saved_anchor)
     note = refresh_unmapped_metadata(exp)
     if note:
         log(exp, 'prepare: '+note, config)

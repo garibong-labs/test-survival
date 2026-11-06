@@ -10,7 +10,7 @@ import threading
 from ..adapters.java_maven import JavaMavenAdapter
 from ..config import canonical_hash, generator_config
 from ..io import read_csv, read_json, write_csv, write_json
-from ..rules.dev_denominator import denominator, frozen_method
+from ..rules.dev_denominator import denominator, frozen_method, identity
 from ..stages.generate import run as generate
 from ..stages.screen import screen_round, normalize_funnel
 from ..importer import rounds
@@ -18,7 +18,7 @@ from .artifacts import snapshot
 from .config import active_plan, regenerates
 
 
-def coverage(adapter, index, tests, name, full_suite=False):
+def coverage(adapter, index, tests, name, full_suite=False, candidate_suite=False):
     # Filesystem-relative resources require separate suite runs for source snapshots.
     # The worker bounds each JVM to a fixed number of snapshot groups.
     contexts = defaultdict(list)
@@ -29,8 +29,10 @@ def coverage(adapter, index, tests, name, full_suite=False):
     combined['sha'] = sha
     for number, members in enumerate(contexts.values()):
         label = name+'-'+str(number)
-        result = adapter.worker(dict(action='policy-cover', index=index, sha=sha, group='policy-coverage', methods=members,
-                                     full_suite=full_suite, output=f'results/policy-coverage/{label}.json', work=f'work/policy-coverage/{label}'))
+        job = dict(action='policy-cover', index=index, sha=sha, group='policy-coverage', methods=members,
+                   full_suite=full_suite, output=f'results/policy-coverage/{label}.json', work=f'work/policy-coverage/{label}')
+        if candidate_suite: job['candidate_suite'] = True
+        result = adapter.worker(job)
         combined['methods'].extend(result['methods'])
         combined['universe'].extend(result['universe'])
         combined['runs'].append(result)
@@ -69,6 +71,9 @@ def build_pool(b, point, dev_target):
     adapter.setup_runner()
     main = adapter.list_production_methods(0)
     tests = adapter.list_test_methods(exp/'dev/src-test-t/java')
+    for row in tests['methods']:
+        for key in ('file', 'declaring_file'):
+            if row.get(key): row[key] = row[key].removeprefix(adapter.runner.path(exp)+'/')
     write_json(exp/'results/source-inventory.json', dict(main=main, test=tests))
     scope = [c for c in b.scope['classes'] if c['class'] in main['classes']]
     focal = [m for m in main['methods'] if m['eligible'] and m['class'] in {c['class'] for c in scope}]
@@ -87,15 +92,20 @@ def build_pool(b, point, dev_target):
     else:
         method = 'dev'
         members = []
-        for row in tests['methods']:
+        candidates = [r for r in tests['methods'] if r['kind']]
+        if config['dev'].get('discovery', 'source') == 'build':
+            from ..adapters.build_discovery import discover
+            candidates = discover(adapter, candidates)
+        for row in candidates:
             if not row['kind']:
                 continue
-            t = frozen_method({k:row[k] for k in ('class','method','kind')})
+            t = frozen_method(identity(row))
             # Nested classes live in their enclosing source file.
             t.update(body_hash=row['body_hash'], source_root='dev/src-test-t/java', resource_root='dev/src-test-t',
                      file_hash=hashlib.sha256((exp/t['file']).read_bytes()).hexdigest())
             members.append(t)
-        full = coverage(adapter, 0, members, 'dev-full', full_suite=True)
+        build_discovery = config['dev'].get('discovery', 'source') == 'build'
+        full = coverage(adapter, 0, members, 'dev-full', full_suite=not build_discovery, candidate_suite=build_discovery)
         scope_files = {c['file'] for c in scope}
         observed = {(m['class'],m['method']):m for m in full['methods']}
         if b.dev[group]['denominator'] == 'coverage-scoped':
@@ -111,8 +121,9 @@ def build_pool(b, point, dev_target):
                                      runner_sha256=adapter.provenance(), output='results/dev-screen.json', work='work/dev-screen'))
         seen = set(); kept = []
         for t in record['methods']:
-            if t['state'] == 'pass' and t['body_hash'] not in seen:
-                kept.append(t); seen.add(t['body_hash'])
+            key = (t['class'], t['method'], t['body_hash']) if t.get('declaring_class') else t['body_hash']
+            if t['state'] == 'pass' and key not in seen:
+                kept.append(t); seen.add(key)
         write_json(exp/'per-test-coverage.json', full)
         write_json(exp/'funnel.json', dict(discovered=len(members), selected=len(selected), stable_runs=config['dev']['stable_runs'], stable_passed=sum(t['state']=='pass' for t in record['methods']), kept=len(kept)))
     # Sources already live beneath the new experiment; normalize all references to its root.
