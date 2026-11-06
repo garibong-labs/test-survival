@@ -210,9 +210,7 @@ measurement, including fallback after a failed test JVM. Outcomes are `pass`,
 rules. Coverage uses exact alive-entry sets; skipped commits carry state and
 predecessor coverage aliases. Missing coverage remains unavailable and can be
 repaired by resuming the measuring stage while keeping its recorded survival
-verdict. See [batch result formats](docs/result-formats.md#batch-baseline-results)
-and the [20-commit comparison and Java verification](docs/batch-baseline-verification.md),
-including the historical developer helper-compilation differences. Fresh batch
+verdict. See [batch result formats](docs/result-formats.md#batch-baseline-results). Fresh batch
 and policy runs now remove javac-error files and retry the remaining compilation
 set together; only tests whose own source files are removed become compile-fail.
 
@@ -642,6 +640,3 @@ are written as `.gz`, including inside policy pools. Logical record paths keep
 their original names; built-in status, reports, imports and policy readers accept
 both plain and compressed results. Use `gzip -dc FILE.gz` for external tools.
 Summary CSV/JSON, state, report/Sheets inputs and `generated/` retain their formats.
-
-See the [footprint verification report](docs/footprint-verification.md) for the
-fixture, accepted decisions, comparisons, per-stage timings and measured savings.

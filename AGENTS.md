@@ -21,3 +21,11 @@ If you are Codex, start every PR comment, review submission body, inline review 
 ```
 
 Include the marker exactly once so readers can immediately identify AI-generated content. Preserve it when editing your own comments or replies. This attribution rule does not authorize posting; follow the user's authorization for external communication.
+
+## Internal working documents
+
+This repository is public. `docs/` holds only user documentation for the CLI: how it works, how to configure it, and what its outputs mean.
+
+Write every internal working document under `.local/docs/` instead. This includes implementation reviews and plans, verification and comparison records, evidence files (JSON, CSV, logs, profiles), handovers, and decision records. `.local/` is ignored by git, so these files stay on the local disk only.
+
+Tracked files (README, `docs/`, code, comments, PR descriptions) must not link to or name files under `.local/`. When a user document needs a verified fact, state the fact directly in that document.
