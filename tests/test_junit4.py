@@ -371,7 +371,7 @@ def test_direct_scoped_child_keeps_whole_frozen_tree_compilation(tmp_path,monkey
 
 @pytest.mark.java_integration
 @pytest.mark.parametrize('mode', ['image', 'compose'])
-def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode, request):
+def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode):
     import hashlib
     from uuid import uuid4
     import yaml
@@ -379,16 +379,10 @@ def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode, 
     docker = dict(image=image)
     if mode == 'compose':
         compose = tmp_path/'compose.yaml'
-        project='identity-'+uuid4().hex
-        (tmp_path/'Dockerfile').write_text('FROM '+image+'\n')
-        compose.write_text(yaml.safe_dump(dict(name=project,
-            services=dict(probe=dict(build='.', network_mode='none')))))
-        # Give Compose its build-only image without creating new image layers.
-        tag=project+'-probe'
-        subprocess.run(['docker','tag',image,tag],check=True)
-        request.addfinalizer(lambda:subprocess.run(['docker','image','rm',tag],check=True,stdout=subprocess.DEVNULL))
+        compose.write_text(yaml.safe_dump(dict(name='identity-'+uuid4().hex,
+            services=dict(probe=dict(image=image, network_mode='none')))))
         docker = dict(compose_files=[str(compose)], service='probe')
-    config = validate(dict(name='identity', anchor='t', project=dict(repo=str(tmp_path),module='module'),
+    config = validate(dict(name='identity', anchor='t', project=dict(repo=str(tmp_path)),
                            runner=dict(docker=docker)))
     for exp in (tmp_path/'baseline', tmp_path/'baseline/results/policy/pools/dev/2'):
         adapter = JavaMavenAdapter(exp, config)
@@ -398,26 +392,10 @@ def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode, 
         cp = exp/'work/classpath.txt'
         cp.write_text(adapter.runner.path(jar))
         directory = exp/'results/identity'
-        assert adapter.cache.valid(cp, adapter.folder(0), 0, directory)
-        removed=adapter.runner.execute(['python3','-c','import pathlib,sys; pathlib.Path(sys.argv[1]).unlink()',
-                                        adapter.runner.path(jar)], adapter.folder(0), directory/'remove-jar.log', 30)
-        assert removed['exit_code']==0
-        assert not adapter.cache.valid(cp, adapter.folder(0), 0, directory)
-        jar.write_bytes(b'fixture dependency')
         expected = [dict(path=adapter.runner.path(jar), sha256=hashlib.sha256(jar.read_bytes()).hexdigest())]
         assert adapter.dependency_identity(0, dict(classpath='work/classpath.txt'), directory) == expected
         assert json.loads((directory/'dependencies.json').read_text()) == expected
         assert (directory/'dependencies.log').is_file()
-        (adapter.folder(0)/'pom.xml').write_text('<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>module</artifactId><version>${revision}</version><packaging>pom</packaging><profiles><profile><id>marker</id><activation><file><exists>activate.marker</exists></file></activation></profile></profiles></project>')
-        mvn=adapter.folder(0)/'.mvn';mvn.mkdir()
-        (mvn/'maven.config').write_text('-Drevision=1\n')
-        before=adapter.cache.context_identity(0)
-        assert adapter.cache.context_identity(0)==before
-        (adapter.folder(0)/'activate.marker').touch()
-        assert adapter.cache.context_identity(0)!=before
-        active=adapter.cache.context_identity(0)
-        (mvn/'maven.config').write_text('-Drevision=2\n')
-        assert adapter.cache.context_identity(0)!=active
 
 
 @pytest.mark.java_integration

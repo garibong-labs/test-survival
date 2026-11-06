@@ -345,7 +345,7 @@ class JavaMavenAdapter:
         paths.append(Path(__file__).with_name('compiler_session.py'))
         paths.append(Path(__file__).parents[1]/'io.py')
         paths.append(Path(__file__).parents[1]/'selection.py')
-        paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py','dependencies.py','selection_context.py','context_inputs.py'))
+        paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py','dependencies.py','selection_context.py'))
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
     def worker(self, job):

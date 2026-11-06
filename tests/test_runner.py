@@ -47,6 +47,38 @@ def test_classpath_resolution_once_per_pom(tmp_path):
     assert len(calls)==5
 
 
+def test_affected_classpath_resolves_per_index_with_identical_poms(tmp_path):
+    from test_survival.adapters import maven_dependencies
+    from test_survival.io import read_json, write_json
+    config = validate(dict(name='affected', anchor='t', project=dict(repo=str(tmp_path)),
+                           survival=dict(execution='batch', selection='affected')))
+    calls, jobs = [], []
+    jar = tmp_path/'dependency.jar'; jar.touch()
+    def execute(command, cwd, log, timeout):
+        calls.append(command)
+        if 'dependency:build-classpath' in command:
+            Path(next(a.split('=', 1)[1] for a in command if a.startswith('-Dmdep.outputFile='))).write_text(str(jar))
+        return dict(exit_code=0)
+    class Runner:
+        path = staticmethod(str)
+        def execute(self, command, cwd, log, timeout):
+            job = read_json(command[-1]); jobs.append(job)
+            attempts = maven_dependencies.resolve(Path(job['folder']), tmp_path/job['cache'],
+                tmp_path/'logs', 10, execute, force=job['force'])
+            write_json(tmp_path/job['output'], dict(attempts=attempts))
+            return dict(exit_code=0)
+    cache = ClasspathCache(tmp_path, config, Runner())
+    paths = []
+    for index in (0, 1, 1):
+        folder = tmp_path/f'work/checkouts/{index}'; folder.mkdir(parents=True, exist_ok=True)
+        (folder/'pom.xml').write_text('<project/>')
+        paths.append(cache.resolve(folder, index)[1])
+    assert paths[0] != paths[1] == paths[2]
+    assert all(job['force'] for job in jobs)
+    assert sum('dependency:build-classpath' in command for command in calls) == 3
+    assert not (tmp_path/'work/context-inputs').exists()
+
+
 def test_image_mode_reuses_named_maven_volume_and_honors_explicit_mount(tmp_path):
     config = validate({'name': 'm2', 'anchor': 't', 'project': {'repo': '/repo'},
                        'runner': {'docker': {'image': 'survival-java:25'}}})

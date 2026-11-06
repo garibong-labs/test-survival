@@ -89,6 +89,37 @@ def test_discovery_defaults_and_fingerprints_preserve_old_configs():
     assert stage_hash(config,'prepare') != stage_hash(validate({**raw,'dev':{'discovery':'build'}}),'prepare')
 
 
+def test_build_discovery_keeps_inherited_sources_excludes_tags_and_does_not_cap_candidates(tmp_path):
+    from test_survival.adapters.inherited_tests import expand
+    folder = tmp_path/'work/checkouts/0'; folder.mkdir(parents=True)
+    (folder/'pom.xml').write_text('''<project><build><plugins><plugin>
+        <artifactId>maven-surefire-plugin</artifactId><configuration>
+        <excludedGroups>slow</excludedGroups></configuration></plugin></plugins></build></project>''')
+    write_json(tmp_path/'results/anchor.json', dict(sha='t'))
+    classes = {
+        'p.Base': dict(kind='CLASS', package='p', modifiers='abstract', path='src/test/java/p/Base.java'),
+        'p.Tests': dict(kind='CLASS', package='p', extends='Base', path='src/test/java/p/Tests.java'),
+    }
+    declared = [dict(method(f't{i}'), **{'class':'p.Base'}, signature=f't{i}()', modifiers='public') for i in range(450)]
+    declared.append(dict(method('slow'), **{'class':'p.Base'}, signature='slow()', modifiers='public', annotations='@Tag("slow")'))
+    inventory = expand(dict(classes=classes, methods=declared))
+    def execute(command, cwd, log, timeout):
+        assert command == ['mvn', '-o', 'test', '-Dmaven.test.failure.ignore=true']
+        reports = folder/'target/surefire-reports'; reports.mkdir(parents=True)
+        (reports/'TEST-p.Tests.xml').write_text('<testsuite>'+''.join(
+            f'<testcase classname="p.Tests" name="t{i}()"/>' for i in range(450))+'</testsuite>')
+        return dict(command=command, exit_code=0, seconds=1)
+    config = validate(dict(name='build', anchor='t', project=dict(repo=str(tmp_path)), dev=dict(discovery='build')))
+    adapter = SimpleNamespace(exp=tmp_path, config=config, folder=lambda _:folder, runner=SimpleNamespace(execute=execute))
+    candidates = discover(adapter, [m for m in inventory['methods'] if m['kind']])
+    assert len(candidates) == 450 > config['scope']['max_dev_scope']
+    assert all(m['class']=='p.Tests' and m['declaring_class']=='p.Base' and
+               m['declaring_file']=='src/test/java/p/Base.java' for m in candidates)
+    excluded = read_csv(tmp_path/'dev/dev-not-run-by-build.csv')
+    assert any(r['class']=='p.Tests' and r['method']=='slow' and r['reason']=='tag-or-group-exclusion' for r in excluded)
+    assert not read_csv(tmp_path/'dev/build-report-unmapped.csv')
+
+
 def test_failed_build_does_not_accept_stale_surefire_reports(tmp_path):
     folder=tmp_path/'work/checkouts/0';reports=folder/'target/surefire-reports';reports.mkdir(parents=True)
     (folder/'pom.xml').write_text('<project/>')

@@ -196,41 +196,8 @@ executes conservatively. No effective Maven model is extracted.
 Resolved production/test-scope dependency entries are compared after the worker's
 JUnit exclusions and runner-library additions, in classpath order, using group,
 artifact, version, classifier and type. Project output directories are excluded.
-Affected classpath caching uses the contents of every repository POM, Maven
-settings and `.mvn` configuration, and the resolved runner image identity.
-Local parent POM references are followed recursively, including parents with
-filenames other than `pom.xml` and parents outside the checkout. A local parent
-is trusted only when its literal group, artifact, and version match the declared
-parent, and the entire chain can be established that way. Inherited profile
-activation is checked in each descendant module's evaluation directory, including
-through transitive parents.
-
-Repository-parent fallbacks deliberately disable classpath and selection-context
-reuse: this includes `<relativePath/>`, missing local parents, and local POMs with
-different coordinates. Unprovable coordinates (including inherited/interpolated
-coordinates or version ranges), unresolved paths, and cyclic chains also disable
-reuse. The tool does not implement Maven's repository parent resolver.
-Both entry points recheck these inputs on every call, including same-index resumes;
-old cache keys cannot bypass this rule. Maven's local artifact repository still
-provides its normal dependency reuse.
-Alternate models selected by `-f` or `--file` in `.mvn/maven.config` or
-`MAVEN_ARGS` resolve against the invocation directory. Their local parents,
-modules, and activation inputs also participate in the identity.
-Configuration is collected from the actual Maven invocation directory (the
-configured module): Maven uses the nearest ancestor `.mvn` unless `MAVEN_BASEDIR`
-overrides it, and relative settings paths resolve against the invocation directory. The
-selection context is reused from the previous evaluated index while those inputs
-remain identical; otherwise it is resolved again. Settings are hashed inside the
-runner, so mounted user/global settings participate without recording credentials.
-JVM options, including `_JAVA_OPTIONS`, determine the effective user home and
-activation properties. Cached dependency paths are checked inside the runner;
-missing entries invoke the existing Maven classpath repair.
-File-profile activation checks and referenced environment properties also
-participate. Unresolved activation paths or unbounded system-property activations conservatively
-disable context reuse.
-Build-only Compose services use their generated service image identity.
-Each index records `action: resolved | reused` in its selection-context JSON.
-Unknown contexts are never reused; unresolved coordinates force execution.
+Affected preparation bypasses the module-POM-only classpath cache and resolves
+per built commit. Unresolved coordinates force execution.
 
 Affected mode measures indices in order and limits concurrent chunks within each
 index to `runner.workers.survive`. Each chunk has isolated filesystem resources.

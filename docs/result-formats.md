@@ -654,13 +654,3 @@ with the frozen sources. Existing records without these fields remain valid.
 New `dev-results` imports retain `scope_selection` (scope settings, population,
 and selection record) in `state/import.json`. An unchanged scope configuration
 reuses that validated selection without remeasuring imported candidates.
-
-Selection-context records additionally contain `input_sha256`, `index`,
-`action` (`resolved` or `reused`), `reused_from_index` (null for resolutions),
-and the cached classpath's experiment-relative path. Reused records retain the
-current SHA and coordinates without rerunning Maven dependency listing.
-`known` describes resolved dependency coordinates; it does not by itself establish
-that the parent-model inputs permit caching. Unbounded parent inputs force fresh
-classpath/context resolution, including repeated same-index calls. Input identity
-version 6 invalidates entries created before the parent-chain eligibility rule;
-completed experiment records remain readable without being rewritten.

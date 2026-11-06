@@ -5,7 +5,7 @@ import re
 import subprocess
 import xml.etree.ElementTree as ET
 
-from .io import read_json, write_json
+from .io import read_json
 from .rules.coverage import usable_lines
 from .rules.survival import FAILURES
 from .adapters.dependencies import RECORD_VERSION
@@ -98,43 +98,13 @@ class Selector:
         prefix = self.module+'/' if self.module not in ('','.') else ''
         return [p[len(prefix):] for p in paths if p and p.startswith(prefix)], compiler
 
+    @lru_cache(maxsize=128)
     def context(self, index, sha):
-        # Inputs can change on a same-index resume (including outside Git).
-        # Never let an in-memory result bypass the shared cache eligibility key.
         path = f'results/selection-context/{index}.json'
-        self.adapter.checkout(index, sha)
-        identity = self.adapter.cache.context_identity(index)
         existing = read_json(self.adapter.exp/path, {})
-        if (existing.get('sha') == sha and existing.get('input_sha256') == identity and existing.get('version') == 1 and existing.get('known')
-                and existing.get('classpath') and (self.adapter.exp/existing['classpath']).is_file()):
-            write_json(self.adapter.exp/f'work/selection-classpaths/{index}.json', dict(classpath=existing['classpath']))
-            return existing
-        prior = sorted((p for p in (self.adapter.exp/'results/selection-context').glob('*.json')
-                        if p.stem.isdigit() and int(p.stem) < index), key=lambda p:int(p.stem), reverse=True)
-        previous = read_json(prior[0], {}) if prior else {}
-        reusable = previous.get('input_sha256') == identity and previous.get('known') and previous.get('version') == 1
-        classpath = previous.get('classpath') if reusable else None
-        if classpath and (self.adapter.exp/classpath).is_file() and '/work/checkouts/' in (self.adapter.exp/classpath).read_text():
-            from .runner.cache import rebase_classpath
-            text = (self.adapter.exp/classpath).read_text()
-            root = self.adapter.runner.path(self.adapter.exp/'work/checkouts')
-            classpath = f'work/selection-classpaths/{index}.txt'
-            target = self.adapter.exp/classpath
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(rebase_classpath(text, root, index))
-        if not classpath or not (self.adapter.exp/classpath).is_file():
-            _, cache, _ = self.adapter.cache.resolve(self.adapter.folder(index), index)
-            classpath = str(cache.relative_to(self.adapter.exp))
-        write_json(self.adapter.exp/f'work/selection-classpaths/{index}.json', dict(classpath=classpath))
-        if reusable:
-            result = dict(previous, sha=sha, action='reused', reused_from_index=int(prior[0].stem))
-        else:
-            result = self.adapter.worker(dict(action='selection-context', index=index, sha=sha, methods=[],
+        if existing.get('sha') == sha and existing.get('version') == 1: return existing
+        return self.adapter.worker(dict(action='selection-context', index=index, sha=sha, methods=[],
                  work=f'work/selection-context/{index}', output=path))
-            result.update(action='resolved', reused_from_index=None)
-        result.update(input_sha256=identity, index=index, classpath=classpath)
-        write_json(self.adapter.exp/path, result)
-        return result
 
     def decision(self, row, index, sha, context, start=0):
         if not row or not row.get('last_executed_sha'): return 'missing observation'

@@ -25,17 +25,13 @@ in both Jupiter and Vintage.
 Inherited-test fixtures verify concrete subclass execution and source provenance
 through the normal runner and batched coverage in JUnit 4 and JUnit 5, including
 unannotated Vintage overrides. Candidate coverage matches isolated method runs
-for shared setup, lazy initialization, and teardown in one JVM. Runner identity
-fixtures cover build-only Compose services, file-profile activation, and module-local
-Maven configuration identity changes. Inheritance fixtures include
+for shared setup, lazy initialization, and teardown in one JVM. Inheritance fixtures include
 package-private Jupiter methods across packages; candidate fixtures exclude audited
 source overloads before coverage measurement.
 Affected-selection fixtures check iterative removal of erroneous sources,
 transitive helper dependencies, runtime class hits outside the coverage scope,
 concurrent JVM chunks, and peak JVM memory evidence.
-They do not run real-project experiments or model calls. Maven parent-cache
-fixtures use only synthetic projects and preseeded artifacts in a network-disabled
-container; the fixture image includes checksum-pinned Maven 3.9.9.
+They do not run ta4j, Maven project builds, or any model calls.
 
 Missing image/library variables fail when `SURVIVAL_REQUIRE_JAVA_TESTS=1`; an absent
 or empty library directory always fails. The final JUnit XML check requires every named
@@ -58,12 +54,10 @@ python ci/java_fixture.py libraries /tmp/survival-java-libs
 SURVIVAL_JAVA_TEST_IMAGE=survival-java-ci:fixture \
 SURVIVAL_JAVA_TEST_LIBS=/tmp/survival-java-libs \
 SURVIVAL_REQUIRE_JAVA_TESTS=1 \
-python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py tests/test_affected_selection.py tests/test_maven_parent_cache.py --junitxml=java-results.xml
+python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py tests/test_affected_selection.py --junitxml=java-results.xml
 python ci/java_fixture.py report java-results.xml
 ```
 
 Update image/action pins deliberately, verify the official source and JAR checksums,
 and rerun both workflows. Manual dispatch requires the workflow to be available on the
 default branch; new workflow PRs validate through the pull-request trigger first.
-
-The parent-cache acceptance fixture runs Maven 3.9.9 in a network-disabled container with an isolated, preseeded artifact repository. A tiny fixture plugin reports Maven's effective dependency model and returns fixture JAR paths through the normal classpath and selection-context workers. It covers inherited file activation, repository-parent fallbacks, environment changes, persisted same-index resumes, and positive reuse controls. The image installer verifies the Maven distribution's pinned SHA-512 before extraction.

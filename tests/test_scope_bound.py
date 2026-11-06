@@ -11,6 +11,7 @@ def test_skip_popular_classes_continue_and_count_union(rule):
     skipped=[]
     chosen,eligible=select_scope(rows,config,lambda rows:len(set().union(*(covered[r['class']] for r in rows))),skipped)
     assert [r['class'] for r in chosen] == ['B','D']
+    assert len(set().union(*(covered[r['class']] for r in chosen))) == 400
     assert [(r['class'],r['would_be_dev_scope']) for r in skipped] == [('A',401),('C',401)]
     assert eligible == 4
     assert all(r['reason']=='max-dev-scope' for r in skipped)
@@ -132,10 +133,10 @@ def test_build_coverage_still_measures_unique_unstable_candidates(tmp_path):
     config=validate(dict(name='x',anchor='t',project=dict(repo='/r'),dev=dict(discovery='build')))
     source=tmp_path/'dev/src-test-t/java/p/Tests.java';source.parent.mkdir(parents=True);source.write_text('fixture')
     write_json(tmp_path/'results/anchor.json',dict(sha='t'))
-    baseline=[dict({'class':'p.Tests'},method='unstable',kind='plain',stable='no')]
+    baseline=[dict({'class':'p.Tests'},method=f'unstable{i}',kind='plain',stable='no') for i in range(450)]
     def worker(job):
-        assert [m['method'] for m in job['methods']]==['unstable']
+        assert [m['method'] for m in job['methods']]==[m['method'] for m in baseline]
         return dict(coverage_status='complete',methods=[dict(t,state='fail',lines=[]) for t in job['methods']],runs=[dict(seconds=1)])
     adapter=SimpleNamespace(setup_runner=lambda:None,provenance=lambda:{},worker=worker,
                             runner=SimpleNamespace(session=lambda _:nullcontext()))
-    assert len(candidate_coverage(tmp_path,config,adapter,baseline)['methods'])==1
+    assert len(candidate_coverage(tmp_path,config,adapter,baseline)['methods'])==450
