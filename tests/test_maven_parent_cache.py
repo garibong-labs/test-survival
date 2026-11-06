@@ -42,13 +42,16 @@ def test_maven_parent_context_cache_acceptance(tmp_path, monkeypatch):
     if not image:
         if os.environ.get('SURVIVAL_REQUIRE_JAVA_TESTS')=='1':pytest.fail('Set SURVIVAL_JAVA_TEST_IMAGE')
         pytest.skip('Set SURVIVAL_JAVA_TEST_IMAGE for the offline Maven fixture')
-    (tmp_path/'empty-m2').mkdir()
+    (tmp_path/'home').mkdir()
     compose=tmp_path/'compose.yaml'
-    compose.write_text(yaml.safe_dump(dict(services=dict(probe=dict(image=image,network_mode='none')))))
+    # Host and worker both publish fixture evidence. Use one UID on Linux too;
+    # Docker Desktop otherwise hides the root-owned bind-mount boundary.
+    compose.write_text(yaml.safe_dump(dict(services=dict(probe=dict(image=image,network_mode='none',
+        user=f'{os.getuid()}:{os.getgid()}',environment=dict(HOME='/fixture/home',MAVEN_OPTS='-Duser.home=/fixture/home'))))))
     raw=dict(name='parent-fixture',anchor='zero',project=dict(repo=str(tmp_path),module='child',test_framework='junit5'),
              survival=dict(selection='affected',execution='batch'),
              runner=dict(docker=dict(compose_files=[str(compose)],service='probe',mounts={str(tmp_path):'/fixture',
-                 str(FIXTURE.resolve()):'/fixture-sources',str(tmp_path/'empty-m2'):'/root/.m2'})))
+                 str(FIXTURE.resolve()):'/fixture-sources'})))
     config=validate(raw)
     master=DockerRunner(tmp_path,config)
     master.read_only.add(str(FIXTURE.resolve()))
