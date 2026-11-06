@@ -197,6 +197,7 @@ def test_candidate_scope_batches_select_only_candidates_with_bounded_groups(tmp_
     def execute(command,cwd,log,timeout):
         if 'PerTestCoverage' not in command:return dict(exit_code=0)
         manifest=Path(command[-1]).read_text().splitlines();calls.append(manifest)
+        assert '-Dsurvival.coverage.isolateMethods=true' in command
         assert [len(Path(row.split('\t')[2]).read_text().splitlines()) for row in manifest]==[256,256,88]
         for row in manifest:
             output,_,selectors,*_=row.split('\t');output=Path(output);output.mkdir(parents=True)

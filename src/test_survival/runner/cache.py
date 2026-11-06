@@ -3,7 +3,6 @@ import hashlib
 from pathlib import Path
 import shutil
 import threading
-import json
 import subprocess
 import re
 from ..config import canonical_hash
@@ -37,14 +36,17 @@ class ClasspathCache:
             image = subprocess.check_output(['docker', 'inspect', '--format', '{{.Image}}', self.runner.container_id], text=True).strip()
         else:
             name = docker['image']
-            if not name:
+            if docker['compose_files']:
                 command = ['docker','compose']
                 for path in docker['compose_files']: command += ['-f',path]
-                services = json.loads(subprocess.check_output([*command, 'config', '--format', 'json']))['services']
-                name = services[docker['service']]['image']
+                # Compose resolves its generated project-service image name for
+                # build-only services; the optional JSON `image` field does not.
+                name = subprocess.check_output([*command, 'config', '--images', docker['service']], text=True).strip()
+                if not name or '\n' in name:
+                    raise RuntimeError('Cannot identify the Compose runner image')
             image = subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',name], text=True).strip()
         manifest = Path(__file__).parents[1]/'adapters/java/classpath-artifacts.json'
-        return canonical_hash(dict(version=1, inputs=read_json(output), image=image, module=self.config['project']['module'],
+        return canonical_hash(dict(version=2, inputs=read_json(output), image=image, module=self.config['project']['module'],
                                    runner_libraries=hashlib.sha256(manifest.read_bytes()).hexdigest()))
 
     def resolve(self, folder, index, *, log_root=None):

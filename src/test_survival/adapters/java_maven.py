@@ -238,7 +238,7 @@ class JavaMavenAdapter:
 
     def list_test_methods(self, files):
         from .inherited_tests import expand
-        return expand(self.inventory(files, self.exp/'results/source-inventory-test.tsv'))
+        return expand(self.inventory(files, self.exp/'results/source-inventory-test.tsv'), self.test_framework())
 
     def baseline(self):
         folder = self.folder(0)

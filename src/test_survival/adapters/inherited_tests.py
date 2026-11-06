@@ -6,7 +6,7 @@ left unmapped; actual build reports remain authoritative for build discovery.
 import re
 
 
-def expand(inventory):
+def expand(inventory, framework='junit5'):
     classes = inventory['classes']
     declared = {name: [] for name in classes}
     for method in inventory['methods']:
@@ -45,7 +45,10 @@ def expand(inventory):
         if owner in memo: return memo[owner]
         if owner in visiting: return []
         own = declared[owner]
-        signatures = {m['signature'] for m in own}
+        # Vintage discovers annotated superclass methods even if a concrete
+        # override is unannotated; reflection invokes that overriding body.
+        signatures = {m['signature'] for m in own if framework != 'junit4' or m['kind'] or
+                      re.search(r'@(?:org\.junit\.)?Test\b', m.get('annotations', ''))}
         result = list(own)
         data = classes[owner]
         parents = [data.get('extends', ''), *data.get('interfaces', '').split(';')]

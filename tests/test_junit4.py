@@ -371,7 +371,7 @@ def test_direct_scoped_child_keeps_whole_frozen_tree_compilation(tmp_path,monkey
 
 @pytest.mark.java_integration
 @pytest.mark.parametrize('mode', ['image', 'compose'])
-def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode):
+def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode, request):
     import hashlib
     from uuid import uuid4
     import yaml
@@ -379,8 +379,14 @@ def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode):
     docker = dict(image=image)
     if mode == 'compose':
         compose = tmp_path/'compose.yaml'
-        compose.write_text(yaml.safe_dump(dict(name='identity-'+uuid4().hex,
-            services=dict(probe=dict(image=image, network_mode='none')))))
+        project='identity-'+uuid4().hex
+        (tmp_path/'Dockerfile').write_text('FROM '+image+'\n')
+        compose.write_text(yaml.safe_dump(dict(name=project,
+            services=dict(probe=dict(build='.', network_mode='none')))))
+        # Give Compose its build-only image without creating new image layers.
+        tag=project+'-probe'
+        subprocess.run(['docker','tag',image,tag],check=True)
+        request.addfinalizer(lambda:subprocess.run(['docker','image','rm',tag],check=True,stdout=subprocess.DEVNULL))
         docker = dict(compose_files=[str(compose)], service='probe')
     config = validate(dict(name='identity', anchor='t', project=dict(repo=str(tmp_path)),
                            runner=dict(docker=docker)))
@@ -396,6 +402,11 @@ def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode):
         assert adapter.dependency_identity(0, dict(classpath='work/classpath.txt'), directory) == expected
         assert json.loads((directory/'dependencies.json').read_text()) == expected
         assert (directory/'dependencies.log').is_file()
+        (adapter.folder(0)/'pom.xml').write_text('<project><profiles><profile><activation><file><exists>activate.marker</exists></file></activation></profile></profiles></project>')
+        before=adapter.cache.context_identity(0)
+        assert adapter.cache.context_identity(0)==before
+        (adapter.folder(0)/'activate.marker').touch()
+        assert adapter.cache.context_identity(0)!=before
 
 
 @pytest.mark.java_integration
@@ -457,7 +468,8 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
     annotation='@org.junit.Test public' if framework=='junit4' else '@org.junit.jupiter.api.Test protected'
     (sources/'Base.java').write_text('package fixture; public abstract class Base { '+annotation+' void inherited() { if (Production.value()!=2) throw new AssertionError(); } '+annotation+' void excluded() { throw new AssertionError("non-candidate must not execute"); } }')
     for name in ('One','Two'):
-        (sources/(name+'.java')).write_text('package fixture; public class '+name+' extends Base {}')
+        override = 'public void inherited() { if (Production.value()!=2) throw new AssertionError(); }' if framework=='junit4' and name=='One' else ''
+        (sources/(name+'.java')).write_text('package fixture; public class '+name+' extends Base { '+override+' }')
     production=tmp_path/'work/checkouts/0/src/main/java/fixture/Production.java';production.parent.mkdir(parents=True)
     production.write_text('package fixture; public class Production { public static int value() { return 2; } }')
     classes=tmp_path/'work/checkouts/0/target/classes';classes.mkdir(parents=True)
@@ -489,3 +501,55 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
         assert all(m['lines'] for m in covered['methods'])
         executed=[line.split('\t')[2] for path in (tmp_path/'work/candidate').glob('*/dumps/tests.tsv') for line in path.read_text().splitlines()]
         assert executed==['inherited','inherited']
+
+
+@pytest.mark.java_integration
+def test_candidate_coverage_preserves_isolated_setup_and_initializer_lines(tmp_path,java_environment):
+    import hashlib
+    from test_survival.rules.dev_denominator import frozen_method
+    from test_survival.io import read_csv
+    image,libs=java_environment
+    config=validate(dict(name='setup',anchor='t',project=dict(repo=str(tmp_path),test_framework='junit5'),
+        runner=dict(docker=dict(image=image,mounts={str(tmp_path):'/experiment',str(Path(libs).resolve()):'/experiment/work/libs'}))))
+    source=tmp_path/'dev/src-test-t/java/fixture/Shared.java';source.parent.mkdir(parents=True)
+    source.write_text('''package fixture;
+import org.junit.jupiter.api.*;
+public class Shared {
+ static int initialized=Production.initialized();
+ static int prepared;
+ static class Lazy { static int value=Production.lazy(); }
+ @BeforeAll static void setup() { prepared=Production.prepared(); }
+ @AfterAll static void cleanup() { Production.cleanup(); }
+ @Test void alpha() { Assertions.assertEquals(6,initialized+prepared+Lazy.value); Production.alpha(); }
+ @Test void beta() { Assertions.assertEquals(6,initialized+prepared+Lazy.value); }
+}''')
+    production=tmp_path/'work/checkouts/0/src/main/java/fixture/Production.java';production.parent.mkdir(parents=True)
+    production.write_text('''package fixture;
+public class Production {
+ public static int initialized() { return 1; }
+ public static int prepared() { return 2; }
+ public static int lazy() { return 3; }
+ public static void cleanup() { System.nanoTime(); }
+ public static void alpha() { System.nanoTime(); }
+}''')
+    classes=tmp_path/'work/checkouts/0/target/classes';classes.mkdir(parents=True)
+    (tmp_path/'work/runtime').mkdir(parents=True);(tmp_path/'work/classpath.txt').write_text('')
+    write_json(tmp_path/'results/anchor.json',dict(sha='anchor'))
+    write_json(tmp_path/'results/builds/0.json',dict(sha='anchor',build='ok',classpath='work/classpath.txt'))
+    adapter=JavaMavenAdapter(tmp_path,config);members=[];expected={}
+    with adapter.runner.session('candidate-setup-fixture'):
+        assert adapter.runner.execute(['javac','-d',str(classes),str(production)],tmp_path,tmp_path/'production.log',60)['exit_code']==0
+        for name in ('alpha','beta'):
+            t=frozen_method(dict({'class':'fixture.Shared'},method=name,kind='plain'))
+            t.update(source_root='dev/src-test-t/java',resource_root='dev/src-test-t',file_hash=hashlib.sha256(source.read_bytes()).hexdigest())
+            members.append(t)
+            result=adapter.method_coverage(t)
+            assert result['methods'][0]['state']=='pass'
+            rows=read_csv(tmp_path/f'results/dev-method-coverage-t/fixture.Shared#{name}-lines.csv')
+            expected[name]={(r['file'],int(r['line'])) for r in rows if r['covered']=='yes'}
+        measured=adapter.worker(dict(action='policy-cover',index=0,sha='anchor',group='dev',methods=members,
+            candidate_suite=True,output='results/candidate.json',work='work/candidate'))
+        assert len(measured['runs'])==1
+        assert all(m['state']=='pass' for m in measured['methods'])
+        assert {m['method']:{tuple(line) for line in m['lines']} for m in measured['methods']}==expected
+        assert expected['alpha']-expected['beta']=={('src/main/java/fixture/Production.java',7)}

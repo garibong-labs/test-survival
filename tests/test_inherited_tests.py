@@ -104,3 +104,10 @@ def test_lexically_enclosed_base_takes_precedence_over_same_package_type():
     recovered=[m for m in expand(inv)['methods'] if m['class']=='p.Outer$Child']
     assert [m['method'] for m in recovered]==['nestedTest']
     assert recovered[0]['declaring_class']=='p.Outer$Base'
+
+
+def test_junit4_unannotated_override_keeps_inherited_test():
+    inv=inventory()
+    result=expand(inv,framework='junit4')
+    inherited=[m for m in result['methods'] if m['class']=='p.One' and m['method']=='publicTest' and m['kind']]
+    assert len(inherited)==1 and inherited[0]['declaring_class']=='p.Base'

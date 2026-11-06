@@ -149,6 +149,10 @@ def import_results(exp, source, config):
     source_provenance = load_provenance(source)
     source_identity = identity(source, source_config)
     check_identity(identity(exp, config), source_identity)
+    # Import invalidates scope summaries. Preserve the destination boundary that
+    # just passed compatibility, including ranked skips, without remeasurement.
+    scope_selection = dict(config=config['scope'], population=read_json(exp/'population/scope.json', {}),
+                           selection=read_json(exp/'results/scope-selection.json', {}))
     source_groups = {g['name']: (i, g) for i, g in enumerate(source_config['dev']['groups'])}
     matched = [(i, g) for i, g in enumerate(config['dev']['groups']) if g['name'] in source_groups
                and g['denominator'] == source_groups[g['name']][1]['denominator']]
@@ -232,7 +236,7 @@ def import_results(exp, source, config):
     prepare['dev_baseline'] = dict(status='completed', source=str(source),
                                   source_hash=canonical_hash({p: h for p, h in hashes.items() if p.startswith('dev/')}))
     write_json(prepare_path, prepare)
-    return dict(source=str(source), imported=now(), compatibility=source_identity, groups=groups,
+    return dict(source=str(source), imported=now(), compatibility=source_identity, groups=groups, scope_selection=scope_selection,
                 files=hashes, source_files={target: str(path.relative_to(source)) for target, path in plan.items()},
                 source_sha256=canonical_hash(hashes))
 

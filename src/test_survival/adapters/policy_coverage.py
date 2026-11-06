@@ -107,7 +107,7 @@ def run(w, job):
         for name in ('resources', 'suite'):
             if (resource_root/name).exists():
                 shutil.copytree(resource_root/name, runtime_dir/'src/test'/name)
-    scope_options = []
+    scope_options = ['-Dsurvival.coverage.isolateMethods=true'] if job.get('candidate_suite') else []
     initializer_agent = None
     agent_options = 'output=none,dumponexit=false'
     if job.get('survival'):

@@ -651,6 +651,10 @@ with the frozen sources. Existing records without these fields remain valid.
 - `results/dev-build-reports/TEST-*.xml`: reports from the recorded discovery
   invocation. Skipped invocations are retained as evidence.
 
+New `dev-results` imports retain `scope_selection` (scope settings, population,
+and selection record) in `state/import.json`. An unchanged scope configuration
+reuses that validated selection without remeasuring imported candidates.
+
 Selection-context records additionally contain `input_sha256`, `index`,
 `action` (`resolved` or `reused`), `reused_from_index` (null for resolutions),
 and the cached classpath's experiment-relative path. Reused records retain the

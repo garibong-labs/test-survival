@@ -80,3 +80,20 @@ def test_scope_stage_records_skips_and_selected_denominator(tmp_path,monkeypatch
     assert [r['method'] for r in read_csv(tmp_path/'dev/dev-denominator.csv')]==['t0']
     assert read_csv(tmp_path/'dev/dev-denominator.csv')[0]['declaring_class']=='p.Base'
     assert all(r['declaring_file'].endswith('/p/Base.java') for r in read_csv(tmp_path/'dev/dev-excluded.csv'))
+    # A completed group's import invalidates scope, but must retain the same
+    # validated instrumentation boundary without remeasuring the imported pool.
+    from test_survival import dev_results
+    from test_survival.pipeline import PipelineError
+    saved=read_json(tmp_path/'population/scope.json')
+    write_json(tmp_path/'state/import.json',{'dev-results':dict(
+        compatibility=dict(resolved_scope=dev_results.resolved_scope(saved['classes'])),
+        scope_selection=dict(config=config['scope'],population=saved,selection=selection))})
+    config['survival']['execution']='batch'
+    monkeypatch.setattr(dev_results,'imported_groups',lambda *a:{'dev':dict(frozen=read_csv(tmp_path/'dev/dev-denominator.csv'))})
+    monkeypatch.setattr(scope,'candidate_coverage',lambda *a:pytest.fail('Imported candidates must not be remeasured'))
+    scope.run(tmp_path,config)
+    assert read_json(tmp_path/'population/scope.json')['classes']==saved['classes']
+    assert read_json(tmp_path/'results/scope-selection.json')['skipped_classes']==selection['skipped_classes']
+    config['scope']={**config['scope'],'rule':'explicit','classes':['p.Popular']}
+    with pytest.raises(PipelineError,match='resolved coverage scope differs'):
+        scope.run(tmp_path,config)

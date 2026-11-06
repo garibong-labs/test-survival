@@ -68,7 +68,7 @@ class SourceInventory {
               }
               row("M",fqn,m.getName(),kind,eligible,sig,display(m.getModifiers()),unit.getLineMap().getLineNumber(positions.getStartPosition(unit,m)),hash);
               row("V",fqn,m.getName(),m.getModifiers().getFlags());
-              if(buildDiscovery) row("A",fqn,m.getName(),cls.getModifiers().getAnnotations()+" "+m.getModifiers().getAnnotations());
+              row("A",fqn,m.getName(),cls.getModifiers().getAnnotations()+" "+m.getModifiers().getAnnotations());
             } else if(member instanceof ClassTree) scan(member,fqn);
           }
           return null;

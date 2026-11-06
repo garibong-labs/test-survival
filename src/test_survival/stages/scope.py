@@ -47,7 +47,7 @@ def candidate_coverage(exp, config, adapter, baseline):
 
 
 def run(exp, config):
-    from ..dev_results import imported_groups, check_imported_scope
+    from ..dev_results import imported_groups, check_imported_scope, load_provenance
     imported = imported_groups(exp, config)
     adapter = JavaMavenAdapter(exp, config)
     adapter.ensure_anchor()
@@ -104,8 +104,18 @@ def run(exp, config):
                 sizes.append(len(denominator(baseline, 'scope-targeted', rows, production_names)))
         return max(sizes, default=0)
     skipped = []
-    chosen, eligible = (select_scope(survey, config['scope'], dev_size, skipped) if bounded
-                        else select_scope(survey, config['scope']))
+    retained = load_provenance(exp).get('scope_selection', {}) if imported else {}
+    if (retained.get('config') == config['scope'] and
+            isinstance(retained.get('population', {}).get('classes'), list) and
+            all(isinstance(row, dict) and any(row.get('class') == r['class'] and row.get('file') == r['file'] for r in survey)
+                for row in retained['population']['classes'])):
+        by_name = {row['class']: row for row in survey}
+        chosen = [by_name[row['class']] for row in retained['population']['classes']]
+        _, eligible = select_scope(survey, config['scope'])
+        skipped = retained.get('selection', {}).get('skipped_classes', [])
+    else:
+        chosen, eligible = (select_scope(survey, config['scope'], dev_size, skipped) if bounded
+                            else select_scope(survey, config['scope']))
     if imported:
         check_imported_scope(exp, config, chosen)
     selected = set(r['class'] for r in chosen)

@@ -201,6 +201,10 @@ settings and `.mvn` configuration, and the resolved runner image identity. The
 selection context is reused from the previous evaluated index while those inputs
 remain identical; otherwise it is resolved again. Settings are hashed inside the
 runner, so mounted user/global settings participate without recording credentials.
+File-profile activation checks and referenced environment properties also
+participate. Unresolved activation paths or unbounded system-property activations conservatively
+disable context reuse.
+Build-only Compose services use their generated service image identity.
 Each index records `action: resolved | reused` in its selection-context JSON.
 Unknown contexts are never reused; unresolved coordinates force execution.
 
@@ -256,11 +260,17 @@ a selected source file (`coverage-scoped`) or match the existing class-name rule
 (`scope-targeted`). When several scoped groups are configured, every such group
 must fit the bound. Project-wide groups do not constrain Dev(scope).
 `explicit` and `all-eligible` scopes ignore this bound. Imported completed
-populations keep their saved denominators and scope-compatibility checks.
+populations keep their saved denominators and scope-compatibility checks. A Dev
+result import preserves the already validated scope and skipped-class record when
+scope settings are unchanged; it does not rerank after removing imported groups
+from the measurement set.
 
 The coverage worker selects only candidate methods, with at most 256 methods per
 snapshot group and eight groups per JVM chunk. It compiles the frozen suite once
-and records coverage of the entire production tree. Unchanged candidate/source/runner
+and records coverage of the entire production tree. Candidate methods use separate
+class loaders inside each JVM so discovery, shared setup, static initialization,
+and teardown contribute to every method that executes them. This avoids carrying
+one method's body hits into another method. Unchanged candidate/source/runner
 inputs reuse this measurement when only scope settings change. Class selection uses this
 one measurement; it does not launch a JVM for each tentative class or method.
 

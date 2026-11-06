@@ -19,12 +19,14 @@ public final class MethodSelectors {
         }
         methods.addAll(Arrays.asList(requested.getMethods()));
         for (Method method : methods) {
-            if (!seen.add(method.getName()+Arrays.toString(method.getParameterTypes())) || java.lang.reflect.Modifier.isPrivate(method.getModifiers())) continue;
+            if (java.lang.reflect.Modifier.isPrivate(method.getModifiers())) continue;
             boolean test = false;
-            if(junit4 && Arrays.stream(method.getDeclaredAnnotations()).anyMatch(a->a.annotationType().getName().equals("org.junit.Ignore"))) continue;
             for (Annotation annotation : method.getDeclaredAnnotations()) {
                 if (junit4 ? annotation.annotationType().getName().equals("org.junit.Test") : annotation.annotationType().getName().startsWith("org.junit.") && tests.contains(annotation.annotationType().getSimpleName())) test = true;
             }
+            if (junit4 && !test) continue;
+            if (!seen.add(method.getName()+Arrays.toString(method.getParameterTypes()))) continue;
+            if(junit4 && Arrays.stream(method.getDeclaredAnnotations()).anyMatch(a->a.annotationType().getName().equals("org.junit.Ignore"))) continue;
             if (test) {
                 String parameters = Arrays.stream(method.getParameterTypes()).map(Class::getTypeName).collect(Collectors.joining(","));
                 System.out.println(method.getName() + "\t" + requested.getName() + "#" + method.getName() + (junit4?"":"(" + parameters + ")"));

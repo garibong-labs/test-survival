@@ -136,3 +136,58 @@ def test_reactor_classpath_template_is_retained_without_maven_reresolution(tmp_p
     assert resolutions==[0]
     assert len(workers)==1
     assert (tmp_path/'work/classpaths/same.txt').exists()
+
+
+def test_profile_activation_tracks_marker_existence_and_environment(tmp_path,monkeypatch):
+    repo=tmp_path/'repo';repo.mkdir()
+    (repo/'pom.xml').write_text('''<project><profiles><profile><activation>
+      <file><exists>${basedir}/activate.marker</exists></file>
+      <property><name>env.SURVIVAL_PROFILE</name><value>enabled</value></property>
+    </activation></profile></profiles><properties><version>${env.SURVIVAL_VERSION}</version></properties></project>''')
+    initial=collect(repo)
+    (repo/'activate.marker').touch()
+    active=collect(repo)
+    assert active!=initial
+    (repo/'activate.marker').write_text('content does not affect activation')
+    assert collect(repo)==active
+    monkeypatch.setenv('SURVIVAL_PROFILE','enabled')
+    environment=collect(repo);assert environment!=active
+    monkeypatch.setenv('SURVIVAL_VERSION','secret-version')
+    changed=collect(repo);assert changed!=environment
+    assert 'secret-version' not in str(changed)
+
+
+def test_unknown_activation_interpolation_disables_reuse(tmp_path):
+    (tmp_path/'pom.xml').write_text('<project><profiles><profile><activation><file><missing>${unknown.path}/marker</missing></file></activation></profile></profiles></project>')
+    assert collect(tmp_path)!=collect(tmp_path)
+
+
+def test_build_only_compose_uses_resolved_service_image(tmp_path,monkeypatch):
+    from test_survival.config import validate
+    from test_survival.runner.cache import ClasspathCache
+    import test_survival.runner.cache as module
+    compose=tmp_path/'compose.yaml';compose.write_text('services:\n  runner:\n    build: .\n')
+    config=validate(dict(name='x',anchor='t',project=dict(repo=str(tmp_path)),
+        runner=dict(docker=dict(compose_files=[str(compose)],service='runner'))))
+    folder=tmp_path/'work/checkouts/0';folder.mkdir(parents=True);(folder/'pom.xml').write_text('<project/>')
+    commands=[]
+    def output(command,**kw):
+        commands.append(command)
+        if 'compose' in command:
+            if '--images' in command:return 'fixture-runner\n'
+            return '{"services":{"runner":{"build":{"context":"."}}}}'
+        assert command[-1]=='fixture-runner'
+        return 'sha256:actual-image\n'
+    monkeypatch.setattr(module.subprocess,'check_output',output)
+    def execute(command,cwd,log,timeout):
+        write_json(command[-1],collect(cwd));return dict(exit_code=0)
+    cache=ClasspathCache(tmp_path,config,SimpleNamespace(container_id=None,execute=execute))
+    assert cache.context_identity(0)
+    assert any('--images' in c and c[-1]=='runner' for c in commands)
+
+
+def test_unbounded_system_property_activation_is_not_reused(tmp_path,monkeypatch):
+    (tmp_path/'pom.xml').write_text('<project><profiles><profile><activation><property><name>user.dir</name><value>/some/index</value></property></activation></profile></profiles></project>')
+    assert collect(tmp_path)!=collect(tmp_path)
+    monkeypatch.setenv('MAVEN_OPTS','-Duser.dir=/explicit/path')
+    assert collect(tmp_path)==collect(tmp_path)
