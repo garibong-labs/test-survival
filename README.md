@@ -193,8 +193,8 @@ are audited rather than merged into one developer method.
 For `change-ranked` and `dedicated-test`, `scope.max_dev_scope` defaults to 400.
 Selection skips a class if its addition would exceed the bound for a configured
 coverage-scoped or scope-targeted developer group, then continues in rank order.
-Coverage selection measures all developer candidates through the batched per-test
-worker before choosing classes. Inspect skipped classes in
+Coverage selection batches stable methods for source discovery and all candidates
+for build discovery before choosing classes. Inspect skipped classes in
 `results/scope-selection.json` and `population/scope.md`. Existing focal-method
 and class-count stop rules still apply. Completed experiments and imported
 completed developer populations retain their saved selections.

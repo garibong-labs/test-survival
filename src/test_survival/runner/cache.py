@@ -27,8 +27,9 @@ class ClasspathCache:
         output = directory/'inputs.json'
         output.unlink(missing_ok=True)
         root = self.exp/f'work/checkouts/{index}'
-        result = self.runner.execute(['python3', str(Path(__file__).parents[1]/'adapters/context_inputs.py'), str(root), str(output)],
-                                     root, directory/'inputs.log', self.config['runner']['timeouts']['build'])
+        folder = root/self.config['project']['module']
+        result = self.runner.execute(['python3', str(Path(__file__).parents[1]/'adapters/context_inputs.py'), str(root), str(folder), str(output)],
+                                     folder, directory/'inputs.log', self.config['runner']['timeouts']['build'])
         if result['exit_code'] or not output.exists():
             raise RuntimeError('Cannot read selection context inputs')
         docker = self.config['runner']['docker']
@@ -46,7 +47,7 @@ class ClasspathCache:
                     raise RuntimeError('Cannot identify the Compose runner image')
             image = subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',name], text=True).strip()
         manifest = Path(__file__).parents[1]/'adapters/java/classpath-artifacts.json'
-        return canonical_hash(dict(version=2, inputs=read_json(output), image=image, module=self.config['project']['module'],
+        return canonical_hash(dict(version=3, inputs=read_json(output), image=image, module=self.config['project']['module'],
                                    runner_libraries=hashlib.sha256(manifest.read_bytes()).hexdigest()))
 
     def resolve(self, folder, index, *, log_root=None):

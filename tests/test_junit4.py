@@ -388,7 +388,7 @@ def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode, 
         subprocess.run(['docker','tag',image,tag],check=True)
         request.addfinalizer(lambda:subprocess.run(['docker','image','rm',tag],check=True,stdout=subprocess.DEVNULL))
         docker = dict(compose_files=[str(compose)], service='probe')
-    config = validate(dict(name='identity', anchor='t', project=dict(repo=str(tmp_path)),
+    config = validate(dict(name='identity', anchor='t', project=dict(repo=str(tmp_path),module='module'),
                            runner=dict(docker=docker)))
     for exp in (tmp_path/'baseline', tmp_path/'baseline/results/policy/pools/dev/2'):
         adapter = JavaMavenAdapter(exp, config)
@@ -402,11 +402,20 @@ def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode, 
         assert adapter.dependency_identity(0, dict(classpath='work/classpath.txt'), directory) == expected
         assert json.loads((directory/'dependencies.json').read_text()) == expected
         assert (directory/'dependencies.log').is_file()
-        (adapter.folder(0)/'pom.xml').write_text('<project><profiles><profile><activation><file><exists>activate.marker</exists></file></activation></profile></profiles></project>')
+        (adapter.folder(0)/'pom.xml').write_text('<project><modelVersion>4.0.0</modelVersion><groupId>fixture</groupId><artifactId>module</artifactId><version>${revision}</version><packaging>pom</packaging><profiles><profile><id>marker</id><activation><file><exists>activate.marker</exists></file></activation></profile></profiles></project>')
+        mvn=adapter.folder(0)/'.mvn';mvn.mkdir()
+        (mvn/'maven.config').write_text('-Drevision=1\n')
         before=adapter.cache.context_identity(0)
         assert adapter.cache.context_identity(0)==before
         (adapter.folder(0)/'activate.marker').touch()
         assert adapter.cache.context_identity(0)!=before
+        active=adapter.cache.context_identity(0)
+        for revision in ('1','2'):
+            (mvn/'maven.config').write_text('-Drevision='+revision+'\n')
+            result=adapter.runner.execute(['mvn','-o','validate'],adapter.folder(0),exp/f'revision-{revision}.log',60)
+            assert result['exit_code']==0
+            assert 'Building module '+revision in (exp/f'revision-{revision}.log').read_text()
+        assert adapter.cache.context_identity(0)!=active
 
 
 @pytest.mark.java_integration
@@ -465,11 +474,15 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
                      'dev':{'discovery':'build'},
                      'runner':{'docker':{'image':image,'mounts':{str(tmp_path):'/experiment',str(Path(libs).resolve()):'/experiment/work/libs'}}}})
     sources=tmp_path/'dev/src-test-t/java/fixture';sources.mkdir(parents=True)
-    annotation='@org.junit.Test public' if framework=='junit4' else '@org.junit.jupiter.api.Test protected'
+    annotation='@org.junit.Test public' if framework=='junit4' else '@org.junit.jupiter.api.Test'
     (sources/'Base.java').write_text('package fixture; public abstract class Base { '+annotation+' void inherited() { if (Production.value()!=2) throw new AssertionError(); } '+annotation+' void excluded() { throw new AssertionError("non-candidate must not execute"); } }')
+    expected_classes=set()
     for name in ('One','Two'):
+        package='other' if framework=='junit5' and name=='Two' else 'fixture'
+        directory=sources.parent/package;directory.mkdir(exist_ok=True)
+        expected_classes.add(package+'.'+name)
         override = 'public void inherited() { if (Production.value()!=2) throw new AssertionError(); }' if framework=='junit4' and name=='One' else ''
-        (sources/(name+'.java')).write_text('package fixture; public class '+name+' extends Base { '+override+' }')
+        (directory/(name+'.java')).write_text('package '+package+'; public class '+name+' extends fixture.Base { '+override+' }')
     production=tmp_path/'work/checkouts/0/src/main/java/fixture/Production.java';production.parent.mkdir(parents=True)
     production.write_text('package fixture; public class Production { public static int value() { return 2; } }')
     classes=tmp_path/'work/checkouts/0/target/classes';classes.mkdir(parents=True)
@@ -481,9 +494,9 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
     with adapter.runner.session('inherited-fixture'):
         run=adapter.runner.execute(['javac','-d',str(classes),str(production)],tmp_path,tmp_path/'production-compile.log',60)
         assert run['exit_code']==0
-        inventory=adapter.list_test_methods(sources)
+        inventory=adapter.list_test_methods(sources.parent)
         recovered=[m for m in inventory['methods'] if m.get('inherited') and m['method']=='inherited']
-        assert {m['class'] for m in recovered}=={'fixture.One','fixture.Two'}
+        assert {m['class'] for m in recovered}==expected_classes
         members=[]
         for row in recovered:
             row['declaring_file']=row['declaring_file'].replace('/experiment/','')
@@ -497,7 +510,7 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
         covered=adapter.worker(dict(action='policy-cover',index=0,sha='anchor',group='dev',methods=members,
                                     candidate_suite=True,output='results/candidate.json',work='work/candidate'))
         assert len(covered['runs'])==1
-        assert {(m['class'],m['state']) for m in covered['methods']}=={('fixture.One','pass'),('fixture.Two','pass')}
+        assert {(m['class'],m['state']) for m in covered['methods']}=={(cls,'pass') for cls in expected_classes}
         assert all(m['lines'] for m in covered['methods'])
         executed=[line.split('\t')[2] for path in (tmp_path/'work/candidate').glob('*/dumps/tests.tsv') for line in path.read_text().splitlines()]
         assert executed==['inherited','inherited']
@@ -508,8 +521,10 @@ def test_candidate_coverage_preserves_isolated_setup_and_initializer_lines(tmp_p
     import hashlib
     from test_survival.rules.dev_denominator import frozen_method
     from test_survival.io import read_csv
+    from test_survival.stages.scope import candidate_coverage
     image,libs=java_environment
     config=validate(dict(name='setup',anchor='t',project=dict(repo=str(tmp_path),test_framework='junit5'),
+        dev=dict(discovery='source',unmapped='exclude',denominator='coverage-scoped'),
         runner=dict(docker=dict(image=image,mounts={str(tmp_path):'/experiment',str(Path(libs).resolve()):'/experiment/work/libs'}))))
     source=tmp_path/'dev/src-test-t/java/fixture/Shared.java';source.parent.mkdir(parents=True)
     source.write_text('''package fixture;
@@ -522,6 +537,10 @@ public class Shared {
  @AfterAll static void cleanup() { Production.cleanup(); }
  @Test void alpha() { Assertions.assertEquals(6,initialized+prepared+Lazy.value); Production.alpha(); }
  @Test void beta() { Assertions.assertEquals(6,initialized+prepared+Lazy.value); }
+ @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(ints={1})
+ void overloaded(int n) { throw new AssertionError("audited overload must not execute"); }
+ @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"x"})
+ void overloaded(String n) { throw new AssertionError("audited overload must not execute"); }
 }''')
     production=tmp_path/'work/checkouts/0/src/main/java/fixture/Production.java';production.parent.mkdir(parents=True)
     production.write_text('''package fixture;
@@ -547,9 +566,11 @@ public class Production {
             assert result['methods'][0]['state']=='pass'
             rows=read_csv(tmp_path/f'results/dev-method-coverage-t/fixture.Shared#{name}-lines.csv')
             expected[name]={(r['file'],int(r['line'])) for r in rows if r['covered']=='yes'}
-        measured=adapter.worker(dict(action='policy-cover',index=0,sha='anchor',group='dev',methods=members,
-            candidate_suite=True,output='results/candidate.json',work='work/candidate'))
-        assert len(measured['runs'])==1
-        assert all(m['state']=='pass' for m in measured['methods'])
-        assert {m['method']:{tuple(line) for line in m['lines']} for m in measured['methods']}==expected
-        assert expected['alpha']-expected['beta']=={('src/main/java/fixture/Production.java',7)}
+    baseline=[dict(t,stable='yes') for t in members]
+    baseline += [dict({'class':'fixture.Shared'},method='overloaded',kind='parameterized',stable='no') for _ in range(2)]
+    adapter.setup_runner=lambda:None  # Fixture JUnit/JaCoCo libraries are already provisioned.
+    measured=candidate_coverage(tmp_path,config,adapter,baseline)
+    assert len(measured['runs'])==1
+    assert all(m['state']=='pass' for m in measured['methods'])
+    assert {m['method']:{tuple(line) for line in m['lines']} for m in measured['methods']}==expected
+    assert expected['alpha']-expected['beta']=={('src/main/java/fixture/Production.java',7)}

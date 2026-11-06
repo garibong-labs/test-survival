@@ -26,11 +26,15 @@ Inherited-test fixtures verify concrete subclass execution and source provenance
 through the normal runner and batched coverage in JUnit 4 and JUnit 5, including
 unannotated Vintage overrides. Candidate coverage matches isolated method runs
 for shared setup, lazy initialization, and teardown in one JVM. Runner identity
-fixtures cover build-only Compose services and file-profile activation.
+fixtures cover build-only Compose services, file-profile activation, and module-local
+Maven configuration with offline revision validation. Inheritance fixtures include
+package-private Jupiter methods across packages; candidate fixtures exclude audited
+source overloads before coverage measurement.
 Affected-selection fixtures check iterative removal of erroneous sources,
 transitive helper dependencies, runtime class hits outside the coverage scope,
 concurrent JVM chunks, and peak JVM memory evidence.
-They do not run ta4j, Maven project builds, or any model calls.
+They do not run real-project experiments or model calls. Maven validation is
+limited to tiny offline fixtures.
 
 Missing image/library variables fail when `SURVIVAL_REQUIRE_JAVA_TESTS=1`; an absent
 or empty library directory always fails. The final JUnit XML check requires every named

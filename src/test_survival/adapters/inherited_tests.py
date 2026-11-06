@@ -60,7 +60,9 @@ def expand(inventory, framework='junit5'):
                 flags = method.get('modifiers', '')
                 if 'private' in flags or 'static' in flags: continue
                 declaration = method.get('declaring_class', method['class'])
-                if (not any(f in flags for f in ('public', 'protected', 'default'))
+                # Jupiter discovers non-private superclass tests reflectively,
+                # even when Java source access would stop at a package boundary.
+                if (framework == 'junit4' and not any(f in flags for f in ('public', 'protected', 'default'))
                         and classes[declaration]['kind'] != 'INTERFACE'
                         and classes[declaration].get('package') != data.get('package')):
                     continue

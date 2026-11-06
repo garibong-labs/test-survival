@@ -21,16 +21,16 @@ def test_concrete_identity_multilevel_imports_visibility_and_overrides():
     result = expand(inventory())
     recovered = [m for m in result['methods'] if m.get('inherited')]
     assert {(m['class'],m['method']) for m in recovered} == {
-        ('p.One','protectedTest'),('p.One','packageTest'),('q.Two','publicTest'),('q.Two','protectedTest')}
+        ('p.One','protectedTest'),('p.One','packageTest'),('q.Two','publicTest'),('q.Two','protectedTest'),('q.Two','packageTest')}
     assert all(m['declaring_class']=='p.Base' and m['declaring_file'].endswith('/p/Base.java') for m in recovered)
 
 
 def test_build_mapping_and_denominators_keep_inherited_identity(tmp_path):
     tests = [m for m in expand(inventory())['methods'] if m['kind']]
-    (tmp_path/'TEST-q.Two.xml').write_text('<testsuite><testcase classname="q.Two" name="protectedTest()"/></testsuite>')
+    (tmp_path/'TEST-q.Two.xml').write_text('<testsuite><testcase classname="q.Two" name="packageTest()"/></testsuite>')
     observed, unmapped, counts = report_methods(tmp_path,tests)
-    assert observed == {('q.Two','protectedTest'):['pass']} and not unmapped
-    row = next(m for m in tests if m['class']=='q.Two' and m['method']=='protectedTest')
+    assert observed == {('q.Two','packageTest'):['pass']} and not unmapped
+    row = next(m for m in tests if m['class']=='q.Two' and m['method']=='packageTest')
     selected = denominator([dict(row,stable='yes')],'project',[],set())
     covered, excluded = coverage_scoped([dict(row,stable='yes')],[dict(row,status='pass',scope_lines_covered=1)])
     assert covered == selected and not excluded
@@ -40,7 +40,7 @@ def test_build_mapping_and_denominators_keep_inherited_identity(tmp_path):
     for name in ('p/Base','q/Two'):
         path = tmp_path/('dev/src-test-t/java/'+name+'.java'); path.parent.mkdir(parents=True,exist_ok=True);path.write_text(name)
     pool = snapshot(tmp_path,tmp_path/'policy',[test],group='dev',method='dev',scope=[],prefix='pool')
-    assert pool[0]['id']=='q.Two#protectedTest'
+    assert pool[0]['id']=='q.Two#packageTest'
     assert pool[0]['declaring_file']=='pool/dev/src-test-t/java/p/Base.java'
 
 

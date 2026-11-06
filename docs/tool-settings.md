@@ -197,7 +197,10 @@ Resolved production/test-scope dependency entries are compared after the worker'
 JUnit exclusions and runner-library additions, in classpath order, using group,
 artifact, version, classifier and type. Project output directories are excluded.
 Affected classpath caching uses the contents of every repository POM, Maven
-settings and `.mvn` configuration, and the resolved runner image identity. The
+settings and `.mvn` configuration, and the resolved runner image identity.
+Configuration is collected from the actual Maven invocation directory (the
+configured module): Maven uses the nearest ancestor `.mvn` unless `MAVEN_BASEDIR`
+overrides it, and relative settings paths resolve against the invocation directory. The
 selection context is reused from the previous evaluated index while those inputs
 remain identical; otherwise it is resolved again. Settings are hashed inside the
 runner, so mounted user/global settings participate without recording credentials.
@@ -240,7 +243,8 @@ and the existing stability screen determines denominator eligibility. Parameteri
 and repeated invocations collapse to their source method. Skipped-only methods
 and unmappable report entries do not enter the candidate set.
 Source inventory expands inherited tests through concrete subclasses, including
-multi-level inheritance and nested classes. Candidate filtering, denominators,
+multi-level inheritance and nested classes. Jupiter includes non-private
+superclass tests across package boundaries, including package-private tests. Candidate filtering, denominators,
 survival execution, and regeneration pools use the concrete class/method pair.
 `declaring_class` and `declaring_file` retain the method's source declaration;
 the execution `file` names the concrete class's source. Unresolved external
@@ -264,6 +268,11 @@ populations keep their saved denominators and scope-compatibility checks. A Dev
 result import preserves the already validated scope and skipped-class record when
 scope settings are unchanged; it does not rerank after removing imported groups
 from the measurement set.
+
+For source discovery, coverage measurement retains the existing stable-only
+population; audited ambiguous overloads and other unstable source rows are not
+executed. Build discovery measures its full candidate set, then applies stability
+and passing-state requirements to the denominator.
 
 The coverage worker selects only candidate methods, with at most 256 methods per
 snapshot group and eight groups per JVM chunk. It compiles the frozen suite once

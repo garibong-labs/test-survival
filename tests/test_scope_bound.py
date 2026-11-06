@@ -97,3 +97,45 @@ def test_scope_stage_records_skips_and_selected_denominator(tmp_path,monkeypatch
     config['scope']={**config['scope'],'rule':'explicit','classes':['p.Popular']}
     with pytest.raises(PipelineError,match='resolved coverage scope differs'):
         scope.run(tmp_path,config)
+
+
+def test_source_excluded_overloads_never_reach_candidate_measurement(tmp_path):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from test_survival.stages.scope import candidate_coverage
+    from test_survival.rules.dev_denominator import coverage_scoped
+    from test_survival.io import write_json
+    config=validate(dict(name='x',anchor='t',project=dict(repo='/r'),
+        dev=dict(discovery='source',unmapped='exclude',denominator='coverage-scoped')))
+    source=tmp_path/'dev/src-test-t/java/p/Tests.java';source.parent.mkdir(parents=True);source.write_text('fixture')
+    write_json(tmp_path/'results/anchor.json',dict(sha='t'))
+    baseline=[dict({'class':'p.Tests'},method=n,kind='plain',stable=stable)
+              for n,stable in [('works','yes'),('overloaded','no'),('overloaded','no'),('failing','no')]]
+    measured=[]
+    def worker(job):
+        measured.extend(job['methods'])
+        return dict(coverage_status='complete',methods=[dict(t,state='pass',lines=[['src/main/java/P.java',1]]) for t in job['methods']],runs=[dict(seconds=1)])
+    adapter=SimpleNamespace(setup_runner=lambda:None,provenance=lambda:{},worker=worker,
+                            runner=SimpleNamespace(session=lambda _:nullcontext()))
+    result=candidate_coverage(tmp_path,config,adapter,baseline)
+    observations=[dict(t,status=t['state'],scope_lines_covered=len(t['lines'])) for t in result['methods']]
+    kept,_=coverage_scoped(baseline,observations)
+    assert [m['method'] for m in measured]==['works']
+    assert [m['method'] for m in kept]==['works']
+
+
+def test_build_coverage_still_measures_unique_unstable_candidates(tmp_path):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from test_survival.stages.scope import candidate_coverage
+    from test_survival.io import write_json
+    config=validate(dict(name='x',anchor='t',project=dict(repo='/r'),dev=dict(discovery='build')))
+    source=tmp_path/'dev/src-test-t/java/p/Tests.java';source.parent.mkdir(parents=True);source.write_text('fixture')
+    write_json(tmp_path/'results/anchor.json',dict(sha='t'))
+    baseline=[dict({'class':'p.Tests'},method='unstable',kind='plain',stable='no')]
+    def worker(job):
+        assert [m['method'] for m in job['methods']]==['unstable']
+        return dict(coverage_status='complete',methods=[dict(t,state='fail',lines=[]) for t in job['methods']],runs=[dict(seconds=1)])
+    adapter=SimpleNamespace(setup_runner=lambda:None,provenance=lambda:{},worker=worker,
+                            runner=SimpleNamespace(session=lambda _:nullcontext()))
+    assert len(candidate_coverage(tmp_path,config,adapter,baseline)['methods'])==1

@@ -18,6 +18,10 @@ def candidate_coverage(exp, config, adapter, baseline):
     from ..policy.artifacts import tree_hash
     candidates = []
     for row in baseline:
+        # Source discovery historically measured stable methods only. Its
+        # audited overloads remain duplicate unstable rows, not executable IDs.
+        if config['dev'].get('discovery', 'source') == 'source' and row['stable'] != 'yes':
+            continue
         t = frozen_method(identity(row))
         t.update(source_root='dev/src-test-t/java', resource_root='dev/src-test-t',
                  file_hash=hashlib.sha256((exp/t['file']).read_bytes()).hexdigest())

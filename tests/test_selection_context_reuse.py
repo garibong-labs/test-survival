@@ -70,7 +70,7 @@ def test_real_identity_changes_for_runner_image_and_nested_pom(tmp_path,monkeypa
     image=['sha256:first']
     monkeypatch.setattr(cache_module.subprocess,'check_output',lambda *a,**kw:image[0])
     def execute(command,cwd,log,timeout):
-        write_json(command[-1],collect(command[-2]))
+        write_json(command[-1],collect(command[-3],command[-2]))
         return dict(exit_code=0)
     runner=SimpleNamespace(execute=execute,container_id=None)
     cache=ClasspathCache(tmp_path,config,runner)
@@ -180,7 +180,7 @@ def test_build_only_compose_uses_resolved_service_image(tmp_path,monkeypatch):
         return 'sha256:actual-image\n'
     monkeypatch.setattr(module.subprocess,'check_output',output)
     def execute(command,cwd,log,timeout):
-        write_json(command[-1],collect(cwd));return dict(exit_code=0)
+        write_json(command[-1],collect(command[-3],cwd));return dict(exit_code=0)
     cache=ClasspathCache(tmp_path,config,SimpleNamespace(container_id=None,execute=execute))
     assert cache.context_identity(0)
     assert any('--images' in c and c[-1]=='runner' for c in commands)
@@ -191,3 +191,52 @@ def test_unbounded_system_property_activation_is_not_reused(tmp_path,monkeypatch
     assert collect(tmp_path)!=collect(tmp_path)
     monkeypatch.setenv('MAVEN_OPTS','-Duser.dir=/explicit/path')
     assert collect(tmp_path)==collect(tmp_path)
+
+
+def test_module_local_maven_configuration_and_relative_settings(tmp_path):
+    repo=tmp_path/'repo';module=repo/'module';(module/'.mvn').mkdir(parents=True)
+    (repo/'pom.xml').write_text('<project/>');(module/'pom.xml').write_text('<project/>')
+    config=module/'.mvn/maven.config';config.write_text('-Drevision=1\n--settings local-settings.xml\n')
+    settings=module/'local-settings.xml';settings.write_text('<settings/>')
+    first=collect(repo,module)
+    config.write_text('-Drevision=2\n--settings local-settings.xml\n')
+    second=collect(repo,module);assert second!=first
+    settings.write_text('<settings><offline>true</offline></settings>')
+    third=collect(repo,module);assert third!=second
+    (module/'.mvn/jvm.config').write_text('-Duser.home=custom-home')
+    home=module/'custom-home/.m2';home.mkdir(parents=True)
+    (home/'settings.xml').write_text('<settings/>')
+    before=collect(repo,module)
+    (home/'settings.xml').write_text('<settings><offline>true</offline></settings>')
+    assert collect(repo,module)!=before
+    # Equivalent module inputs at another evaluated index must still reuse.
+    import shutil
+    next_checkout=tmp_path/'next-checkout';shutil.copytree(repo,next_checkout)
+    assert collect(next_checkout,next_checkout/'module')==collect(repo,module)
+
+
+def test_module_uses_nearest_maven_directory_and_invocation_relative_settings(tmp_path):
+    repo=tmp_path/'repo';module=repo/'module';module.mkdir(parents=True);(repo/'.mvn').mkdir()
+    (repo/'pom.xml').write_text('<project/>');(module/'pom.xml').write_text('<project/>')
+    (repo/'.mvn/maven.config').write_text('--settings settings.xml\n')
+    (repo/'settings.xml').write_text('<settings/>')
+    (module/'settings.xml').write_text('<settings/>')
+    inherited=collect(repo,module)
+    (repo/'settings.xml').write_text('<settings><offline>true</offline></settings>')
+    assert collect(repo,module)==inherited
+    (module/'settings.xml').write_text('<settings><offline>true</offline></settings>')
+    changed=collect(repo,module);assert changed!=inherited
+    # An empty .mvn still shadows the ancestor configuration.
+    (module/'.mvn').mkdir()
+    local=collect(repo,module);assert local!=changed
+    assert local['maven_base']=='module' and inherited['maven_base']=='.'
+
+
+def test_explicit_maven_basedir_is_collected(tmp_path,monkeypatch):
+    repo=tmp_path/'repo';repo.mkdir();(repo/'pom.xml').write_text('<project/>')
+    external=tmp_path/'external';(external/'.mvn').mkdir(parents=True)
+    config=external/'.mvn/maven.config';config.write_text('-Drevision=1')
+    monkeypatch.setenv('MAVEN_BASEDIR',str(external))
+    before=collect(repo)
+    config.write_text('-Drevision=2')
+    assert collect(repo)!=before
