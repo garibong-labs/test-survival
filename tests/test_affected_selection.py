@@ -435,6 +435,8 @@ def measured(command,cwd,log,timeout):
  global active,peak
  is_test='PerTestCoverage' in command and '--universe' not in command
  if is_test:
+  roots=next(arg.split('=',1)[1].split(':') for arg in command if arg.startswith('-Dsurvival.initializer.roots='))
+  assert len(roots)==2,roots  # production plus this chunk's single snapshot
   with lock: active+=1;peak=max(peak,active)
   barrier.wait(timeout=30)
  try: return execute(command,cwd,log,timeout)

@@ -107,7 +107,7 @@ def run(w, job):
             if (resource_root/name).exists():
                 shutil.copytree(resource_root/name, runtime_dir/'src/test'/name)
     scope_options = []
-    initializer_options = []
+    initializer_agent = None
     agent_options = 'output=none,dumponexit=false'
     if job.get('survival'):
         scope_file = work/'scope-files.txt'
@@ -123,9 +123,6 @@ def run(w, job):
             with ZipFile(initializer_agent, 'w') as jar:
                 jar.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nPremain-Class: PerTestCoverage$Initializers\n\n')
                 for path in helper.glob('PerTestCoverage*.class'): jar.write(path, path.name)
-            roots = [folder/'target/classes', *[classes for classes, _ in snapshots.values()]]
-            initializer_options = ['-Dsurvival.initializer.roots='+os.pathsep.join(map(str, roots)),
-                                   '-javaagent:'+str(initializer_agent)]
         else:
             agent_options += ',includes='+includes_pattern(job['scope_classes'])
     override = os.environ.get('SURVIVAL_JVM_JACOCO')
@@ -143,6 +140,14 @@ def run(w, job):
         chunk_outputs = outputs[start:start+MAX_SNAPSHOT_GROUPS]
         tests = [t for _, members in chunk_outputs for t in members]
         memory = chunk/'memory.tsv'
+        initializer_options = []
+        if initializer_agent is not None:
+            # Each JVM inventories only its own snapshots, not every compiled
+            # root in the index. Otherwise startup grows with unrelated chunks.
+            roots = {folder/'target/classes'} | {
+                dependency_inputs[t['class'],t['method'],t.get('execution_hash',t['file_hash'])][0] for t in tests}
+            initializer_options = ['-Dsurvival.initializer.roots='+os.pathsep.join(map(str, sorted(roots))),
+                                   '-javaagent:'+str(initializer_agent)]
         run = w.execute(['java', '-Xmx'+heap, *scope_options, '-Dsurvival.memory='+str(memory),
                          f'-javaagent:{agent}={agent_options}', *initializer_options, '-cp', str(helper)+':'+helper_cp,
                          'PerTestCoverage', str(chunk_manifest)], cwd, chunk/'console.txt',

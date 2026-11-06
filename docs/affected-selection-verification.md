@@ -413,6 +413,9 @@ test-body hits from inherited initializer dependencies. Changing only the hidden
 production dependency selects both consumers and matches all-mode states and
 scope lines, including lines inside a production initializer. Existing nested
 setup, discovery, and concurrent snapshot fixtures remain part of validation.
+Initializer inventory is limited to each JVM chunk's production directory and
+active snapshot roots; the parallel-chunk fixture verifies that other snapshots
+are not scanned at every JVM startup.
 
 Coverage projection loads each logical record once per policy/group/index and
 indexes rows by snapshot/method identity. It avoids discarded physical-record
