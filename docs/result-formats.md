@@ -194,11 +194,15 @@ records index/group totals, with each method counted once across boundary phases
 (as executed if any phase executed it). `selection-phases.json` retains affected
 phase counts, and per-policy `final-summary.json` contains group totals. These
 JSON additions leave all survival/failure/coverage table schemas unchanged.
-For segment-1 observations from legacy baselines, an evaluable pass/failure row
-without `selection_action` counts as executed. Explicit executed/carried tags
+For legacy baseline observations and seeded/cached physical policy observations,
+an evaluable pass/failure row without `selection_action` counts as executed.
+Explicit executed/carried tags
 are preserved; unevaluated indices and dead/not-selected markers do not count.
-Normalization happens only in the policy's copied observations and supplies no
-dependency record or execution origin. The read-only baseline is not rewritten.
+Normalization happens only in policy accounting and copied observations and
+supplies no dependency record or execution origin. The read-only baseline and
+usable cached physical records are not rewritten to add these tags. Counts are
+updated incrementally; only the current index retains method identities for
+deduplication across evaluation and regeneration phases.
 
 Compile evidence includes `strategy: remove-error-files-v1`, each attempt's
 command, input files, log, time, and `removed` map of source files to diagnostics.

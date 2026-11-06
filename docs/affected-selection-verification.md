@@ -494,3 +494,34 @@ experiment, model call, or Java execution is needed for the accounting repair.
 The full local Python suite passes **880 tests** in **67.12 s**, with 22 Java
 fixtures deselected. Large experiment equality and performance runs were not
 repeated for this accounting-only change.
+
+### Fifth review follow-up
+
+The prior accounting fix covered segment 1, but omitted untagged physical rows
+reused after regeneration. Seeded and cached fill-policy fixtures reproduce
+executed counts `[1, 0, 0]` across three passing evaluations at `16b0d60`. Policy
+accounting now treats legacy actual observations consistently across both paths,
+giving `[1, 1, 1]`, without rewriting the baseline or usable physical evidence.
+Aggregate revision 5 refreshes previously completed policy totals on explicit
+resume while preserving reusable runs.
+
+Selection ledgers now deduplicate methods only within the current index and
+update per-index, per-group, and progress totals incrementally. An execution at
+a regeneration boundary replaces that index's carry count; repeated executions
+count once, and a later carried phase cannot downgrade an executed count.
+Final output reads the accumulated counters rather than rescanning method
+history. A 600-index, 1,000-method regression verifies linear observation reads
+and retention of only the current 1,000 method identities, plus 600 count rows.
+
+In a separate single-run fixture measurement at that size, recording/progress
+accounting drops from **10.546 s to 0.160 s**, and final grouping from **5.446 s
+to 0.000193 s**, with identical counts. Retained method identities drop from
+600,000 to 1,000. These are accounting-only fixture timings, not new survival
+experiment measurements.
+
+Regressions cover seeded/cached evidence, resume, unchanged source/run bytes,
+phase deduplication, explicit carries, markers, group isolation, and both policy
+paths. Large experiments and Java instrumentation are unchanged; no original
+experiment was rerun or modified for this follow-up.
+The full local Python suite passes **886 tests** in **74.25 s**, with the 22
+Java fixtures deselected locally for this accounting-only change.

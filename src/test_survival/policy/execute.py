@@ -9,8 +9,9 @@ from ..rules.survival import FAILURES, dead_method
 from ..rules.coverage import usable_lines
 from ..runner.dispatch import dispatch
 from ..work import release_checkout
-from ..selection import executed, counts, FIELDS
+from ..selection import executed, FIELDS
 from .artifacts import snapshot
+from .accounting import accounted, SelectionLedger
 from .config import COVERAGE_VERSION, MARKERS, active_plan, regenerates, reusable_run, unmet_rows
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
 
@@ -327,9 +328,7 @@ def baseline_observations(b, index, group, tests):
     rows = []
     for test in tests:
         row = {**test, **raw[test['origin_id']], 'id':key(test)}
-        if 'selection_action' not in row and row['state'] in FAILURES | {'pass'}:
-            row['selection_action'] = 'executed'
-        rows.append(row)
+        rows.append(accounted(row))
     return rows
 
 
@@ -351,7 +350,7 @@ def survive(b, plan, pools, step):
     points = {p:{(x['group'],x['index']) for x in plan['points'] if x['trigger']==policy['trigger'] and x['index'] is not None and regenerates(b,x['group'],policy)} for p,policy in policies.items()}
     curves = {p:[] for p in policies}; failures = {p:[] for p in policies}; alive_at = {p:{} for p in policies}
     entering_at = {p:{} for p in policies}
-    selection_at = {p:{} for p in policies}
+    selection_at = {p:SelectionLedger() for p in policies}
     def row_for(commit, p, event, stats):
         row = {k:commit[k] for k in ('index','sha','date','subject','evaluated')}
         row['event'] = event
@@ -389,8 +388,7 @@ def survive(b, plan, pools, step):
                 if index and not evaluable and s['segment'] > 1:
                     for digest in {execution_id(t) for t in s['tests']}:
                         runs.carry(index,digest)
-                for observed in observations:
-                    if observed['id'] in alive[p][g]: selection_at[p][index,g,observed['id']] = observed
+                selection_at[p].record(index,g,(r for r in observations if r['id'] in alive[p][g]))
                 alive[p][g], lost, stats[g] = evaluate(s, alive[p][g], observations, evaluated=evaluable)
                 dead_at.update({t['id']:index for t in lost})
                 failures[p].extend(dict(index=index,sha=commit['sha'],group=g,segment=s['segment'],id=t['id'],kind=t['state'],flaky=t.get('flaky',False)) for t in lost)
@@ -421,8 +419,7 @@ def survive(b, plan, pools, step):
             for p in policies:
                 for g,s in current[p].items():
                     if s['start'] != index: continue
-                    for observed in assemble(s['tests'], {h:runs.get(index,h) for h in {execution_id(t) for t in s['tests']}}):
-                        selection_at[p][index,g,observed['id']] = observed
+                    selection_at[p].record(index,g,assemble(s['tests'], {h:runs.get(index,h) for h in {execution_id(t) for t in s['tests']}}))
         release_checkout(b.exp, b.execution_config, index)
     baseline_alive = {g:{key(t) for t in tests} for g,tests in frozen.items()}
     baseline_at = {}
@@ -436,9 +433,9 @@ def survive(b, plan, pools, step):
     write_json(b.exp/'results/policy/none/alive.json', baseline_at)
     for p in policies:
         directory = b.exp/'results/policy'/p
-        ledger = [dict(index=i,group=g,**counts([r for (n,group,k),r in selection_at[p].items() if n==i and group==g])) for i,g in sorted({(n,group) for n,group,k in selection_at[p]})]
+        ledger = selection_at[p].rows()
         write_json(directory/'selection-counts.json',ledger)
-        write_json(directory/'final-summary.json',dict(selection='all',selection_totals={g:{a:sum(r[a] for r in ledger if r['group']==g) for a in ('executed','carried')} for g in b.groups}))
+        write_json(directory/'final-summary.json',dict(selection='all',selection_totals=selection_at[p].totals(b.groups)))
         write_json(directory/'segments.json', segments[p])
         write_json(directory/'alive.json', alive_at[p])
         write_csv(directory/'survival.csv',curves[p],list(curves[p][0]))
