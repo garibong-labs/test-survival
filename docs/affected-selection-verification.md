@@ -525,3 +525,29 @@ paths. Large experiments and Java instrumentation are unchanged; no original
 experiment was rerun or modified for this follow-up.
 The full local Python suite passes **886 tests** in **74.25 s**, with the 22
 Java fixtures deselected locally for this accounting-only change.
+
+### Sixth review follow-up
+
+Baseline summaries omitted imported pre-selection batch observations lacking
+`selection_action`, even though policy totals already handled those rows.
+The import fixture reproduces zero executed/carried totals for a parent and two
+derived groups. The tagged baseline cases pass before the fix; legacy and mixed
+tag cases fail. A separate fixture reproduces counting observations attached to
+unevaluated raw records.
+
+Legacy observation normalization now lives in shared selection accounting,
+used by policy ledgers, baseline summaries, and local derived raw counts.
+Actual pass/failure rows without tags count as executed; explicit carried rows
+remain carried, and markers are excluded. Summaries explicitly exclude
+unevaluated indices and read each raw record once for its selection totals.
+The legacy parent fixture now reports **4 executed post-anchor and 2 control
+executions**; each derived group reports **3 post-anchor and 1 control**.
+The mixed fixture retains its one explicit carry in all three groups.
+
+Tests exercise imports with and without a locally measured generator, chained
+derived groups, control and post-anchor counts, explicit actions, all legacy
+outcome states, and unevaluated indices. Imported hashes and source bytes are
+unchanged, and derived method rows remain identical to their source subsets.
+No original experiment or large benchmark was rerun or modified.
+The full local Python suite passes **892 tests** in **70.54 s**, with 22 Java
+fixtures deselected locally for this counting/reporting change.

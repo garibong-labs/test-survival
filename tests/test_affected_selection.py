@@ -644,3 +644,14 @@ assert not list((exp/'before').rglob('*.exec')) and not list((exp/'before').rglo
                       '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script,owner],
                      capture_output=True,text=True,timeout=180)
     assert r.returncode==0,r.stdout+r.stderr
+
+
+def test_selection_counts_normalize_legacy_outcomes_without_mutation():
+    rows=[dict(state=state) for state in ('pass','fail','compile-fail','error','timeout','absent')]
+    rows += [dict(state='pass',selection_action='executed'),dict(state='pass',selection_action='carried'),
+             dict(state='dead',selection_action='executed'),dict(state='not-selected',selection_action='carried'),
+             dict(state='build-fail'),dict(state='skipped-untouched')]
+    before=deepcopy(rows)
+    assert counts(iter(rows))==dict(executed=7,carried=1)
+    assert rows==before
+    assert all('dependency_record' not in row and 'last_executed_index' not in row for row in rows)

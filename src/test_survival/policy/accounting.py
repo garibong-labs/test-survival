@@ -1,14 +1,7 @@
 """Incremental logical counts, independent of physical evidence storage."""
 from collections import defaultdict
 
-from ..rules.survival import FAILURES
-
-
-def accounted(row):
-    """Legacy actual observations count, without inventing execution evidence."""
-    if 'selection_action' not in row and row.get('state') in FAILURES | {'pass'}:
-        return {**row, 'selection_action':'executed'}
-    return row
+from ..selection import accounted
 
 
 def empty():

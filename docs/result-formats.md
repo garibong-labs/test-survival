@@ -185,6 +185,12 @@ Raw group projections add `selection_counts: {executed, carried}`. Baseline
 and separate `selection_control` counts. A selected compile-fail/absent method
 counts as executed for scheduling; compile/run evidence still shows whether
 its body actually ran. Repairs do not increase the logical method/index count.
+Imported pre-selection batch observations without `selection_action` use the
+same rule for summary totals, control counts, and local derived-group counts:
+actual pass/failure observations count as executed, explicit actions are
+preserved, and dead/not-selected markers are excluded. Summary totals include
+only evaluable indices. Counting does not add tags to imported rows or rewrite
+their evidence or provenance hashes.
 
 Policy physical observations remain in `results/policy/runs/<execution_hash>/`.
 Affected logical rows are in

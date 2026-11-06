@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 
 from .io import read_json
 from .rules.coverage import usable_lines
+from .rules.survival import FAILURES
 from .adapters.dependencies import RECORD_VERSION
 
 FIELDS = ('selection_action', 'carried_from_index', 'last_executed_index', 'last_executed_sha', 'dependency_record')
@@ -57,10 +58,18 @@ def executed(row, index, sha, context=None):
     return result
 
 
+def accounted(row):
+    """Count legacy actual observations without inventing execution evidence."""
+    if 'selection_action' not in row and row.get('state') in FAILURES | {'pass'}:
+        return {**row, 'selection_action':'executed'}
+    return row
+
+
 def counts(rows):
+    """Count observations at evaluated indices; callers exclude skipped indices."""
     result = dict(executed=0, carried=0)
     for row in rows:
-        action = row.get('selection_action')
+        action = accounted(row).get('selection_action')
         if action in result and row.get('state') not in ('dead','not-selected'):
             result[action] += 1
     return result
