@@ -219,6 +219,10 @@ class JavaMavenAdapter:
                                     modifiers=modifiers, annotations=annotations)
             if parts[0] == 'V':
                 methods[-1]['modifiers'] = parts[3]
+            if parts[0] == 'G':
+                classes[parts[1]]['type_parameters'] = parts[2]
+            if parts[0] == 'T':
+                methods[-1]['type_parameters'] = parts[3]
             if parts[0] == 'A':
                 _, cls, name, annotations = parts
                 if methods and methods[-1]['class'] == cls and methods[-1]['method'] == name:

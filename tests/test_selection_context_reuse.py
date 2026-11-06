@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from test_survival.adapters.context_inputs import collect
 from test_survival.io import read_json, write_json
 from test_survival.selection import Selector
@@ -315,3 +317,51 @@ def test_affected_classpath_cache_repairs_deleted_container_jar(tmp_path):
         cache.resolve(folder,index)
         assert jar.exists()
     assert resolutions==[0,2]
+
+
+@pytest.mark.parametrize('source', ['config', 'environment'])
+@pytest.mark.parametrize('option', ['-f build.xml', '-fbuild.xml', '-f=build.xml', '--file build.xml', '--file=build.xml'])
+def test_alternate_maven_model_is_a_context_input(tmp_path, monkeypatch, source, option):
+    repo=tmp_path/'repo';module=repo/'module';(module/'.mvn').mkdir(parents=True)
+    (repo/'pom.xml').write_text('<project/>');(module/'pom.xml').write_text('<project/>')
+    if source=='config':(module/'.mvn/maven.config').write_text(option)
+    else:monkeypatch.setenv('MAVEN_ARGS',option)
+    model=module/'build.xml';model.write_text('<project><version>1</version></project>')
+    before=collect(repo,module)
+    assert collect(repo,module)==before
+    model.write_text('<project><version>2</version></project>')
+    assert collect(repo,module)!=before
+    model.write_text('<project><parent><relativePath>parent.xml</relativePath></parent></project>')
+    parent=module/'parent.xml';parent.write_text('<project><profiles><profile><activation><file><exists>marker</exists></file></activation></profile></profiles></project>')
+    before=collect(repo,module)
+    (module/'marker').touch()
+    assert collect(repo,module)!=before
+    parent.write_text('<project><version>new-parent</version></project>')
+    assert collect(repo,module)!=before
+
+
+def test_alternate_maven_directory_and_external_model(tmp_path,monkeypatch):
+    repo=tmp_path/'repo';repo.mkdir();(repo/'pom.xml').write_text('<project/>')
+    external=tmp_path/'external';external.mkdir()
+    model=external/'pom.xml';model.write_text('<project/>')
+    monkeypatch.setenv('MAVEN_ARGS','--file ../external')
+    before=collect(repo)
+    model.write_text('<project><version>changed</version></project>')
+    assert collect(repo)!=before
+    model.write_text('<project><modules><module>child.xml</module></modules></project>')
+    child=external/'child.xml';child.write_text('<project/>')
+    before=collect(repo)
+    child.write_text('<project><version>changed-child</version></project>')
+    assert collect(repo)!=before
+
+
+def test_unbounded_alternate_model_disables_reuse(tmp_path,monkeypatch):
+    (tmp_path/'pom.xml').write_text('<project/>')
+    monkeypatch.setenv('MAVEN_ARGS','--file ${unknown.model}')
+    assert collect(tmp_path)!=collect(tmp_path)
+
+
+def test_maven_failure_flags_are_not_alternate_files(tmp_path,monkeypatch):
+    (tmp_path/'pom.xml').write_text('<project/>')
+    monkeypatch.setenv('MAVEN_ARGS','-fae -ff -fn')
+    assert set(collect(tmp_path)['poms_and_maven'])=={'pom.xml'}

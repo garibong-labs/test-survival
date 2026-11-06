@@ -15,9 +15,13 @@ public final class MethodSelectors {
         Set<String> seen = new HashSet<>();
         java.util.List<Method> methods = new java.util.ArrayList<>();
         for (Class<?> type = requested; type != null; type = type.getSuperclass()) {
-            methods.addAll(Arrays.asList(type.getDeclaredMethods()));
+            Method[] declared = type.getDeclaredMethods();
+            Arrays.sort(declared, java.util.Comparator.comparing(Method::isBridge));
+            methods.addAll(Arrays.asList(declared));
         }
-        methods.addAll(Arrays.asList(requested.getMethods()));
+        Method[] publicMethods = requested.getMethods();
+        Arrays.sort(publicMethods, java.util.Comparator.comparing(Method::isBridge));
+        methods.addAll(Arrays.asList(publicMethods));
         for (Method method : methods) {
             if (java.lang.reflect.Modifier.isPrivate(method.getModifiers())) continue;
             boolean test = false;
@@ -26,6 +30,9 @@ public final class MethodSelectors {
             }
             if (junit4 && !test) continue;
             if (!seen.add(method.getName()+Arrays.toString(method.getParameterTypes()))) continue;
+            // A bridge shadows the erased superclass method but is not another
+            // source test. Real declarations precede same-signature bridges.
+            if (method.isBridge() || method.isSynthetic()) continue;
             if(junit4 && Arrays.stream(method.getDeclaredAnnotations()).anyMatch(a->a.annotationType().getName().equals("org.junit.Ignore"))) continue;
             if (test) {
                 String parameters = Arrays.stream(method.getParameterTypes()).map(Class::getTypeName).collect(Collectors.joining(","));

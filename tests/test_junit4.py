@@ -482,6 +482,9 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
     if framework=='junit5':
         base=sources/'Base.java'
         base.write_text(base.read_text().rstrip().removesuffix('}')+parameterized+' public void works(java.lang.String value) { throw new AssertionError("override must execute"); } }')
+        (sources/'GenericBase.java').write_text('package fixture; public abstract class GenericBase<T> { '+parameterized+' public void generic(T value) { throw new AssertionError("generic override must execute"); } }')
+        (sources/'GenericMiddle.java').write_text('package fixture; public abstract class GenericMiddle<U> extends GenericBase<U> {}')
+        (sources/'GenericChild.java').write_text('package fixture; public class GenericChild extends GenericMiddle<String> { '+parameterized+' @Override public void generic(String value) { if (Production.value()!=2) throw new AssertionError(); } }')
     expected_classes=set()
     for name in ('One','Two'):
         package='other' if framework=='junit5' and name=='Two' else 'fixture'
@@ -504,6 +507,29 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
         assert run['exit_code']==0
         inventory=adapter.list_test_methods(sources.parent)
         if framework=='junit5':
+            generic=[m for m in inventory['methods'] if m['class']=='fixture.GenericChild' and m['method']=='generic' and m['kind']]
+            assert len(generic)==1
+            assert inventory['classes']['fixture.GenericBase']['type_parameters']=='T'
+            from test_survival.adapters.build_discovery import report_methods
+            reports=tmp_path/'generic-reports';reports.mkdir()
+            (reports/'TEST-child.xml').write_text('<testsuite><testcase classname="fixture.GenericChild" name="generic[1]"/></testsuite>')
+            observed,unmapped,_=report_methods(reports,generic)
+            assert observed=={('fixture.GenericChild','generic'):['pass']} and not unmapped
+            member=frozen_method(identity(generic[0]))
+            member.update(source_root='dev/src-test-t/java',resource_root='dev/src-test-t',
+                          file_hash=hashlib.sha256((tmp_path/member['file']).read_bytes()).hexdigest())
+            generic_run=adapter.run_group(0,'dev',[member])
+            assert len(generic_run['methods'])==1 and generic_run['methods'][0]['state']=='pass',generic_run
+            selections=[line for path in (tmp_path/'work/phase-A/0/dev').rglob('selectors-fixture.GenericChild.txt')
+                        for line in path.read_text().splitlines()]
+            assert selections==['generic\tfixture.GenericChild#generic(java.lang.String)']
+            generic_coverage=adapter.worker(dict(action='policy-cover',index=0,sha='anchor',group='dev',methods=[member],
+                candidate_suite=True,output='results/generic-candidate.json',work='work/generic-candidate'))
+            assert len(generic_coverage['methods'])==1 and generic_coverage['methods'][0]['state']=='pass',generic_coverage
+            assert generic_coverage['methods'][0]['lines']
+            invocations=[line.split('\t')[2] for path in (tmp_path/'work/generic-candidate').rglob('tests.tsv')
+                         for line in path.read_text().splitlines()]
+            assert invocations==['generic']
             overridden=[m for m in inventory['methods'] if m['class']=='fixture.One' and m['method']=='works' and m['kind']]
             assert len(overridden)==1
             member=frozen_method(identity(overridden[0]))

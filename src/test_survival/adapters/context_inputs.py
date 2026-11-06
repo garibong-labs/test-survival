@@ -15,15 +15,36 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
-def local_models(root):
-    """Follow Maven's local parent chain, including nonstandard model filenames."""
-    pending = [(p, 0) for p in sorted(root.rglob('pom.xml'))]
+def alternate_models(args, invocation):
+    """Include every explicit project file; ambiguous/unresolved options forbid reuse."""
+    paths, unknown = [], []
+    for i, arg in enumerate(args):
+        if arg in ('-fae', '-ff', '-fn'): continue  # Maven failure-mode flags.
+        if arg in ('-f', '--file'):
+            value = args[i+1] if i+1 < len(args) else ''
+        elif arg.startswith('--file='):
+            value = arg[len('--file='):]
+        elif arg.startswith('-f') and not arg.startswith('--'):
+            value = arg[2:].removeprefix('=')
+        else:
+            continue
+        if not value or '${' in value:
+            unknown.append(f'alternate-model:{i}')
+            continue
+        path = invocation/value
+        paths.append(path/'pom.xml' if path.is_dir() else path)
+    return paths, unknown
+
+
+def local_models(root, additional=()):
+    """Follow local parent/module references, including nonstandard model filenames."""
+    pending = [(p, 0) for p in [*sorted(root.rglob('pom.xml')), *additional]]
     models, unknown = {}, []
     while pending:
         path, depth = pending.pop()
         path = path.resolve()
         label = (str(path.relative_to(root)) if path.is_relative_to(root) else
-                 'external-parent/'+hashlib.sha256(str(path).encode()).hexdigest())
+                 'external-model/'+hashlib.sha256(str(path).encode()).hexdigest())
         if label in models: continue
         models[label] = path
         if not path.is_file(): continue
@@ -31,16 +52,18 @@ def local_models(root):
             tree = ET.fromstring(path.read_text())
             for node in tree.iter(): node.tag = node.tag.split('}')[-1]
             parent = tree.find('parent')
-            if parent is None: continue
-            relative = parent.find('relativePath')
-            value = '../pom.xml' if relative is None else (relative.text or '').strip()
-            if not value: continue  # Explicit empty path disables local lookup.
-            if '${' in value or depth >= 128:
-                unknown.append(label)
-                continue
-            target = path.parent/value
-            if target.is_dir(): target = target/'pom.xml'
-            if target.is_file(): pending.append((target, depth+1))
+            references = [(node.text or '').strip() for node in tree.findall('.//modules/module')]
+            if parent is not None:
+                relative = parent.find('relativePath')
+                value = '../pom.xml' if relative is None else (relative.text or '').strip()
+                if value: references.append(value)  # Empty relativePath disables local lookup.
+            for value in references:
+                if not value or '${' in value or depth >= 128:
+                    unknown.append(label)
+                    continue
+                target = path.parent/value
+                if target.is_dir(): target = target/'pom.xml'
+                if target.is_file(): pending.append((target, depth+1))
         except ET.ParseError:
             unknown.append(label)
     return models, unknown
@@ -99,7 +122,11 @@ def collect(root, invocation=None):
     override = os.environ.get('MAVEN_BASEDIR')
     maven_base = ((invocation/override).resolve() if override else
                   next((p for p in ancestors if (p/'.mvn').is_dir()), invocation))
-    poms, unknown_parents = local_models(root)
+    config = maven_base/'.mvn/maven.config'
+    args = shlex.split(os.environ.get('MAVEN_ARGS', '')) + shlex.split(config.read_text() if config.is_file() else '')
+    additional, unknown_models = alternate_models(args, invocation)
+    poms, unknown_references = local_models(root, additional)
+    unknown_models.extend('model-reference:'+label for label in unknown_references)
     files = {label: digest(p) for label, p in poms.items()}
     configs = {root, maven_base, *(p for p in ancestors if p.is_relative_to(root))}
     for directory in sorted(configs):
@@ -123,8 +150,6 @@ def collect(root, invocation=None):
     settings_paths = {label:p for label,p in (('user', user_home/'.m2/settings.xml'),
         ('global', global_home/'conf/settings.xml'), ('user-toolchains', user_home/'.m2/toolchains.xml'),
         ('global-toolchains', global_home/'conf/toolchains.xml'), ('security', user_home/'.m2/settings-security.xml'))}
-    config = maven_base/'.mvn/maven.config'
-    args = shlex.split(os.environ.get('MAVEN_ARGS', '')) + shlex.split(config.read_text() if config.is_file() else '')
     for i, arg in enumerate(args):
         if arg in ('-s', '--settings', '-gs', '--global-settings', '-t', '--toolchains', '-gt', '--global-toolchains') and i+1 < len(args):
             path = Path(args[i+1]); path = path if path.is_absolute() else invocation/path
@@ -141,8 +166,8 @@ def collect(root, invocation=None):
     models = [(label, p, [p.parent]) for label, p in poms.items()]
     models += [('settings-'+label, p, [m.parent for m in poms.values()]) for label,p in settings_paths.items()]
     activation = activation_inputs(maven_base, models, properties)
-    if unknown_parents:
-        activation['unbounded'].extend('parent:'+label for label in unknown_parents)
+    if unknown_models:
+        activation['unbounded'].extend(unknown_models)
         activation['nonce'] = uuid.uuid4().hex
     environment = {k: os.environ.get(k) for k in ('MAVEN_ARGS','MAVEN_OPTS','MAVEN_BASEDIR','MAVEN_HOME','M2_HOME','JAVA_HOME','JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS')}
     base_identity = (str(maven_base.relative_to(root)) if maven_base.is_relative_to(root) else

@@ -22,6 +22,19 @@ def erased_type(name):
     return name.strip()
 
 
+def type_arguments(name):
+    """Split a source type's arguments without splitting nested generic types."""
+    if '<' not in name: return []
+    text = name[name.index('<')+1:name.rfind('>')]
+    result, start, depth = [], 0, 0
+    for i, char in enumerate(text):
+        if char == '<': depth += 1
+        elif char == '>': depth -= 1
+        elif char == ',' and depth == 0:
+            result.append(text[start:i].strip()); start = i+1
+    return [*result, text[start:].strip()]
+
+
 def expand(inventory, framework='junit5'):
     classes = inventory['classes']
     declared = {name: [] for name in classes}
@@ -52,39 +65,69 @@ def expand(inventory, framework='junit5'):
                 if cls.replace('$', '.') == candidate: return cls
         return None
 
-    def signature(method):
-        owner = method.get('declaring_class', method['class'])
+    def parameter(name, owner, bindings):
         data = classes[owner]
         imports = data.get('imports', '').split(';')
-        def parameter(name):
-            name = re.sub(r'\s+', '', name).replace('...', '[]')
-            base = name.rstrip('[]')
-            suffix = name[len(base):]
-            resolved = resolve(base, owner)
-            if resolved: return resolved.replace('$', '.')+suffix
-            first = base.split('.', 1)[0]
-            for entry in imports:
-                if entry.rsplit('.', 1)[-1] == first:
-                    return (entry+base[len(first):]).replace('$', '.')+suffix
-            if first in JAVA_LANG_TYPES: return 'java.lang.'+base+suffix
-            if '.' not in base and base not in ('boolean','byte','char','double','float','int','long','short'):
-                wildcards = [entry[:-1] for entry in imports if entry.endswith('.*')]
-                if len(wildcards) == 1: return wildcards[0]+base+suffix
-                if not wildcards: return data.get('package', '')+'.'+base+suffix
-                # Multiple unresolved on-demand imports cannot identify a type.
-                return owner+':'+base+suffix
-            return base.replace('$', '.')+suffix
+        name = re.sub(r'\s+', '', erased_type(name)).replace('...', '[]')
+        base = name.rstrip('[]')
+        suffix = name[len(base):]
+        if base in bindings: return bindings[base]+suffix
+        resolved = resolve(base, owner)
+        if resolved: return resolved.replace('$', '.')+suffix
+        first = base.split('.', 1)[0]
+        for entry in imports:
+            if entry.rsplit('.', 1)[-1] == first:
+                return (entry+base[len(first):]).replace('$', '.')+suffix
+        if first in JAVA_LANG_TYPES: return 'java.lang.'+base+suffix
+        if '.' not in base and base not in ('boolean','byte','char','double','float','int','long','short'):
+            wildcards = [entry[:-1] for entry in imports if entry.endswith('.*')]
+            if len(wildcards) == 1: return wildcards[0]+base+suffix
+            if not wildcards: return data.get('package', '')+'.'+base+suffix
+            # Multiple unresolved on-demand imports cannot identify a type.
+            return owner+':'+base+suffix
+        return base.replace('$', '.')+suffix
+
+    def type_parameters(data):
+        result = {}
+        for value in data.get('type_parameters', '').split(';'):
+            if not value.strip(): continue
+            parts = re.split(r'\s+extends\s+', value.strip(), maxsplit=1)
+            result[parts[0]] = parts[1].split('&', 1)[0] if len(parts) > 1 else 'java.lang.Object'
+        return result
+
+    def defaults(data, owner, bindings):
+        bounds = type_parameters(data)
+        result = dict(bindings)
+        # Type variables declared here shadow any outer variable of the same name.
+        for name in bounds: result.pop(name, None)
+        def bind(name, visiting=frozenset()):
+            if name in result: return result[name]
+            if name in visiting: return 'java.lang.Object'
+            bound = erased_type(bounds[name]).strip()
+            if bound in bounds:
+                value = bind(bound, visiting | {name})
+            else:
+                value = parameter(bound, owner, result)
+            result[name] = value
+            return value
+        for name in bounds: bind(name)
+        return result
+
+    def signature(method, bindings):
+        owner = method['class']
+        bindings = defaults(method, owner, bindings)
         name, parameters = erased_type(method['signature']).split('(', 1)
-        return name, tuple(parameter(p) for p in parameters.rstrip(')').split(',') if p.strip())
+        return name, tuple(parameter(p, owner, bindings) for p in parameters.rstrip(')').split(',') if p.strip())
 
     memo = {}
-    def members(owner, visiting=frozenset()):
-        if owner in memo: return memo[owner]
+    def members(owner, bindings, visiting=frozenset()):
+        key = owner, tuple(sorted(bindings.items()))
+        if key in memo: return memo[key]
         if owner in visiting: return []
-        own = declared[owner]
+        own = [dict(m, _signature=signature(m, bindings)) for m in declared[owner]]
         # Vintage discovers annotated superclass methods even if a concrete
         # override is unannotated; reflection invokes that overriding body.
-        signatures = {signature(m) for m in own if framework != 'junit4' or m['kind'] or
+        signatures = {m['_signature'] for m in own if framework != 'junit4' or m['kind'] or
                       re.search(r'@(?:org\.junit\.)?Test\b', m.get('annotations', ''))}
         result = list(own)
         data = classes[owner]
@@ -92,8 +135,11 @@ def expand(inventory, framework='junit5'):
         for name in parents:
             parent = resolve(name, owner)
             if parent is None: continue
-            for method in members(parent, visiting | {owner}):
-                if signature(method) in signatures: continue
+            parent_bindings = defaults(classes[parent], parent, {})
+            for variable, argument in zip(type_parameters(classes[parent]), type_arguments(name)):
+                parent_bindings[variable] = parameter(argument, owner, bindings)
+            for method in members(parent, parent_bindings, visiting | {owner}):
+                if method['_signature'] in signatures: continue
                 flags = method.get('modifiers', '')
                 if 'private' in flags or 'static' in flags: continue
                 declaration = method.get('declaring_class', method['class'])
@@ -103,15 +149,16 @@ def expand(inventory, framework='junit5'):
                         and classes[declaration]['kind'] != 'INTERFACE'
                         and classes[declaration].get('package') != data.get('package')):
                     continue
-                signatures.add(signature(method))
+                signatures.add(method['_signature'])
                 result.append(dict(method, **{'class': owner}, declaring_class=declaration,
                                    declaring_file=classes[declaration]['path'], inherited=True,
                                    annotations=method.get('annotations', '')+' '+data.get('annotations', '')))
-        memo[owner] = result
+        memo[key] = result
         return result
 
     inherited = []
     for owner, data in classes.items():
         if data['kind'] != 'CLASS' or 'abstract' in data.get('modifiers', ''): continue
-        inherited.extend(m for m in members(owner) if m.get('inherited') and m['kind'])
+        inherited.extend({k:v for k,v in m.items() if k != '_signature'}
+                         for m in members(owner, defaults(data, owner, {})) if m.get('inherited') and m['kind'])
     return {**inventory, 'methods': inventory['methods']+inherited}

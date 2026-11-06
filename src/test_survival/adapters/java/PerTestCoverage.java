@@ -278,14 +278,23 @@ public final class PerTestCoverage implements TestExecutionListener {
                 // Include inherited package/protected Jupiter methods as well as
                 // public Vintage methods, while respecting overriding methods.
                 Set<String> seen = new HashSet<>();
-                for (Class<?> type = cls; type != null; type = type.getSuperclass())
-                    for (java.lang.reflect.Method m : type.getDeclaredMethods()) {
+                for (Class<?> type = cls; type != null; type = type.getSuperclass()) {
+                    java.lang.reflect.Method[] declared = type.getDeclaredMethods();
+                    Arrays.sort(declared, Comparator.comparing(java.lang.reflect.Method::isBridge));
+                    for (java.lang.reflect.Method m : declared) {
                         String signature = m.getName()+Arrays.toString(m.getParameterTypes());
                         if (!seen.add(signature) || java.lang.reflect.Modifier.isPrivate(m.getModifiers())) continue;
+                        // Retain the erased signature for ancestor shadowing,
+                        // without selecting the compiler-generated bridge.
+                        if (m.isBridge() || m.isSynthetic()) continue;
                         if (m.getName().equals(parts[1])) builder.selectors(selectMethod(cls, m));
                     }
-                for (java.lang.reflect.Method m : cls.getMethods())
-                    if (seen.add(m.getName()+Arrays.toString(m.getParameterTypes())) && m.getName().equals(parts[1]))
+                }
+                java.lang.reflect.Method[] publicMethods = cls.getMethods();
+                Arrays.sort(publicMethods, Comparator.comparing(java.lang.reflect.Method::isBridge));
+                for (java.lang.reflect.Method m : publicMethods)
+                    if (seen.add(m.getName()+Arrays.toString(m.getParameterTypes())) && !m.isBridge() && !m.isSynthetic()
+                            && m.getName().equals(parts[1]))
                         builder.selectors(selectMethod(cls, m));
             }
         }

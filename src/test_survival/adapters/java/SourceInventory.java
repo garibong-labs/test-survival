@@ -47,6 +47,7 @@ class SourceInventory {
           row("H",fqn,pkg,cls.getExtendsClause(),cls.getImplementsClause().stream().map(Object::toString).collect(Collectors.joining(";")),
               unit.getImports().stream().filter(i->!i.isStatic()).map(i->i.getQualifiedIdentifier().toString()).collect(Collectors.joining(";")),
               cls.getModifiers().getFlags(),cls.getModifiers().getAnnotations());
+          row("G",fqn,cls.getTypeParameters().stream().map(Object::toString).collect(Collectors.joining(";")));
           for(Tree member:cls.getMembers()) {
             if(member instanceof MethodTree) {
               MethodTree m=(MethodTree)member;
@@ -68,6 +69,7 @@ class SourceInventory {
               }
               row("M",fqn,m.getName(),kind,eligible,sig,display(m.getModifiers()),unit.getLineMap().getLineNumber(positions.getStartPosition(unit,m)),hash);
               row("V",fqn,m.getName(),m.getModifiers().getFlags());
+              row("T",fqn,m.getName(),m.getTypeParameters().stream().map(Object::toString).collect(Collectors.joining(";")));
               row("A",fqn,m.getName(),cls.getModifiers().getAnnotations()+" "+m.getModifiers().getAnnotations());
             } else if(member instanceof ClassTree) scan(member,fqn);
           }

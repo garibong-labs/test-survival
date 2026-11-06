@@ -201,6 +201,9 @@ settings and `.mvn` configuration, and the resolved runner image identity.
 Local parent POM references are followed recursively, including parents with
 filenames other than `pom.xml` and parents outside the checkout. Parent contents
 and profile activation inputs participate; unresolved parent paths disable reuse.
+Alternate models selected by `-f` or `--file` in `.mvn/maven.config` or
+`MAVEN_ARGS` resolve against the invocation directory. Their local parents,
+modules, and activation inputs also participate in the identity.
 Configuration is collected from the actual Maven invocation directory (the
 configured module): Maven uses the nearest ancestor `.mvn` unless `MAVEN_BASEDIR`
 overrides it, and relative settings paths resolve against the invocation directory. The
@@ -249,7 +252,9 @@ and the existing stability screen determines denominator eligibility. Parameteri
 and repeated invocations collapse to their source method. Skipped-only methods
 and unmappable report entries do not enter the candidate set.
 Source inventory expands inherited tests through concrete subclasses, including
-multi-level inheritance and nested classes. Jupiter includes non-private
+multi-level inheritance and nested classes. Generic superclass/interface bindings
+are applied when matching overrides; compiler-generated bridges do not execute
+as additional tests. Jupiter includes non-private
 superclass tests across package boundaries, including package-private tests. Candidate filtering, denominators,
 survival execution, and regeneration pools use the concrete class/method pair.
 `declaring_class` and `declaring_file` retain the method's source declaration;

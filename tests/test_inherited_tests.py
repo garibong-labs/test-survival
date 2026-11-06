@@ -124,3 +124,37 @@ def test_override_parameter_type_spellings_map_to_one_method(tmp_path):
     observed,unmapped,_=report_methods(tmp_path,methods)
     assert observed=={('p.One','works'):['pass']} and not unmapped
     assert len(methods)==1
+
+
+def test_generic_superclass_bindings_are_substituted_before_override_mapping(tmp_path):
+    inv=inventory()
+    inv['classes']['p.Base']['type_parameters']='T'
+    inv['classes']['p.Middle'].update(type_parameters='U',extends='Base<U>')
+    inv['classes']['p.One']['extends']='Middle<String>'
+    inv['classes']['q.Two']['extends']='Middle<Integer>'
+    inv['methods']=[dict(**{'class':owner},method='works',kind='parameterized',signature=sig,modifiers='public')
+                    for owner,sig in [('p.Base','works(T)'),('p.One','works(String)'),('q.Two','works(Integer)')]]
+    methods=[m for m in expand(inv)['methods'] if m['class'] in ('p.One','q.Two') and m['kind']]
+    (tmp_path/'TEST-children.xml').write_text('<testsuite><testcase classname="p.One" name="works[1]"/><testcase classname="q.Two" name="works[1]"/></testsuite>')
+    observed,unmapped,_=report_methods(tmp_path,methods)
+    assert observed=={('p.One','works'):['pass'],('q.Two','works'):['pass']} and not unmapped
+    assert len(methods)==2
+
+
+def test_generic_arrays_bounds_and_method_type_parameter_shadowing(tmp_path):
+    inv=inventory()
+    inv['classes']['p.Base']['type_parameters']='T extends Number'
+    inv['classes']['p.Middle'].update(type_parameters='U extends Number',extends='Base<U>')
+    inv['classes']['p.One']['extends']='Middle<Integer>'
+    inv['classes']['q.Two']['extends']='Middle'
+    inv['methods']=[dict(**{'class':owner},method='works',kind='parameterized',signature=sig,modifiers='public')
+                    for owner,sig in [('p.Base','works(T[])'),('p.One','works(Integer[])'),('q.Two','works(Number[])')]]
+    result=expand(inv)
+    assert not [m for m in result['methods'] if m.get('inherited')]
+    # Method-local T shadows Base<T>; works(Number[]) is an actual overload of works(Integer[]).
+    inv['methods'][0]['type_parameters']='T extends Number'
+    methods=[m for m in expand(inv)['methods'] if m['class']=='p.One']
+    assert len(methods)==2 and methods[-1]['declaring_class']=='p.Base'
+    (tmp_path/'TEST-one.xml').write_text('<testsuite><testcase classname="p.One" name="works[1]"/></testsuite>')
+    observed,unmapped,_=report_methods(tmp_path,methods)
+    assert not observed and unmapped[0]['reason']=='ambiguous-source-method'
