@@ -286,7 +286,8 @@ assert len(result['methods'])==2 and all(t['state']=='pass' for t in result['met
 assert {t['execution_hash'] for t in result['methods']}=={'one','two'}
 assert result['compile'][0]['snapshot_full_suite']
 assert not result['compile'][1]['snapshot_full_suite']
-assert 'Provider.java' in result['compile'][1]['helper_sources']
+assert 'BrokenTest.java' in result['compile'][1]['removed']
+assert 'Provider.java' in result['compile'][1]['attempts'][-1]['sources']
 for number,line in [(0,3),(1,4)]:
  assert ['src/main/java/fixture/Production.java',line] in result['methods'][number]['lines']
 worker.REPO=Path('/out');worker.DEVELOPER=False;worker.TEST_FRAMEWORK='auto';worker.FLAKY_RERUN=0

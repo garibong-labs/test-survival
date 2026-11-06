@@ -9,7 +9,9 @@ from ..rules.survival import FAILURES, dead_method
 from ..rules.coverage import usable_lines
 from ..runner.dispatch import dispatch
 from ..work import release_checkout
+from ..selection import executed, FIELDS
 from .artifacts import snapshot
+from .accounting import accounted, SelectionLedger
 from .config import COVERAGE_VERSION, MARKERS, active_plan, regenerates, reusable_run, unmet_rows
 from .segments import execution_id, key, identity, segment, regenerate, assemble, evaluate
 
@@ -70,14 +72,14 @@ class Runs:
             if raw.get('sha') != self.b.by_index[index]['sha']:
                 raise ValueError('Batch baseline SHA differs at '+str(index))
             for t in raw.get('methods', []):
-                if t.get('execution_hash') == digest and t.get('state') not in MARKERS:
+                if t.get('execution_hash') == digest and t.get('state') not in MARKERS and t.get('selection_action') != 'carried':
                     observations[identity(t)] = t
         if not observations:
             return
         methods = []
         for ident, t in self.catalog[digest].items():
             observed = observations.get(ident)
-            methods.append({**t, **{k:observed[k] for k in ('state','message','flaky','lines','remeasured_state') if k in observed}}
+            methods.append({**t, **{k:observed[k] for k in ('state','message','flaky','lines','remeasured_state',*FIELDS) if k in observed}}
                            if observed else dict(t,state='not-selected',flaky=False,lines=[]))
         complete = all(usable_lines(t) for t in methods)
         self.step(f'run-{digest}-{index}', lambda:write_json(path, dict(index=index, sha=self.b.by_index[index]['sha'],
@@ -165,7 +167,7 @@ class Runs:
                 for t in raw.get('methods', []):
                     if execution_id(t) != digest or identity(t) not in missing:
                         continue
-                    observations[identity(t)] = settle(t, verdicts[digest].get(identity(t)), unsettled)
+                    observations[identity(t)] = executed(settle(t, verdicts[digest].get(identity(t)), unsettled), index, self.b.by_index[index]['sha'])
                 if set(observations) < set(self.catalog[digest]):
                     raise ValueError('Incomplete policy batch inventory')
                 observed = [observations[identity(t)] for t in methods]
@@ -316,7 +318,24 @@ def baseline_tests(b):
                         scope=b.scope['classes'], prefix='results/policy/baseline-sources') for g in b.groups}
 
 
+def baseline_observations(b, index, group, tests):
+    """Copy evaluable baseline rows into policy identities and accounting.
+
+    Legacy observations predate selection tags. They count as executed, but
+    supply no new dependency evidence or execution origin for affected carries.
+    """
+    raw = {r['id']:r for r in b.raw(index,group)['methods']}
+    rows = []
+    for test in tests:
+        row = {**test, **raw[test['origin_id']], 'id':key(test)}
+        rows.append(accounted(row))
+    return rows
+
+
 def survive(b, plan, pools, step):
+    if b.execution_config['survival'].get('selection') == 'affected':
+        from .affected import survive as selected_survive
+        return selected_survive(b, plan, pools, step)
     plan = active_plan(b, plan)
     pools = {k:v for k,v in pools.items() if any(p['group'] == k[0] and p['index'] == k[1] for p in plan['pools'])}
     frozen = baseline_tests(b)
@@ -331,6 +350,7 @@ def survive(b, plan, pools, step):
     points = {p:{(x['group'],x['index']) for x in plan['points'] if x['trigger']==policy['trigger'] and x['index'] is not None and regenerates(b,x['group'],policy)} for p,policy in policies.items()}
     curves = {p:[] for p in policies}; failures = {p:[] for p in policies}; alive_at = {p:{} for p in policies}
     entering_at = {p:{} for p in policies}
+    selection_at = {p:SelectionLedger() for p in policies}
     def row_for(commit, p, event, stats):
         row = {k:commit[k] for k in ('index','sha','date','subject','evaluated')}
         row['event'] = event
@@ -362,14 +382,13 @@ def survive(b, plan, pools, step):
                 s = current[p][g]; observations = []
                 if evaluable:
                     if s['segment'] == 1:
-                        raw = b.raw(index,g)
-                        by_id = {r['id']:r for r in raw['methods']}
-                        observations = [{**by_id[t['origin_id']], 'id':key(t)} for t in s['tests']]
+                        observations = baseline_observations(b,index,g,s['tests'])
                     else:
                         observations = assemble(s['tests'], {h:runs.get(index,h) for h in sorted({execution_id(t) for t in s['tests']})})
                 if index and not evaluable and s['segment'] > 1:
                     for digest in {execution_id(t) for t in s['tests']}:
                         runs.carry(index,digest)
+                selection_at[p].record(index,g,(r for r in observations if r['id'] in alive[p][g]))
                 alive[p][g], lost, stats[g] = evaluate(s, alive[p][g], observations, evaluated=evaluable)
                 dead_at.update({t['id']:index for t in lost})
                 failures[p].extend(dict(index=index,sha=commit['sha'],group=g,segment=s['segment'],id=t['id'],kind=t['state'],flaky=t.get('flaky',False)) for t in lost)
@@ -397,6 +416,10 @@ def survive(b, plan, pools, step):
             runs.run_index(index,sorted(regenerated),alive=before_evaluation|entering(),dead_at=dead_at,label='regenerate',evaluated=before_evaluation)
             for digest in sorted(regenerated):
                 runs.get(index,digest)  # inventory check of the record just written
+            for p in policies:
+                for g,s in current[p].items():
+                    if s['start'] != index: continue
+                    selection_at[p].record(index,g,assemble(s['tests'], {h:runs.get(index,h) for h in {execution_id(t) for t in s['tests']}}))
         release_checkout(b.exp, b.execution_config, index)
     baseline_alive = {g:{key(t) for t in tests} for g,tests in frozen.items()}
     baseline_at = {}
@@ -410,6 +433,9 @@ def survive(b, plan, pools, step):
     write_json(b.exp/'results/policy/none/alive.json', baseline_at)
     for p in policies:
         directory = b.exp/'results/policy'/p
+        ledger = selection_at[p].rows()
+        write_json(directory/'selection-counts.json',ledger)
+        write_json(directory/'final-summary.json',dict(selection='all',selection_totals=selection_at[p].totals(b.groups)))
         write_json(directory/'segments.json', segments[p])
         write_json(directory/'alive.json', alive_at[p])
         write_csv(directory/'survival.csv',curves[p],list(curves[p][0]))

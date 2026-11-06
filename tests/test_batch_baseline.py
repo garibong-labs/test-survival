@@ -160,7 +160,8 @@ subprocess.run(['java','-cp','/out/helper:'+cp,'PerTestCoverage','--universe','/
 
 
 @pytest.mark.parametrize('with_generator',[False, True])
-def test_local_children_inherit_imported_batch_parent(tmp_path, monkeypatch, with_generator):
+@pytest.mark.parametrize('selection_evidence',['tagged','legacy','mixed'])
+def test_local_children_inherit_imported_batch_parent(tmp_path, monkeypatch, with_generator, selection_evidence):
     import yaml
     from test_survival.dev_results import import_results, file_hash
     from test_survival.rules.dev_denominator import denominator_file
@@ -169,6 +170,7 @@ def test_local_children_inherit_imported_batch_parent(tmp_path, monkeypatch, wit
     jobs = []; setup_worker(monkeypatch, jobs)
     for exp in (source, target):
         c = fixture(exp); c['project']['repo'] = str(tmp_path/'repo')
+        c['runner']['workers']['survive']=1
         if exp == source:
             c['dev']['groups'] = c['dev']['groups'][:1]
             frozen = read_json(exp/'results/frozen-denominators.json'); frozen.pop('child')
@@ -180,12 +182,25 @@ def test_local_children_inherit_imported_batch_parent(tmp_path, monkeypatch, wit
         if not with_generator:
             c['generators'] = []; frozen.pop('o')
         write_json(exp/'results/frozen-denominators.json', frozen)
+        write_json(exp/'results/denominators.json', {g:len(ts) for g,ts in frozen.items()})
         for i,g in enumerate(c['dev']['groups']):
             write_csv(exp/denominator_file(g,i), frozen[g['name']], list(frozen[g['name']][0]))
         (exp/'experiment.yaml').write_text(yaml.safe_dump(dict(name='fixture', anchor='t',
             project=c['project'], survival={'execution':'batch'}, range={'skip_untouched':'main-sources'}, dev={'groups':c['dev']['groups']})))
         configs[exp] = c
     control.run(source,configs[source]); survive.run(source,configs[source]); cover.run(source,configs[source])
+    if selection_evidence != 'tagged':
+        from test_survival.io import logical_glob
+        from test_survival.selection import FIELDS
+        for folder in ('raw','control','baseline-batches'):
+            for path in logical_glob(source/'results'/folder, '*.json'):
+                raw=read_json(path)
+                raw.pop('selection_counts',None)
+                for row in raw.get('methods',[]):
+                    for field in FIELDS:row.pop(field,None)
+                    if selection_evidence=='mixed' and raw.get('index')==4 and row['method']=='b':
+                        row.update(selection_action='carried',carried_from_index=2,last_executed_index=2,last_executed_sha='2')
+                write_json(path,raw,compress=folder!='control')
     source_bytes = {p:p.read_bytes() for p in source.rglob('*') if p.is_file()}
     provenance = import_results(target,source,configs[target])
     write_json(target/'state/import.json', {'dev-results':provenance})
@@ -201,6 +216,14 @@ def test_local_children_inherit_imported_batch_parent(tmp_path, monkeypatch, wit
         return raw
     monkeypatch.setattr(JavaMavenAdapter,'worker',disagree)
     survive.run(target,configs[target]); cover.run(target,configs[target])
+    from test_survival.report.consistency import build
+    summary=build(target,configs[target])
+    carried=int(selection_evidence=='mixed')
+    assert summary['selection_totals']['dev']==dict(executed=4-carried,carried=carried)
+    assert summary['selection_control']['dev']==dict(executed=2,carried=0)
+    for g in ('child','leaf'):
+        assert summary['selection_totals'][g]==dict(executed=3-carried,carried=carried)
+        assert summary['selection_control'][g]==dict(executed=1,carried=0)
     assert bool(jobs)==with_generator
     assert sessions==[with_generator,with_generator]
     assert all(t['method']=='c' for j in jobs for t in j['methods'])
@@ -210,6 +233,8 @@ def test_local_children_inherit_imported_batch_parent(tmp_path, monkeypatch, wit
             child = read_json(target/f'results/raw-derived/{index}-{g}.json')
             assert child['methods']==[t for t in parent['methods'] if t['method']=='b']
             assert child['derived_from']==('dev' if g=='child' else 'child')
+            action='carried' if selection_evidence=='mixed' and index==4 else 'executed'
+            assert child['selection_counts']==dict(executed=int(action=='executed'),carried=int(action=='carried'))
             assert any(r['covered']=='yes' for r in read_csv(target/f'results/coverage/{index}-{g}-lines.csv'))
     assert all(file_hash(target/p)==h for p,h in provenance['files'].items())
     assert all(p.read_bytes()==data for p,data in source_bytes.items())
@@ -389,3 +414,17 @@ def test_batch_audits_are_read_only(tmp_path, monkeypatch, summary_present, deny
     assert '6/6 commits' in status(tmp_path, config)
     assert not attempts
     assert tree() == before  # Include inode/timestamps: rewriting identical bytes is a mutation.
+
+
+def test_batch_summary_excludes_unevaluated_rows_even_with_observations(tmp_path,monkeypatch):
+    from test_survival.report.consistency import build
+    config=fixture(tmp_path);setup_worker(monkeypatch,[])
+    control.run(tmp_path,config);survive.run(tmp_path,config);cover.run(tmp_path,config)
+    original=build(tmp_path,config)
+    for index in (1,3,5):
+        for group,folder in [('dev','raw'),('child','raw-derived'),('o','raw')]:
+            path=tmp_path/f'results/{folder}/{index}-{group}.json'
+            write_json(path,dict(status='skipped-untouched',methods=[dict(id='stale',state='pass',selection_action='executed')]),compress=True)
+    summary=build(tmp_path,config)
+    assert summary['selection_totals']==original['selection_totals']
+    assert summary['selection_control']==original['selection_control']

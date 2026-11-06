@@ -127,9 +127,10 @@ run records and carry records remain reusable. Survival, coverage and reports
 refresh through the existing version check. Older pre-version-2 executions are
 still upgraded.
 
-Baseline and policy survival dispatch up to `runner.workers.survive` indices/jobs
-concurrently. Each dispatch uses the failures confirmed by already-completed
-earlier jobs for that group or policy union. A lagging snapshot may request extra
+With `survival.selection: all`, baseline and policy survival dispatch up to
+`runner.workers.survive` indices/jobs concurrently. Each dispatch uses the failures
+confirmed by already-completed earlier jobs for that group or policy union.
+A lagging snapshot may request extra
 methods that an earlier in-flight index will later mark dead. Ordered aggregation
 ignores those extra observations and retains exact alive-entry sets and first
 failures. Policy dispatch stops at regeneration boundaries so reset/fill uses
@@ -177,3 +178,35 @@ measurement-input change; completed pools are not silently rescreened.
 `policies.regenerate_developer` value. Set `policies.groups: [dev-scope]` (or your
 developer group name) for a developer-only pool exercise; policy run has no
 `--group` flag. Always use a separate policy output directory from its baseline.
+
+## Affected selection
+
+Set `survival.selection: affected` in `experiment.yaml`; the default is `all`.
+Baseline affected selection requires `survival.execution: batch`. A policy's own
+selection setting controls its execution, independently of its baseline's mode;
+segment 1 and non-regenerating references continue to read the baseline.
+
+The compiler trigger conservatively compares all repository `pom.xml` files at
+last-execution and current SHAs: parent versions, `maven-compiler-plugin` settings
+(including profile/execution configuration), and properties whose names contain
+`compiler`, `release`, `source`, `target`, or `java.version`. Cosmetic changes and
+unrelated POM fields alone do not trigger execution. Unknown XML/diff evidence
+executes conservatively. No effective Maven model is extracted.
+
+Resolved production/test-scope dependency entries are compared after the worker's
+JUnit exclusions and runner-library additions, in classpath order, using group,
+artifact, version, classifier and type. Project output directories are excluded.
+Affected preparation bypasses the module-POM-only classpath cache and resolves
+per built commit. Unresolved coordinates force execution.
+
+Affected mode measures indices in order and limits concurrent chunks within each
+index to `runner.workers.survive`. Each chunk has isolated filesystem resources.
+`all` retains commit-level concurrency. Use the same worker setting for timing
+comparisons. `runner.jvm.jacoco`/`SURVIVAL_JVM_JACOCO` still set **each JVM's** heap
+limit, not an aggregate memory budget across concurrent chunks.
+
+New batch and policy compilations use iterative error-file removal in both
+selection modes. Affected compiles executed test sources plus non-test helpers;
+all compiles the eligible root. `-Xmaxerrs` is set to 2147483647, diagnostics keep
+source associations, and each retry uses a clean output directory. No frozen
+sources or completed experiment artifacts are removed.

@@ -1,0 +1,85 @@
+{
+  "passed": true,
+  "pool_methods": 4,
+  "funnel": {
+    "discovered": 4,
+    "selected": 4,
+    "stable_runs": 1,
+    "stable_passed": 4,
+    "kept": 4
+  },
+  "timings": [
+    {
+      "step": "prepare",
+      "seconds": 29.966
+    },
+    {
+      "step": "import",
+      "seconds": 0.144
+    },
+    {
+      "step": "screen",
+      "seconds": 2.429
+    },
+    {
+      "step": "control",
+      "seconds": 11.492
+    },
+    {
+      "step": "survive",
+      "seconds": 17.622
+    },
+    {
+      "step": "cover",
+      "seconds": 0.194
+    },
+    {
+      "step": "report",
+      "seconds": 0.902
+    },
+    {
+      "step": "policy-plan",
+      "seconds": 0.18
+    },
+    {
+      "step": "policy-pools",
+      "seconds": 14.693
+    },
+    {
+      "step": "policy-run",
+      "seconds": 25.963
+    },
+    {
+      "step": "interrupt-control",
+      "seconds": 17.131
+    },
+    {
+      "step": "live-status",
+      "seconds": 0.128
+    },
+    {
+      "step": "stop",
+      "seconds": 0.296
+    },
+    {
+      "step": "stopped-status",
+      "seconds": 0.086
+    },
+    {
+      "step": "resume-survive",
+      "seconds": 22.903
+    },
+    {
+      "step": "resume-cover",
+      "seconds": 0.184
+    },
+    {
+      "step": "resumed-status",
+      "seconds": 0.138
+    },
+    {
+      "step": "policy-resume",
+      "seconds": 0.18
+    }
+  ]
+}

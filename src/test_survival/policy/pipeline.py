@@ -30,8 +30,8 @@ class Steps:
         if prior and prior.get('config_hash') != self.digest:
             raise ConfigError('Policy inputs changed; use --force to rebuild policy evidence')
         # Upgrade aggregate steps without rebuilding pools or valid run records.
-        # Revision 3 repairs previously seeded non-executing coverage retries.
-        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=3)
+        # Revision 5 also counts reused untagged physical observations.
+        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=5)
         revision['developer'] = {p['name']:p.get('developer', 'regenerate' if self.b.options.get('regenerate_developer', True) else 'keep') for p in self.b.options['set']}
         fresh = True
         if name.startswith('run-'):
@@ -43,6 +43,9 @@ class Steps:
             if name == 'survive' and fresh:
                 missing = [self.b.exp/f'results/policy/{p["name"]}/coverage-missing.csv' for p in self.b.options['set']]
                 fresh = all(p.exists() and not read_csv(p) for p in missing)
+                if fresh and self.b.execution_config['survival'].get('selection') == 'affected':
+                    from .affected import records_complete
+                    fresh = records_complete(self.b)
         if prior.get('status') == 'completed' and fresh:
             if not all(p.exists() for p in outputs):
                 raise PipelineError('Completed policy evidence is missing; restore it or use --force: '+name)

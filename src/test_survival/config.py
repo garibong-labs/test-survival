@@ -214,7 +214,7 @@ SCHEMA = {
     'generators': Field(list, []),
     'screen': {'stable_runs': integer(3), 'dedup': enum('exact-body', 'exact-body'),
                'matching': enum('none', 'none', 'subsample-to-dev')},
-    'survival': {'execution': enum('legacy', 'legacy', 'batch'), 'definition': enum('cumulative-fixed-denominator', 'cumulative-fixed-denominator'),
+    'survival': {'selection': enum('all', 'all', 'affected'), 'execution': enum('legacy', 'legacy', 'batch'), 'definition': enum('cumulative-fixed-denominator', 'cumulative-fixed-denominator'),
                  'flaky_rerun': integer(1, 0), 'build_fail': enum('carry-over', 'carry-over'),
                  'environment_errors': {'patterns': Field(list, []), 'max_reruns': integer(3, 0),
                                         'backoff_seconds': Field(float, 5, minimum=0)}},
@@ -403,6 +403,8 @@ def validate(data):
             if source in seen:raise ConfigError(f'dev.groups[{i}].derive_from: dependency cycle')
             seen.add(source);source=links[source]
     c['dev']['groups']=resolved
+    if c['survival']['selection'] == 'affected' and c['survival']['execution'] != 'batch' and not data.get('policies'):
+        raise ConfigError('survival.selection: affected requires survival.execution: batch for a baseline')
     _strings(c['survival']['environment_errors']['patterns'],'survival.environment_errors.patterns')
     generators = []
     for i, raw in enumerate(c['generators']):
@@ -502,6 +504,7 @@ def record_runner_inputs(runner):
 def survival_inputs(config):
     """Resolved measurement settings with the historical legacy shape."""
     result = dict(config['survival'])
+    if result.get('selection') == 'all': result.pop('selection', None)
     if result.get('execution', 'legacy') == 'legacy':
         result.pop('execution', None)
     return result
@@ -511,6 +514,7 @@ def result_inputs(config):
     """Hash result-affecting settings, excluding scheduling and host wiring."""
     c = as_written(config)
     c.pop('policies', None)
+    if c.get('survival', {}).get('selection') == 'all': c['survival'].pop('selection')
     if c.get('survival', {}).get('execution') == 'legacy':
         c['survival'].pop('execution')
     for g in c.get('dev', {}).get('groups', []):
@@ -562,6 +566,7 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
         data['screen'] = c['screen']
     if index == 4 and c.get('survival', {}).get('execution') == 'batch':
         data['survival'] = {'execution': 'batch'}
+        if c['survival'].get('selection') == 'affected': data['survival']['selection'] = 'affected'
     if index >= 5 and 'survival' in c:
         data['survival'] = c['survival']
     if index >= 6 and 'coverage' in c:

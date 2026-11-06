@@ -50,7 +50,12 @@ def description(exp, name, state, *, at=None):
         eta = finish.isoformat(timespec='seconds')
     elif state.get('status') == 'running' and fresh and elapsed and total is not None:
         eta = (at+timedelta(seconds=elapsed*max(0, total-done)/fresh)).isoformat(timespec='seconds')
-    return Description(f'elapsed {duration(elapsed)}; {done}/{total if total is not None else "?"} {unit}; estimated finish ', eta)
+    selection = read_json(exp/'results/policy/selection-progress.json', {}) if name == 'survive' else {}
+    methods = ''
+    if selection and selection.get('config_hash') == state.get('config_hash'):
+        executed, carried = selection['executed'], selection['carried']
+        methods = f'{executed+carried} methods completed ({executed} executed, {carried} carried); '
+    return Description(f'elapsed {duration(elapsed)}; {done}/{total if total is not None else "?"} {unit}; {methods}estimated finish ', eta)
 
 
 class LiveProgress:

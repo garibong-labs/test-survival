@@ -63,7 +63,7 @@ def test_records_keyed_before_the_operational_hash_policy_are_reused(tmp_path, m
     legacy_runner['docker'].pop('m2_volume')
     source = hashlib.sha256(b'class T {}').hexdigest()
     build_key = canonical_hash({'sha': 'anchor', 'runner': legacy_runner, 'module': '.'})
-    run_key = canonical_hash({'methods': [('one', source)], 'project': config['project'], 'survival': {k:v for k,v in config['survival'].items() if k != 'execution'},
+    run_key = canonical_hash({'methods': [('one', source)], 'project': config['project'], 'survival': {k:v for k,v in config['survival'].items() if k not in ('execution', 'selection')},
                               'runner': config['runner'], 'repeats': 1})
     coverage_key = canonical_hash({'method': method, 'source': source, 'project': config['project'], 'runner': config['runner'],
                                    'environment_errors': config['survival']['environment_errors']})

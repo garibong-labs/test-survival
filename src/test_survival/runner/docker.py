@@ -87,7 +87,12 @@ class DockerRunner:
     def session(self, stage):
         """Share the original runner's network and memory boundary across workers."""
         command = self.command(['sleep', 'infinity'], self.exp)
-        command.insert(command.index('run') + 1, '--detach')
+        # PID 1 ignores sleep's default SIGTERM disposition. An init process
+        # forwards it and reaps children, avoiding the stop grace-period wait.
+        options = ['--detach']
+        if not self.config['runner']['docker']['compose_files']:
+            options.append('--init')  # Compose owns its service's init setting.
+        command[command.index('run') + 1:command.index('run') + 1] = options
         with launch(self.exp, command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as child:
             output, error = child.communicate()
         if child.returncode:

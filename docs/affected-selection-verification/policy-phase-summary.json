@@ -1,0 +1,30 @@
+{
+  "all": {
+    "policy-pools": 399.521267,
+    "policy-survive": 357.465437,
+    "policy-cover": 0.048807,
+    "policy-report": 0.009599,
+    "physical_methods": 231,
+    "phase_totals": {
+      "production_build_seconds": 40.126,
+      "test_compile_seconds": 47.171,
+      "test_jvm_seconds": 186.195,
+      "other_seconds": 83.78904400634765
+    },
+    "all_intervals_reconcile": true
+  },
+  "affected": {
+    "policy-pools": 386.886331,
+    "policy-survive": 413.158035,
+    "policy-cover": 0.155307,
+    "policy-report": 0.004033,
+    "physical_methods": 182,
+    "phase_totals": {
+      "production_build_seconds": 40.025,
+      "test_compile_seconds": 16.386,
+      "test_jvm_seconds": 187.408,
+      "other_seconds": 169.2384643611908
+    },
+    "all_intervals_reconcile": true
+  }
+}

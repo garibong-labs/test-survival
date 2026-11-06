@@ -36,13 +36,21 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
     def execute(command, cwd, log, timeout):
         calls.append(command); log.parent.mkdir(parents=True,exist_ok=True); log.write_text('')
         failed = False
-        if command[0] == 'javac' and command[-1].startswith('@'):
-            sources = [Path(line.strip('"')) for line in Path(command[-1][1:]).read_text().splitlines()]
+        if command[0] == 'javac':
+            classes = Path(command[command.index('-d')+1])
+            for name in ('PerTestCoverage','SourceInventory','DependencySources','SnapshotCompiler'):
+                (classes/(name+'.class')).write_bytes(b'fixture helper')
+        elif 'SnapshotCompiler' in command or any(a.endswith('SnapshotCompiler.java') for a in command):
+            import base64
+            n = next(i for i,a in enumerate(command) if a == 'SnapshotCompiler' or a.endswith('SnapshotCompiler.java'))
+            sources = [Path(line) for line in Path(command[n+1]).read_text().splitlines()]
             assert all('???' not in p.read_text() for p in sources)
             failed = scenario == 'compile-failure' and any(p.name == 'Bad.java' for p in sources)
             log.write_text('Bad compile' if failed else '')
-        elif 'SourceInventory.java' in ' '.join(command):
-            source = Path(command[next(i for i, a in enumerate(command) if str(a).endswith('SourceInventory.java'))+1])
+            errors = [(str(p), 'Bad compile') for p in sources if failed and p.name == 'Bad.java']
+            Path(command[n+2]).write_text('\n'.join('\t'.join(base64.b64encode(v.encode()).decode() for v in pair) for pair in errors))
+        elif 'SourceInventory' in command or 'SourceInventory.java' in ' '.join(command):
+            source = Path(command[next(i for i, a in enumerate(command) if a == 'SourceInventory' or str(a).endswith('SourceInventory.java'))+1])
             assert not (source/'Rejected.java').exists()
             log.write_text('\n'.join(f'C\t{p.stem}\tclass\ttrue\t{p.stem}\t{p}\n'+
                                       (f'M\t{p.stem}\tworks\tplain' if p.stem != 'Helper' else '') for p in source.glob('*.java')))
@@ -77,7 +85,10 @@ def test_batch_worker_and_per_file_fallbacks(tmp_path, scenario):
     policy_coverage.run(w,job)
     result=read_json(tmp_path/'result.json')
     assert len([c for c in calls if 'PerTestCoverage' in c]) == 1
-    assert len([c for c in calls if c[-1].endswith('whole-snapshot.args')]) == 1
+    assert len([c for c in calls if c[0] == 'java' and ('SnapshotCompiler' in c or any(a.endswith('SnapshotCompiler.java') for a in c))]) == (2 if scenario == 'compile-failure' else 1)
+    assert len([c for c in calls if c[0] == 'javac']) == 1
+    assert not any((tmp_path/'work/job/helper'/(name+'.class')).exists()
+                   for name in ('SourceInventory','DependencySources','SnapshotCompiler'))
     assert original == {p:p.read_bytes() for p in root.iterdir()}
     if scenario in ('jvm-failure','timeout'):
         assert result['coverage_status']=='missing' and len(fallback_calls)==2
@@ -716,3 +727,70 @@ def test_rewrite_carries_a_kept_disagreement_into_the_reason(baseline,monkeypatc
     runs.run_index(2,{'shared'},alive={key(a),key(n)},dead_at={},label='regenerate',evaluated={key(a)})  # n enters; a is kept
     record=read_json(path)
     assert record['coverage_status']=='complete' and 'disagreed' in record['coverage_reason']
+
+
+@pytest.mark.parametrize('selection', ['all','affected'])
+@pytest.mark.parametrize('missing_second', [False,True])
+def test_policy_coverage_distinguishes_colliding_snapshot_methods(baseline, selection, missing_second):
+    from test_survival.policy import cover
+    from test_survival.policy.affected import logical_path
+    exp,config,root=baseline
+    config['policies']['regenerate_developer']=False
+    b=Baseline(exp,config);b.groups.append('llm')
+    b.execution_config['survival']['selection']=selection
+    tests=[dict(test_test('same'),execution_hash=digest) for digest in ('snapshot-a','snapshot-b')]
+    change=dict(index=1,sha='sha',date='date',subject='change',scope_executable=2,**{'scope_dev-scope_covered':1})
+    write_csv(root/'results/changed-lines.csv',[change],list(change))
+    write_json(root/'results/changes/1.json',dict(post_image={'src/main/java/A.java':[1,2]}))
+    observations=[dict(t,state='pass',lines=[['src/main/java/A.java',n]],selection_action='carried' if n==2 else 'executed')
+                  for n,t in enumerate(tests,1) if not (missing_second and n==2)]
+    for row in observations:
+        write_json(exp/f'results/policy/runs/{execution_id(row)}/1.json',dict(methods=[row]))
+    for policy in b.options['set']:
+        name=policy['name'];out=exp/'results/policy'/name
+        write_json(out/'alive.json',{'1':{'dev-scope':[], 'llm':tests}})
+        write_json(out/'segments.json',{'dev-scope':[{'start':0}], 'llm':[{'start':0},{'start':1,'segment':2}]})
+        write_json(logical_path(b,name,'llm',2,1),dict(methods=list(reversed(observations))),compress=True)
+    cover.run(b,None)
+    for policy in b.options['set']:
+        out=exp/'results/policy'/policy['name'];row=read_csv(out/'coverage-commits.csv')[0]
+        assert row['llm_covered']==('' if missing_second else '2')
+        assert row['llm_percent']==('' if missing_second else '100.0')
+        assert bool(read_csv(out/'coverage-missing.csv')) == missing_second
+
+
+def test_affected_coverage_reads_and_indexes_each_logical_record_once(baseline, monkeypatch):
+    from collections import Counter
+    from test_survival.policy import cover
+    from test_survival.policy.affected import logical_path
+    exp,config,root=baseline
+    config['policies']['regenerate_developer']=False
+    b=Baseline(exp,config);b.groups.append('llm');b.execution_config['survival']['selection']='affected'
+    tests=[dict(test_test(str(n)),execution_hash='snapshot') for n in range(1000)]
+    change=dict(index=1,sha='sha',date='date',subject='change',scope_executable=100,**{'scope_dev-scope_covered':0})
+    write_csv(root/'results/changed-lines.csv',[change],list(change))
+    write_json(root/'results/changes/1.json',dict(post_image={'src/main/java/A.java':list(range(1,101))}))
+    observations=[dict(t,state='pass',lines=[['src/main/java/A.java',n] for n in range(1,101)]) for t in tests]
+    paths=[]
+    for policy in b.options['set']:
+        name=policy['name'];out=exp/'results/policy'/name
+        write_json(out/'alive.json',{'1':{'dev-scope':[], 'llm':tests}})
+        write_json(out/'segments.json',{'dev-scope':[{'start':0}], 'llm':[{'start':0},{'start':1,'segment':2}]})
+        path=logical_path(b,name,'llm',2,1);paths.append(path)
+        write_json(path,dict(methods=observations),compress=True)
+    reads=Counter();keys=Counter();read=cover.read_json;identify=cover.key
+    def counted(path,*args,**kwargs):
+        reads[path]+=1
+        return read(path,*args,**kwargs)
+    def keyed(row):
+        keys['rows']+=1
+        return identify(row)
+    monkeypatch.setattr(cover,'read_json',counted);monkeypatch.setattr(cover,'key',keyed)
+    cover.run(b,None)
+    assert {path:reads[path] for path in paths}==dict.fromkeys(paths,1)
+    assert keys['rows']==2*len(tests)*len(paths)
+    assert not any('/policy/runs/' in str(path) for path in reads)
+    for policy in b.options['set']:
+        out=exp/'results/policy'/policy['name']
+        assert read_csv(out/'coverage-commits.csv')[0]['llm_covered']=='100'
+        assert not read_csv(out/'coverage-missing.csv')

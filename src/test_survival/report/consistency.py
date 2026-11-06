@@ -36,6 +36,12 @@ def build(exp,config):
     summary=dict(environment_reruns=environment_reruns,environment_rerun_unit='method attempts; derived groups inherit their source observations',status='completed' if not survival['missing_records'] and not coverage['missing'] else 'completed-with-unavailable-measurements',finished=now(),denominators=counts,final_survivors=final,model_rounds=rounds,phase_seconds=timings,final_verification=verification,survival_consistency=survival,coverage_consistency=coverage,pushed=False)
     if config['survival'].get('execution') == 'batch':
         notes.append('Batch execution: scope-only coverage; all/other partitions unavailable; no coverage XML. Flaky and environment reruns are ignored for batch measurements.')
+        from ..selection import counts as selection_counts
+        summary['selection'] = config['survival'].get('selection', 'all')
+        evaluated = {int(r['index']) for r in curves[1:] if r.get('evaluated', 'yes') == 'yes'}
+        summary['selection_totals'] = {g:selection_counts(m for p in raw_paths[g] if int(p.name.split('-',1)[0]) in evaluated
+                                                        for m in read_json(p).get('methods', [])) for g in groups}
+        summary['selection_control'] = {g:selection_counts(read_json(exp/f'results/control/0-{g}.json', {}).get('methods', [])) for g in groups}
         summary.update(execution='batch', coverage_scope='scope', ignored_settings=['survival.flaky_rerun','survival.environment_errors'])
     summary.update(dev_unmapped_excluded=excluded,notes=notes)
     if imported:

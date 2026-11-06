@@ -1,0 +1,398 @@
+{
+  "all": {
+    "reset": [
+      {
+        "index": 2,
+        "group": "dev",
+        "executed": 30,
+        "carried": 0
+      },
+      {
+        "index": 4,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 5,
+        "group": "dev",
+        "executed": 10,
+        "carried": 0
+      },
+      {
+        "index": 6,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 8,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 9,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 10,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 11,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 12,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 13,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 14,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 15,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 16,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 18,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 19,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 20,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      }
+    ],
+    "fill": [
+      {
+        "index": 2,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 4,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 5,
+        "group": "dev",
+        "executed": 10,
+        "carried": 0
+      },
+      {
+        "index": 6,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 8,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 9,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 10,
+        "group": "dev",
+        "executed": 24,
+        "carried": 0
+      },
+      {
+        "index": 11,
+        "group": "dev",
+        "executed": 18,
+        "carried": 0
+      },
+      {
+        "index": 12,
+        "group": "dev",
+        "executed": 18,
+        "carried": 0
+      },
+      {
+        "index": 13,
+        "group": "dev",
+        "executed": 18,
+        "carried": 0
+      },
+      {
+        "index": 14,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 15,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 16,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 18,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 19,
+        "group": "dev",
+        "executed": 13,
+        "carried": 0
+      },
+      {
+        "index": 20,
+        "group": "dev",
+        "executed": 13,
+        "carried": 0
+      }
+    ]
+  },
+  "affected": {
+    "reset": [
+      {
+        "index": 2,
+        "group": "dev",
+        "executed": 25,
+        "carried": 5
+      },
+      {
+        "index": 4,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 5,
+        "group": "dev",
+        "executed": 7,
+        "carried": 3
+      },
+      {
+        "index": 6,
+        "group": "dev",
+        "executed": 1,
+        "carried": 8
+      },
+      {
+        "index": 8,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 9,
+        "group": "dev",
+        "executed": 6,
+        "carried": 3
+      },
+      {
+        "index": 10,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 11,
+        "group": "dev",
+        "executed": 1,
+        "carried": 2
+      },
+      {
+        "index": 12,
+        "group": "dev",
+        "executed": 0,
+        "carried": 3
+      },
+      {
+        "index": 13,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 14,
+        "group": "dev",
+        "executed": 0,
+        "carried": 3
+      },
+      {
+        "index": 15,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 16,
+        "group": "dev",
+        "executed": 0,
+        "carried": 3
+      },
+      {
+        "index": 18,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 19,
+        "group": "dev",
+        "executed": 3,
+        "carried": 0
+      },
+      {
+        "index": 20,
+        "group": "dev",
+        "executed": 0,
+        "carried": 3
+      }
+    ],
+    "fill": [
+      {
+        "index": 2,
+        "group": "dev",
+        "executed": 10,
+        "carried": 5
+      },
+      {
+        "index": 4,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 5,
+        "group": "dev",
+        "executed": 7,
+        "carried": 3
+      },
+      {
+        "index": 6,
+        "group": "dev",
+        "executed": 1,
+        "carried": 8
+      },
+      {
+        "index": 8,
+        "group": "dev",
+        "executed": 9,
+        "carried": 0
+      },
+      {
+        "index": 9,
+        "group": "dev",
+        "executed": 6,
+        "carried": 3
+      },
+      {
+        "index": 10,
+        "group": "dev",
+        "executed": 24,
+        "carried": 0
+      },
+      {
+        "index": 11,
+        "group": "dev",
+        "executed": 16,
+        "carried": 2
+      },
+      {
+        "index": 12,
+        "group": "dev",
+        "executed": 7,
+        "carried": 11
+      },
+      {
+        "index": 13,
+        "group": "dev",
+        "executed": 18,
+        "carried": 0
+      },
+      {
+        "index": 14,
+        "group": "dev",
+        "executed": 7,
+        "carried": 8
+      },
+      {
+        "index": 15,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 16,
+        "group": "dev",
+        "executed": 7,
+        "carried": 8
+      },
+      {
+        "index": 18,
+        "group": "dev",
+        "executed": 15,
+        "carried": 0
+      },
+      {
+        "index": 19,
+        "group": "dev",
+        "executed": 13,
+        "carried": 0
+      },
+      {
+        "index": 20,
+        "group": "dev",
+        "executed": 7,
+        "carried": 6
+      }
+    ]
+  }
+}

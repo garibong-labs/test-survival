@@ -1,0 +1,851 @@
+{
+  "differences": [],
+  "summary": {
+    "all": {
+      "timing": {
+        "mode": "all",
+        "policy": false,
+        "tool_head": "6adc038248391f091c2f97657562e121aab113b4",
+        "steps": [
+          {
+            "stage": "prepare-scope",
+            "seconds": 4487.144,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/all-prepare-scope.log",
+            "tool_head": "9f190c7896c667a184c25a131dceff40c3ec6209"
+          },
+          {
+            "stage": "import",
+            "seconds": 0.235,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/all-import.log",
+            "tool_head": "9f190c7896c667a184c25a131dceff40c3ec6209"
+          },
+          {
+            "stage": "screen",
+            "seconds": 47.468,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/all-screen.log",
+            "tool_head": "6adc038248391f091c2f97657562e121aab113b4"
+          },
+          {
+            "stage": "control",
+            "seconds": 58.82,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/all-control.log",
+            "tool_head": "6adc038248391f091c2f97657562e121aab113b4"
+          },
+          {
+            "stage": "survive",
+            "seconds": 2316.236,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/all-survive.log",
+            "tool_head": "6adc038248391f091c2f97657562e121aab113b4"
+          },
+          {
+            "stage": "cover",
+            "seconds": 4.399,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/all-cover.log",
+            "tool_head": "6adc038248391f091c2f97657562e121aab113b4"
+          },
+          {
+            "stage": "report",
+            "seconds": 2.391,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/all-report.log",
+            "tool_head": "6adc038248391f091c2f97657562e121aab113b4"
+          }
+        ],
+        "seconds": 6916.712
+      },
+      "memory": {
+        "peak_rss_bytes": 501231616,
+        "heap_pool_peak_sum_bytes": 148446184,
+        "nonheap_pool_peak_sum_bytes": 144101360
+      },
+      "final": {
+        "environment_reruns": {
+          "dev-scope": 0,
+          "ouedraogo": 0
+        },
+        "environment_rerun_unit": "method attempts; derived groups inherit their source observations",
+        "status": "completed-with-unavailable-measurements",
+        "finished": "2026-11-05T19:17:49.330864+00:00",
+        "denominators": {
+          "dev-scope": 353,
+          "ouedraogo": 75
+        },
+        "final_survivors": {
+          "dev-scope": 120,
+          "ouedraogo": 74
+        },
+        "model_rounds": {
+          "ouedraogo": {
+            "source": "imported",
+            "source_path": "/private/tmp/affected-selection-dns-exact/generated-input/generated/ouedraogo",
+            "config_hash": "bf740922b0df671d316fdeb6f55a68b3fea447a11cc0cf68ca47ca10e9d8d78d",
+            "rounds": [
+              {
+                "round": 1,
+                "archived_round": 1,
+                "archived_retry": 0,
+                "directory": "round1",
+                "funnel": {
+                  "stable_runs": 3,
+                  "stable_passed": 42,
+                  "group": "ouedraogo",
+                  "round": "round1",
+                  "files": 15,
+                  "compiled": 2,
+                  "methods": 300,
+                  "stable_3_of_3": 42,
+                  "duplicates": 0,
+                  "kept_this_round": 42,
+                  "total_kept": 42,
+                  "developer_denominator": 1250,
+                  "ratio_to_dev": 0.0336,
+                  "per_prompt": {
+                    "ZSL": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 53,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    },
+                    "FSL": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 42,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    },
+                    "CoT": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 71,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    },
+                    "ToT": {
+                      "files": 3,
+                      "compiled": 1,
+                      "methods": 57,
+                      "stable": 17,
+                      "duplicates": 0,
+                      "kept": 17
+                    },
+                    "GToT": {
+                      "files": 3,
+                      "compiled": 1,
+                      "methods": 77,
+                      "stable": 25,
+                      "duplicates": 0,
+                      "kept": 25
+                    }
+                  },
+                  "dev_unmapped_excluded": 133,
+                  "notes": [
+                    "133 unmapped baseline cases excluded from all Dev denominators (dev.unmapped: exclude); see dev/dev-unmapped-excluded.csv."
+                  ]
+                },
+                "source": "imported"
+              },
+              {
+                "round": 2,
+                "archived_round": 2,
+                "archived_retry": 0,
+                "directory": "round2",
+                "funnel": {
+                  "stable_runs": 3,
+                  "stable_passed": 35,
+                  "group": "ouedraogo",
+                  "round": "round2",
+                  "files": 15,
+                  "compiled": 4,
+                  "methods": 266,
+                  "stable_3_of_3": 35,
+                  "duplicates": 2,
+                  "kept_this_round": 33,
+                  "total_kept": 75,
+                  "developer_denominator": 1250,
+                  "ratio_to_dev": 0.06,
+                  "per_prompt": {
+                    "ZSL": {
+                      "files": 3,
+                      "compiled": 1,
+                      "methods": 41,
+                      "stable": 12,
+                      "duplicates": 1,
+                      "kept": 11
+                    },
+                    "FSL": {
+                      "files": 3,
+                      "compiled": 2,
+                      "methods": 34,
+                      "stable": 21,
+                      "duplicates": 0,
+                      "kept": 21
+                    },
+                    "CoT": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 61,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    },
+                    "ToT": {
+                      "files": 3,
+                      "compiled": 1,
+                      "methods": 65,
+                      "stable": 2,
+                      "duplicates": 1,
+                      "kept": 1
+                    },
+                    "GToT": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 65,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    }
+                  },
+                  "dev_unmapped_excluded": 133,
+                  "notes": [
+                    "133 unmapped baseline cases excluded from all Dev denominators (dev.unmapped: exclude); see dev/dev-unmapped-excluded.csv."
+                  ]
+                },
+                "source": "imported"
+              }
+            ],
+            "stopped": "imported"
+          }
+        },
+        "phase_seconds": {
+          "prepare": 523.276,
+          "scope": 3940.648,
+          "generate": 0.0,
+          "screen": 47.312,
+          "control": 58.351,
+          "survive": 2314.431,
+          "cover": 3.959
+        },
+        "final_verification": {
+          "nonincreasing": true,
+          "raw_count_matches": true,
+          "missing_survival_records": 0,
+          "missing_coverage_records": 6
+        },
+        "survival_consistency": {
+          "nonincreasing": true,
+          "index_zero_equals_denominators": true,
+          "raw_records": 114,
+          "expected_raw_records": 114,
+          "raw_count_matches": true,
+          "missing_records": [],
+          "build_fail_indices": [
+            23,
+            44,
+            45
+          ],
+          "measured_raw_records": 114,
+          "derived_raw_records": 0,
+          "expected_measured_raw_records": 114,
+          "expected_derived_raw_records": 0,
+          "skipped_indices": [
+            3,
+            14,
+            21,
+            24,
+            33,
+            40,
+            41,
+            43,
+            46,
+            60
+          ]
+        },
+        "coverage_consistency": {
+          "coverage_indices": 46,
+          "production_changes": 40,
+          "identical_executable_line_sets": [
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            22,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            36,
+            37,
+            39,
+            42,
+            47,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58
+          ],
+          "missing": [
+            {
+              "index": 23,
+              "group": "dev-scope"
+            },
+            {
+              "index": 23,
+              "group": "ouedraogo"
+            },
+            {
+              "index": 44,
+              "group": "dev-scope"
+            },
+            {
+              "index": 44,
+              "group": "ouedraogo"
+            },
+            {
+              "index": 45,
+              "group": "dev-scope"
+            },
+            {
+              "index": 45,
+              "group": "ouedraogo"
+            }
+          ],
+          "zero_executable_change_commits": 28,
+          "unavailable_commits": 3,
+          "totals": {
+            "all": {
+              "executable": null,
+              "dev-scope": null,
+              "ouedraogo": null
+            },
+            "scope": {
+              "executable": 459,
+              "dev-scope": 196,
+              "ouedraogo": 158,
+              "methods_lost_in_listed_commits": {
+                "dev-scope": 5,
+                "ouedraogo": 1
+              }
+            },
+            "other": {
+              "executable": null,
+              "dev-scope": null,
+              "ouedraogo": null
+            }
+          },
+          "baseline": {
+            "src/main/java/org/xbill/DNS/Message.java": {
+              "executable": 268,
+              "dev-scope": 225,
+              "ouedraogo": 141
+            },
+            "src/main/java/org/xbill/DNS/TSIG.java": {
+              "executable": 329,
+              "dev-scope": 242,
+              "ouedraogo": 0
+            },
+            "src/main/java/org/xbill/DNS/Zone.java": {
+              "executable": 266,
+              "dev-scope": 115,
+              "ouedraogo": 202
+            }
+          }
+        },
+        "pushed": false,
+        "selection": "all",
+        "selection_totals": {
+          "dev-scope": {
+            "executed": 6583,
+            "carried": 0
+          },
+          "ouedraogo": {
+            "executed": 3491,
+            "carried": 0
+          }
+        },
+        "selection_control": {
+          "dev-scope": {
+            "executed": 353,
+            "carried": 0
+          },
+          "ouedraogo": {
+            "executed": 75,
+            "carried": 0
+          }
+        },
+        "execution": "batch",
+        "coverage_scope": "scope",
+        "ignored_settings": [
+          "survival.flaky_rerun",
+          "survival.environment_errors"
+        ],
+        "dev_unmapped_excluded": 133,
+        "notes": [
+          "133 unmapped baseline cases excluded from all Dev denominators (dev.unmapped: exclude); see dev/dev-unmapped-excluded.csv.",
+          "Batch execution: scope-only coverage; all/other partitions unavailable; no coverage XML. Flaky and environment reruns are ignored for batch measurements."
+        ]
+      }
+    },
+    "affected": {
+      "timing": {
+        "mode": "affected",
+        "policy": false,
+        "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3",
+        "steps": [
+          {
+            "stage": "prepare-scope",
+            "seconds": 488.775,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/affected-prepare-scope.log",
+            "tool_head": "9f190c7896c667a184c25a131dceff40c3ec6209"
+          },
+          {
+            "stage": "import",
+            "seconds": 0.272,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/affected-import.log",
+            "tool_head": "6adc038248391f091c2f97657562e121aab113b4"
+          },
+          {
+            "stage": "screen",
+            "seconds": 43.549,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/affected-screen.log",
+            "tool_head": "6adc038248391f091c2f97657562e121aab113b4"
+          },
+          {
+            "stage": "control",
+            "seconds": 63.574,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/affected-control.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
+          },
+          {
+            "stage": "survive",
+            "seconds": 1372.799,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/affected-survive.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
+          },
+          {
+            "stage": "cover",
+            "seconds": 4.699,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/affected-cover.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
+          },
+          {
+            "stage": "report",
+            "seconds": 2.292,
+            "exit_code": 0,
+            "log": "/tmp/affected-selection-dns-exact/affected-report.log",
+            "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
+          }
+        ],
+        "resumed_from": "control",
+        "seconds": 1975.977
+      },
+      "memory": {
+        "peak_rss_bytes": 524369920,
+        "heap_pool_peak_sum_bytes": 155742568,
+        "nonheap_pool_peak_sum_bytes": 156376000
+      },
+      "final": {
+        "environment_reruns": {
+          "dev-scope": 0,
+          "ouedraogo": 0
+        },
+        "environment_rerun_unit": "method attempts; derived groups inherit their source observations",
+        "status": "completed-with-unavailable-measurements",
+        "finished": "2026-11-05T20:38:55.469806+00:00",
+        "denominators": {
+          "dev-scope": 353,
+          "ouedraogo": 75
+        },
+        "final_survivors": {
+          "dev-scope": 120,
+          "ouedraogo": 74
+        },
+        "model_rounds": {
+          "ouedraogo": {
+            "source": "imported",
+            "source_path": "/private/tmp/affected-selection-dns-exact/generated-input/generated/ouedraogo",
+            "config_hash": "bf740922b0df671d316fdeb6f55a68b3fea447a11cc0cf68ca47ca10e9d8d78d",
+            "rounds": [
+              {
+                "round": 1,
+                "archived_round": 1,
+                "archived_retry": 0,
+                "directory": "round1",
+                "funnel": {
+                  "stable_runs": 3,
+                  "stable_passed": 42,
+                  "group": "ouedraogo",
+                  "round": "round1",
+                  "files": 15,
+                  "compiled": 2,
+                  "methods": 300,
+                  "stable_3_of_3": 42,
+                  "duplicates": 0,
+                  "kept_this_round": 42,
+                  "total_kept": 42,
+                  "developer_denominator": 1250,
+                  "ratio_to_dev": 0.0336,
+                  "per_prompt": {
+                    "ZSL": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 53,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    },
+                    "FSL": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 42,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    },
+                    "CoT": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 71,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    },
+                    "ToT": {
+                      "files": 3,
+                      "compiled": 1,
+                      "methods": 57,
+                      "stable": 17,
+                      "duplicates": 0,
+                      "kept": 17
+                    },
+                    "GToT": {
+                      "files": 3,
+                      "compiled": 1,
+                      "methods": 77,
+                      "stable": 25,
+                      "duplicates": 0,
+                      "kept": 25
+                    }
+                  },
+                  "dev_unmapped_excluded": 133,
+                  "notes": [
+                    "133 unmapped baseline cases excluded from all Dev denominators (dev.unmapped: exclude); see dev/dev-unmapped-excluded.csv."
+                  ]
+                },
+                "source": "imported"
+              },
+              {
+                "round": 2,
+                "archived_round": 2,
+                "archived_retry": 0,
+                "directory": "round2",
+                "funnel": {
+                  "stable_runs": 3,
+                  "stable_passed": 35,
+                  "group": "ouedraogo",
+                  "round": "round2",
+                  "files": 15,
+                  "compiled": 4,
+                  "methods": 266,
+                  "stable_3_of_3": 35,
+                  "duplicates": 2,
+                  "kept_this_round": 33,
+                  "total_kept": 75,
+                  "developer_denominator": 1250,
+                  "ratio_to_dev": 0.06,
+                  "per_prompt": {
+                    "ZSL": {
+                      "files": 3,
+                      "compiled": 1,
+                      "methods": 41,
+                      "stable": 12,
+                      "duplicates": 1,
+                      "kept": 11
+                    },
+                    "FSL": {
+                      "files": 3,
+                      "compiled": 2,
+                      "methods": 34,
+                      "stable": 21,
+                      "duplicates": 0,
+                      "kept": 21
+                    },
+                    "CoT": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 61,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    },
+                    "ToT": {
+                      "files": 3,
+                      "compiled": 1,
+                      "methods": 65,
+                      "stable": 2,
+                      "duplicates": 1,
+                      "kept": 1
+                    },
+                    "GToT": {
+                      "files": 3,
+                      "compiled": 0,
+                      "methods": 65,
+                      "stable": 0,
+                      "duplicates": 0,
+                      "kept": 0
+                    }
+                  },
+                  "dev_unmapped_excluded": 133,
+                  "notes": [
+                    "133 unmapped baseline cases excluded from all Dev denominators (dev.unmapped: exclude); see dev/dev-unmapped-excluded.csv."
+                  ]
+                },
+                "source": "imported"
+              }
+            ],
+            "stopped": "imported"
+          }
+        },
+        "phase_seconds": {
+          "prepare": 469.807,
+          "scope": 18.881,
+          "generate": 0.0,
+          "screen": 43.407,
+          "control": 63.146,
+          "survive": 1366.995,
+          "cover": 4.156
+        },
+        "final_verification": {
+          "nonincreasing": true,
+          "raw_count_matches": true,
+          "missing_survival_records": 0,
+          "missing_coverage_records": 6
+        },
+        "survival_consistency": {
+          "nonincreasing": true,
+          "index_zero_equals_denominators": true,
+          "raw_records": 114,
+          "expected_raw_records": 114,
+          "raw_count_matches": true,
+          "missing_records": [],
+          "build_fail_indices": [
+            23,
+            44,
+            45
+          ],
+          "measured_raw_records": 114,
+          "derived_raw_records": 0,
+          "expected_measured_raw_records": 114,
+          "expected_derived_raw_records": 0,
+          "skipped_indices": [
+            3,
+            14,
+            21,
+            24,
+            33,
+            40,
+            41,
+            43,
+            46,
+            60
+          ]
+        },
+        "coverage_consistency": {
+          "coverage_indices": 46,
+          "production_changes": 40,
+          "identical_executable_line_sets": [
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            22,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            32,
+            36,
+            37,
+            39,
+            42,
+            47,
+            49,
+            50,
+            51,
+            52,
+            53,
+            54,
+            55,
+            56,
+            57,
+            58
+          ],
+          "missing": [
+            {
+              "index": 23,
+              "group": "dev-scope"
+            },
+            {
+              "index": 23,
+              "group": "ouedraogo"
+            },
+            {
+              "index": 44,
+              "group": "dev-scope"
+            },
+            {
+              "index": 44,
+              "group": "ouedraogo"
+            },
+            {
+              "index": 45,
+              "group": "dev-scope"
+            },
+            {
+              "index": 45,
+              "group": "ouedraogo"
+            }
+          ],
+          "zero_executable_change_commits": 28,
+          "unavailable_commits": 3,
+          "totals": {
+            "all": {
+              "executable": null,
+              "dev-scope": null,
+              "ouedraogo": null
+            },
+            "scope": {
+              "executable": 459,
+              "dev-scope": 196,
+              "ouedraogo": 158,
+              "methods_lost_in_listed_commits": {
+                "dev-scope": 5,
+                "ouedraogo": 1
+              }
+            },
+            "other": {
+              "executable": null,
+              "dev-scope": null,
+              "ouedraogo": null
+            }
+          },
+          "baseline": {
+            "src/main/java/org/xbill/DNS/Message.java": {
+              "executable": 268,
+              "dev-scope": 225,
+              "ouedraogo": 141
+            },
+            "src/main/java/org/xbill/DNS/TSIG.java": {
+              "executable": 329,
+              "dev-scope": 242,
+              "ouedraogo": 0
+            },
+            "src/main/java/org/xbill/DNS/Zone.java": {
+              "executable": 266,
+              "dev-scope": 115,
+              "ouedraogo": 202
+            }
+          }
+        },
+        "pushed": false,
+        "selection": "affected",
+        "selection_totals": {
+          "dev-scope": {
+            "executed": 3516,
+            "carried": 3067
+          },
+          "ouedraogo": {
+            "executed": 1058,
+            "carried": 2433
+          }
+        },
+        "selection_control": {
+          "dev-scope": {
+            "executed": 353,
+            "carried": 0
+          },
+          "ouedraogo": {
+            "executed": 75,
+            "carried": 0
+          }
+        },
+        "execution": "batch",
+        "coverage_scope": "scope",
+        "ignored_settings": [
+          "survival.flaky_rerun",
+          "survival.environment_errors"
+        ],
+        "dev_unmapped_excluded": 133,
+        "notes": [
+          "133 unmapped baseline cases excluded from all Dev denominators (dev.unmapped: exclude); see dev/dev-unmapped-excluded.csv.",
+          "Batch execution: scope-only coverage; all/other partitions unavailable; no coverage XML. Flaky and environment reruns are ignored for batch measurements."
+        ]
+      }
+    }
+  },
+  "source_files_unchanged": true,
+  "additional_method_line_diagnostic": {
+    "cells": 27,
+    "group_line_unions_equal": true,
+    "cause": "Selected execution changes attribution of Message static initialization: emptyRecordArray at line 59 (later 60) and Lombok @Slf4j logger at line 26. Carried rows retain their last execution attribution.",
+    "details": "dns-method-line-differences.csv"
+  }
+}

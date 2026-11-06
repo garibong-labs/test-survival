@@ -13,7 +13,7 @@ import yaml
 import footprint_fixture
 
 
-def main(root):
+def main(root, selection='all'):
     root=root.resolve()
     footprint_fixture.ROOT=root;footprint_fixture.TARGET=root/'target';footprint_fixture.create()
     repo=root/'target';baseline=repo/'experiments/baseline';policy=repo/'experiments/policy'
@@ -21,7 +21,7 @@ def main(root):
         cfg=yaml.safe_load((exp/'experiment.yaml').read_text())
         cfg['project']['repo']=str(repo)
         cfg['dev']['stable_runs']=cfg['screen']['stable_runs']=1
-        cfg['survival']={'execution':'batch'}
+        cfg['survival']={'execution':'batch','selection':selection}
         cfg['runner']['docker']['m2_volume']='footprint-e2e-m2'
         if exp==policy:
             cfg['policies'].update(regenerate_developer=False,threshold=.25,set=[
@@ -87,10 +87,19 @@ def main(root):
     prior={p:p.read_bytes() for p in (policy/'results/policy/pools').rglob('pool.json')}
     call('policy-resume',['policy','run',policy])
     assert all(p.read_bytes()==data for p,data in prior.items())
+    if selection=='affected':
+        from test_survival.io import logical_glob, resolve_path
+        decision=next(p for folder in (policy/'results/policy/release-reset/decisions').glob('*/*')
+                      for p in logical_glob(folder,'*.json'))
+        saved=read_json(decision);resolve_path(decision).unlink()
+        call('policy-repair',['policy','run',policy])
+        assert read_json(decision)==saved
+        assert all(p.read_bytes()==data for p,data in prior.items())
     (root/'verification.json').write_text(json.dumps(dict(passed=True,pool_methods=len(pool),funnel=funnel,timings=timings),indent=2)+'\n')
     print(root/'verification.json')
 
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--root',type=Path,required=True)
-    main(parser.parse_args().root)
+    parser.add_argument('--selection',choices=['all','affected'],default='all')
+    args=parser.parse_args();main(args.root,args.selection)

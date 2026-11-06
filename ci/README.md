@@ -22,6 +22,9 @@ diagnostics/class bytes, and check RSS/file-descriptor bounds under a 180-second
 The policy fixtures check per-test JaCoCo resets, parameterized Vintage tests,
 multiple source versions in one JVM, and isolation of container teardown probes
 in both Jupiter and Vintage.
+Affected-selection fixtures check iterative removal of erroneous sources,
+transitive helper dependencies, runtime class hits outside the coverage scope,
+concurrent JVM chunks, and peak JVM memory evidence.
 They do not run ta4j, Maven project builds, or any model calls.
 
 Missing image/library variables fail when `SURVIVAL_REQUIRE_JAVA_TESTS=1`; an absent
@@ -45,7 +48,7 @@ python ci/java_fixture.py libraries /tmp/survival-java-libs
 SURVIVAL_JAVA_TEST_IMAGE=survival-java-ci:fixture \
 SURVIVAL_JAVA_TEST_LIBS=/tmp/survival-java-libs \
 SURVIVAL_REQUIRE_JAVA_TESTS=1 \
-python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py --junitxml=java-results.xml
+python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py tests/test_affected_selection.py --junitxml=java-results.xml
 python ci/java_fixture.py report java-results.xml
 ```
 

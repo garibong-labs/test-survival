@@ -1,0 +1,23 @@
+{
+  "mode": "all",
+  "command": [
+    "mvn",
+    "-o",
+    "-q",
+    "test"
+  ],
+  "seconds": 21.283812999958172,
+  "compile_seconds": 1.587263834,
+  "test_seconds": 18.459932091,
+  "methods": 169,
+  "invocations": 303,
+  "snapshots": 32,
+  "surefire_pid": "539",
+  "agent": "-Xmx1g -javaagent:/experiment/work/libs/org.jacoco.agent-0.8.14-runtime.jar=output=none,dumponexit=false,includes=com.networknt.schema.*",
+  "sources_sha256": {
+    "FrozenRunner.java": "b259f6736bc3d9131ca8e93e1df72a8c544adadf4d627bf3d5e514a243bb6c63",
+    "SnapshotCompileMojo.java": "7aebede08f082977718877a8484070c514b31301ad64da3637faadf2b73c28f5",
+    "FrozenSnapshotTest.java": "9b4d2081c8814ef8de9869065c7afdaa25a03d087fb0cf81dbcc71e2a2467792"
+  },
+  "tool_head": "05618bd318d7879eff5a53a6298e8f4d1b5f29e3"
+}

@@ -63,6 +63,20 @@ def test_prepare_counts_completed_builds_not_highest_index_and_excludes_cache(tm
     assert 'estimated finish unknown' in describe(tmp_path, 'prepare', config, at=AT)
 
 
+def test_finished_prepare_reads_old_builds_without_rehashing_or_checkouts(tmp_path, config):
+    prepare_plan(tmp_path, config, count=1)
+    for index,sha in [(0,'anchor'),(1,'sha1')]:
+        write_json(tmp_path/f'results/builds/{index}.json',
+                   dict(index=index,sha=sha,build='ok',input_sha256='historical'))
+    write_json(tmp_path/'state/prepare.json',dict(status='completed'))
+    write_json(tmp_path/'state/report.json',dict(status='completed'))
+    before={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    assert '2/2 builds' in describe(tmp_path,'prepare',config)
+    assert before=={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    write_json(tmp_path/'state/prepare.json',dict(status='running'))
+    assert '0/2 builds' in describe(tmp_path,'prepare',config)
+
+
 def test_generate_counts_call_ledgers_retries_and_early_stop(tmp_path, config):
     state(tmp_path, 'generate', group='o')
     write_json(tmp_path/'population/scope.json', {'classes': [{'class': 'A'}, {'class': 'B'}]})

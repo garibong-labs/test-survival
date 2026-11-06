@@ -96,8 +96,8 @@ composition, coverage and report revisions. Saved plan bytes remain unchanged.
 Enabling regeneration when the saved plan lacks required points or pool entries reports that the
 plan must be rebuilt with `--force`; it does not silently run an incomplete plan.
 
-Policy survival and coverage share one execution pass. Between successive
-regeneration points, commit indices run concurrently with
+Policy survival and coverage share one execution pass. With `selection: all`,
+between successive regeneration points, commit indices run concurrently with
 `runner.workers.survive` workers. The coordinator aggregates those measurements
 in commit order before deciding fill membership at the next transition. Each
 evaluable index submits one worker job containing every method needed across
@@ -121,21 +121,21 @@ exclusions as a pool (scratch subtrees, rejected candidates), read from the
 baseline experiment's records. The worker compiles each source root (snapshot) once,
 with its own sourcepath and class output directory. Different regeneration points
 can therefore contain different versions of the same class without duplicate-class
-errors or access to another snapshot's helpers. If a root batch fails, its files
-fall back to separate compilation with their helpers; the failed whole-root
-attempt is reused rather than repeated for each file. Screening
+errors or access to another snapshot's helpers. If compilation fails, every file
+with a javac error is removed from a scratch copy and the remaining files compile
+together again, until success or no files remain. A method is compile-fail only
+when its own source was removed; healthy reflection-only helpers stay available. Screening
 validation records exclude rejected test files before snapshot inventory or
 compilation, and so do generator scratch subtrees beneath a kept test's source
 root (`temp/`: KTester keeps every repair attempt under `<test_classes>/temp/`,
 hundreds of files per pool, some unparsable). The pool snapshot copies every
 sibling of a kept test, so without this exclusion the whole-root compile fails
-at every index and an unparsable attempt can abort the per-file helper
-inventory. Other unscreened siblings (helpers, providers, package
+at every index and polluted candidates can affect diagnostic removal. Other unscreened siblings (helpers, providers, package
 subdirectories) remain available to javac and `SourceInventory` as before.
 `results/policy/excluded-sources.json` counts kept, rejected and scratch sources
 per pool. Scratch copies leave pool sources and stored execution hashes intact.
 
-All compiled methods execute in one JVM through `PerTestCoverage`, with isolated
+Compiled methods execute in bounded JVM chunks through `PerTestCoverage`, with isolated
 class loaders for distinct snapshots. Each snapshot supplies its classpath and
 filesystem resources. The helper dumps and resets JaCoCo after each test;
 parameterized invocations are unioned by `class#method`. Only scope source-file
@@ -290,3 +290,35 @@ The four local experiment configuration edits for this rollout are recorded in
 external experiments are not part of this repository. The patch records only the
 new options; their survive and cover worker limits remain 4. No experiments were
 run to validate this change.
+
+## Affected execution
+
+The policy configuration accepts `survival.selection: affected` (default `all`).
+After segment 1, each policy/group/segment has its own logical selection history.
+Actual JVM observations are shared by snapshot hash, method, and commit. A test
+can therefore carry from different actual indices in two policies without one
+policy overwriting the other's lines or state. Logical rows live under
+`results/policy/<policy>/decisions/<group>/<segment>/<index>.json.gz`.
+
+Reset entrants and retained fill survivors execute at the regeneration boundary;
+a compatible actual execution already performed at that index can satisfy the
+new segment. A selection carry from an older index cannot. Pool screening is
+not a segment dependency certificate. Carried composition membership
+(`carried_alive`) remains different from skipping execution with selection.
+Segment 1, `none`, and kept developer references consume the read-only baseline;
+they do not retroactively remeasure it with a different selection setting.
+
+Selection uses endpoint changes since each method's last actual execution,
+including intervening untouched and failed-build commits. It carries usable scope
+lines along with state. Missing dependencies, unknown classpath/POM evidence,
+unbounded dependencies, and unusable coverage force measurement. Coverage repair
+preserves consumed verdicts and retains `remeasured_state` when results disagree;
+a disagreeing repair cannot authorize future carrying.
+
+Affected mode serializes indices and runs chunks at the same index concurrently,
+up to `runner.workers.survive`. Its selected compilation inputs are executed test
+files plus non-test helpers; javac can discover referenced test sources. Both
+selection modes use error-file removal and retain each removed file's diagnostics.
+Completed baseline/pool artifacts are never rewritten by selection. Use a fresh
+policy directory for a selection-mode comparison. `selection-counts.json` and
+per-policy `final-summary.json` add execution counts without changing policy tables.
