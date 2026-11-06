@@ -23,6 +23,7 @@ class SourceInventory {
   }
   public static void main(String[] args) throws Exception {
     boolean junit4=args.length>1 && args[1].equals("junit4");
+    boolean buildDiscovery=args.length>2 && args[2].equals("build");
     JavaCompiler compiler=ToolProvider.getSystemJavaCompiler();
     StandardJavaFileManager manager=compiler.getStandardFileManager(null,null,null);
     List<Path> paths;
@@ -43,6 +44,9 @@ class SourceInventory {
           boolean ignored=junit4 && cls.getModifiers().getAnnotations().stream().anyMatch(a->simple(a).equals("Ignore"));
           boolean parameterized=junit4 && cls.getModifiers().getAnnotations().stream().anyMatch(a->simple(a).equals("RunWith") && a.toString().contains("Parameterized.class"));
           row("C",fqn,cls.getKind(),top,display(cls.getModifiers()),unit.getSourceFile().toUri().getPath());
+          row("H",fqn,pkg,cls.getExtendsClause(),cls.getImplementsClause().stream().map(Object::toString).collect(Collectors.joining(";")),
+              unit.getImports().stream().filter(i->!i.isStatic()).map(i->i.getQualifiedIdentifier().toString()).collect(Collectors.joining(";")),
+              cls.getModifiers().getFlags(),cls.getModifiers().getAnnotations());
           for(Tree member:cls.getMembers()) {
             if(member instanceof MethodTree) {
               MethodTree m=(MethodTree)member;
@@ -52,7 +56,7 @@ class SourceInventory {
               String kind=anns.contains("ParameterizedTest")?"parameterized":anns.contains("TestFactory")?"test-factory":(anns.contains("RepeatedTest") || anns.contains("TestTemplate"))?"test-template":anns.contains("Test")?"plain":"";
               if(junit4) {
                 boolean test=m.getModifiers().getAnnotations().stream().anyMatch(a->a.getAnnotationType().toString().equals("org.junit.Test") || (a.getAnnotationType().toString().equals("Test") && unit.getImports().stream().anyMatch(i->i.getQualifiedIdentifier().toString().equals("org.junit.Test") || i.getQualifiedIdentifier().toString().equals("org.junit.*"))));
-                kind=test && !ignored && !anns.contains("Ignore") ? (parameterized?"parameterized":"plain") : "";
+                kind=test && (buildDiscovery || !ignored && !anns.contains("Ignore")) ? (parameterized?"parameterized":"plain") : "";
               }
               String sig=m.getName()+"("+m.getParameters().stream().map(p->p.getType().toString()).collect(Collectors.joining(", "))+")";
               String hash="";
@@ -63,6 +67,8 @@ class SourceInventory {
                 catch(Exception e) { throw new RuntimeException(e); }
               }
               row("M",fqn,m.getName(),kind,eligible,sig,display(m.getModifiers()),unit.getLineMap().getLineNumber(positions.getStartPosition(unit,m)),hash);
+              row("V",fqn,m.getName(),m.getModifiers().getFlags());
+              if(buildDiscovery) row("A",fqn,m.getName(),cls.getModifiers().getAnnotations()+" "+m.getModifiers().getAnnotations());
             } else if(member instanceof ClassTree) scan(member,fqn);
           }
           return null;

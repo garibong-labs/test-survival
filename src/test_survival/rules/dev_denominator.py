@@ -1,6 +1,10 @@
 """Stable developer populations; class-name matching follows the archived rule."""
 
 
+def identity(row):
+    return {k: row[k] for k in ('class', 'method', 'kind', 'declaring_class', 'declaring_file') if row.get(k)}
+
+
 def unmapped_note(count):
     return (f'{count} unmapped baseline cases excluded from all Dev denominators '
             '(dev.unmapped: exclude); see dev/dev-unmapped-excluded.csv.') if count else ''
@@ -19,7 +23,7 @@ def denominator(methods, mode, scope, production_names):
             if not suffix or suffix not in production_names:
                 return True
         return False
-    return [{k:r[k] for k in ('class','method','kind')} for r in methods
+    return [identity(r) for r in methods
             if r['stable']=='yes' and (mode=='project' or targeted(r['class']))]
 
 
@@ -30,7 +34,7 @@ def coverage_scoped(methods, coverage):
     kept,excluded=[],[]
     for row in methods:
         if row['stable']!='yes':continue
-        method={k:row[k] for k in ['class','method','kind']}
+        method=identity(row)
         observation=observations.get((row['class'],row['method']))
         if observation is None:raise ValueError('Missing per-method coverage observation')
         count=int(observation['scope_lines_covered']);status=observation['status']

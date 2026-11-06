@@ -264,10 +264,18 @@ public final class PerTestCoverage implements TestExecutionListener {
             if (parts.length == 1) builder.selectors(selectClass(parts[0]));
             else {
                 Class<?> cls = Class.forName(parts[0], false, Thread.currentThread().getContextClassLoader());
+                // Include inherited package/protected Jupiter methods as well as
+                // public Vintage methods, while respecting overriding methods.
+                Set<String> seen = new HashSet<>();
+                for (Class<?> type = cls; type != null; type = type.getSuperclass())
+                    for (java.lang.reflect.Method m : type.getDeclaredMethods()) {
+                        String signature = m.getName()+Arrays.toString(m.getParameterTypes());
+                        if (!seen.add(signature) || java.lang.reflect.Modifier.isPrivate(m.getModifiers())) continue;
+                        if (m.getName().equals(parts[1])) builder.selectors(selectMethod(cls, m));
+                    }
                 for (java.lang.reflect.Method m : cls.getMethods())
-                    if (m.getName().equals(parts[1])) builder.selectors(selectMethod(cls, m));
-                for (java.lang.reflect.Method m : cls.getDeclaredMethods())
-                    if (!java.lang.reflect.Modifier.isPublic(m.getModifiers()) && m.getName().equals(parts[1])) builder.selectors(selectMethod(cls, m));
+                    if (seen.add(m.getName()+Arrays.toString(m.getParameterTypes())) && m.getName().equals(parts[1]))
+                        builder.selectors(selectMethod(cls, m));
             }
         }
         LauncherFactory.create().execute(builder.build(), listener);

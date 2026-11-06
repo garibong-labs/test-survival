@@ -621,3 +621,14 @@ def test_pool_scheduler_respects_shared_dev_and_generator_slots(tmp_path, monkey
     result = pools.run(b, {'pools':points}, lambda name, action, **kwargs:action())
     assert result == {(p['group'], p['index']):[dict(id=str(p['index']))] for p in points}
     assert dict(peaks) == {'dev_selection':2, 'gen-a':1, 'gen-b':1}
+
+
+def test_new_implicit_candidate_defaults_preserve_policy_input_shape(baseline):
+    from test_survival.config import as_written
+    exp,config,_=baseline
+    b=Baseline(exp,config)
+    written=as_written(b.execution_config)
+    assert b.execution_config['dev']['discovery']=='source'
+    assert b.execution_config['scope']['max_dev_scope']==400
+    assert 'discovery' not in written['dev']
+    assert 'max_dev_scope' not in written['scope']

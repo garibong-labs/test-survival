@@ -60,9 +60,10 @@ def run(w, job):
             dependency_error = str(exc)
     dependency_inputs = {}
     groups = defaultdict(list)
-    for t in job['methods']:
+    for ordinal, t in enumerate(job['methods']):
         root = t.get('source_root', str(Path(t['file']).parent))
-        groups[root, 'suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])].append(t)
+        group = ordinal // 256 if job.get('candidate_suite') else 'suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])
+        groups[root, group].append(t)
     manifest = []; outputs = []; compile_runs = []; snapshots = {}; rejected = []
     for number, tests in enumerate(groups.values()):
         part = work/str(number); part.mkdir()

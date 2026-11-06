@@ -141,8 +141,9 @@ def background(exp, config, until, force, keep_work=False):
 
 
 def status(exp,config, *, display=UTC_DISPLAY):
-    b = Baseline(exp,config)
-    return _status(b.exp, display=display)
+    # Saved policy state remains readable if a historical baseline config moved.
+    # Execution still requires Baseline validation in run/plan.
+    return _status(Path(exp).expanduser().resolve(), display=display)
 
 
 def _status(exp, *, display):
@@ -165,12 +166,11 @@ def _status(exp, *, display):
 
 
 def watch(exp, config, *, display=UTC_DISPLAY):
-    # Validate once: repeatedly scanning all nested pool checkouts is expensive.
-    b = Baseline(exp, config)
+    exp = Path(exp).expanduser().resolve()
     try:
         while True:
-            run = read_json(b.exp/'state/run.json', {})
-            print(_status(b.exp, display=display), flush=True)
+            run = read_json(exp/'state/run.json', {})
+            print(_status(exp, display=display), flush=True)
             if run.get('status') != 'running' or not process_alive(run.get('pid')):
                 break
             time.sleep(5)

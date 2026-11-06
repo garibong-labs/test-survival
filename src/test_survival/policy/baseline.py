@@ -52,6 +52,11 @@ class Baseline:
         if set(self.options['generator_overrides']) - {g['name'] for g in self.config['generators']}:
             raise ConfigError('generator_overrides contains a non-generator group')
         settings = as_written(self.config, include_defaults=True)
+        written = as_written(self.config)
+        # New optional discovery/bound defaults must not invalidate completed
+        # policy pools whose baseline configuration predates these settings.
+        if 'discovery' not in written.get('dev', {}): settings['dev'].pop('discovery', None)
+        if 'max_dev_scope' not in written.get('scope', {}): settings['scope'].pop('max_dev_scope', None)
         settings.pop('policies', None)
         settings['dev'].pop('denominator', None)
         settings['generators'] = [merge(g, self.options['generator_overrides'].get(g['name'], {})) for g in settings['generators']]

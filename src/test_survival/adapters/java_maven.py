@@ -205,13 +205,24 @@ class JavaMavenAdapter:
     def inventory(self, root, log):
         if not Path(root).exists() or not list(Path(root).rglob('*.java')) and Path(root).suffix != '.java':
             return {'classes': {}, 'methods': []}
-        run = self.runner.execute(['java', '-Xmx'+self.config['runner']['jvm']['launcher'], str(self.helpers/'SourceInventory.java'), str(root), self.test_framework()],
+        extra = ['build'] if self.config['dev'].get('discovery', 'source') == 'build' else []
+        run = self.runner.execute(['java', '-Xmx'+self.config['runner']['jvm']['launcher'], str(self.helpers/'SourceInventory.java'), str(root), self.test_framework(), *extra],
                                   self.folder(0), log, self.config['runner']['timeouts']['compile'])
         if run['exit_code']:
             raise RuntimeError('Source inventory failed; see '+str(log))
         classes, methods = {}, []
         for line in Path(log).read_text().splitlines():
             parts = line.split('\t')
+            if parts[0] == 'H':
+                _, cls, package, parent, interfaces, imports, modifiers, annotations = parts
+                classes[cls].update(package=package, extends=parent, interfaces=interfaces, imports=imports,
+                                    modifiers=modifiers, annotations=annotations)
+            if parts[0] == 'V':
+                methods[-1]['modifiers'] = parts[3]
+            if parts[0] == 'A':
+                _, cls, name, annotations = parts
+                if methods and methods[-1]['class'] == cls and methods[-1]['method'] == name:
+                    methods[-1]['annotations'] = annotations
             if parts[0] == 'C':
                 _, cls, kind, top, display, path = parts
                 container_root = self.runner.path(self.folder(0))+'/'
@@ -226,7 +237,8 @@ class JavaMavenAdapter:
         return self.inventory(self.folder(index)/'src/main/java', self.exp / f'results/source-inventory-main-{index}.tsv')
 
     def list_test_methods(self, files):
-        return self.inventory(files, self.exp/'results/source-inventory-test.tsv')
+        from .inherited_tests import expand
+        return expand(self.inventory(files, self.exp/'results/source-inventory-test.tsv'))
 
     def baseline(self):
         folder = self.folder(0)
@@ -238,17 +250,28 @@ class JavaMavenAdapter:
         for data in inventory['test']['classes'].values():
             prefix = self.runner.path(frozen)+'/'
             data['path'] = data['path'].replace(prefix, 'src/test/')
+        for method in inventory['test']['methods']:
+            if method.get('declaring_file'):
+                method['declaring_file'] = method['declaring_file'].replace(self.runner.path(frozen)+'/', 'dev/src-test-t/')
         write_json(self.exp/'results/source-inventory.json', inventory)
         tests = [r for r in inventory['test']['methods'] if r['kind']]
+        if self.config['dev'].get('discovery', 'source') == 'build':
+            from .build_discovery import discover
+            tests = discover(self, tests)
         byclass = collections.defaultdict(list)
         for row in tests:
             byclass[row['class']].append(row)
         observations, unmapped = [], []
-        exclude_unmapped = self.config['dev'].get('unmapped', 'error') == 'exclude'
+        build_discovery = self.config['dev'].get('discovery', 'source') == 'build'
+        exclude_unmapped = build_discovery or self.config['dev'].get('unmapped', 'error') == 'exclude'
         excluded = {}
         for repeat in range(1, self.config['dev']['stable_runs']+1):
             record_path = self.exp / f'results/baseline-run{repeat}.json'
             destination = self.exp / f'results/baseline-reports/run{repeat}'
+            if build_discovery and repeat == 1:
+                if destination.exists(): shutil.rmtree(destination)
+                shutil.copytree(self.exp/'results/dev-build-reports', destination, dirs_exist_ok=True)
+                write_json(record_path, dict(index=repeat, attempts=[read_json(self.exp/'results/dev-build-discovery.json')]))
             if not record_path.exists():
                 self.cache.resolve(folder, 0)
                 reports = folder/'target/surefire-reports'
@@ -265,6 +288,11 @@ class JavaMavenAdapter:
                     shutil.copytree(reports, destination, dirs_exist_ok=True)
                 write_json(record_path, dict(index=repeat, attempts=attempts))
             observed = collections.defaultdict(list)
+            if build_discovery:
+                from .build_discovery import report_methods
+                observed, _, _ = report_methods(destination, [m for m in inventory['test']['methods'] if m['kind']])
+                observations.append(observed)
+                continue
             for path in sorted(destination.glob('TEST-*.xml')):
                 cls = path.name[5:-4]
                 for case in ET.parse(path).getroot().iter('testcase'):
@@ -296,13 +324,16 @@ class JavaMavenAdapter:
             raise RuntimeError('Baseline cases cannot be mapped unambiguously to source methods')
         rows = []
         for method in tests:
-            row = {k: method[k] for k in ('class', 'method', 'kind')}
+            from ..rules.dev_denominator import identity
+            row = identity(method)
             for repeat, observation in enumerate(observations, 1):
                 states = observation.get((row['class'], row['method']), [])
                 row[f'run{repeat}'] = 'pass' if states and set(states)=={'pass'} else ','.join(sorted(set(states))) if states else 'absent'
             row['stable'] = 'yes' if all(row[f'run{i}']=='pass' for i in range(1, len(observations)+1)) else 'no'
             rows.append(row)
-        write_csv(self.exp/'dev/dev-methods-all.csv', rows, ['class','method','kind','stable',*[f'run{i}' for i in range(1, len(observations)+1)]])
+        fields = ['class','method','kind','stable',*[f'run{i}' for i in range(1, len(observations)+1)]]
+        if any(r.get('declaring_file') for r in rows): fields += ['declaring_class','declaring_file']
+        write_csv(self.exp/'dev/dev-methods-all.csv', rows, fields)
         return rows
 
     def provenance(self):
@@ -310,7 +341,7 @@ class JavaMavenAdapter:
         paths.append(Path(__file__).with_name('compiler_session.py'))
         paths.append(Path(__file__).parents[1]/'io.py')
         paths.append(Path(__file__).parents[1]/'selection.py')
-        paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py','dependencies.py','selection_context.py'))
+        paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py','dependencies.py','selection_context.py','context_inputs.py'))
         return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
 
     def worker(self, job):

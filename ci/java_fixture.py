@@ -28,6 +28,8 @@ FIXTURES = {
     'test_policy_coverage_does_not_assign_container_teardown_to_next_test[jupiter]',
     'test_policy_coverage_does_not_assign_container_teardown_to_next_test[vintage]',
     'test_policy_per_test_coverage_one_jvm_with_vintage_and_source_versions',
+    'test_inherited_identity_survives_concrete_execution_and_batched_coverage[junit4]',
+    'test_inherited_identity_survives_concrete_execution_and_batched_coverage[junit5]',
     'test_junit4_inventory_selectors_and_vintage_launcher',
     'test_real_worker_environment_retries_and_single_method_coverage',
     'test_real_compiler_session_equivalence',

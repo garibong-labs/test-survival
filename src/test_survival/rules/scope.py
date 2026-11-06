@@ -1,6 +1,6 @@
 """Scope selection on immutable inventory rows."""
 
-def select_scope(survey, config):
+def select_scope(survey, config, dev_size=None, skipped=None):
     eligible = [dict(r) for r in survey if int(r['m']) >= config['min_methods'] and
                 (not config['exclude_accessor_heavy'] or int(r.get('accessors', 0))*2 <= int(r['m']))]
     if config['rule'] == 'explicit':
@@ -20,6 +20,12 @@ def select_scope(survey, config):
         for row in ranked:
             if total + int(row['m']) > config['target_methods'][1]:
                 break
+            if dev_size is not None:
+                size = dev_size(chosen + [row])
+                if size > config.get('max_dev_scope', 400):
+                    if skipped is not None:
+                        skipped.append(dict(row, would_be_dev_scope=size, reason='max-dev-scope'))
+                    continue
             chosen.append(row)
             total += int(row['m'])
             if total >= config['target_methods'][0] or len(chosen) == config['max_classes']:

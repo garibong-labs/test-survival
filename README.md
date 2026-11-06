@@ -179,9 +179,30 @@ Use `scope.rule: all-eligible` to select every class satisfying `min_methods` an
 
 Developer groups can use project-wide, name-targeted, or per-method coverage-scoped denominators. A derived group filters another developer group's survival records and measures its own coverage.
 
+New experiments should set `dev.discovery: build` (the template does). Preparation
+runs the project's offline Maven test phase and limits developer candidates to
+source methods with at least one executed, non-skipped Surefire invocation. The
+same rule applies to developer regeneration pools. Omitted settings retain
+`source` discovery. Exclusions and unmapped report entries are audited separately;
+control, survival, and policy execution still use the tool's test runner.
+Inherited tests use the concrete class and method as their identity and execute
+through that class. Records retain `declaring_class` and `declaring_file` for
+source provenance. Overloaded test methods sharing a name remain ambiguous and
+are audited rather than merged into one developer method.
+
+For `change-ranked` and `dedicated-test`, `scope.max_dev_scope` defaults to 400.
+Selection skips a class if its addition would exceed the bound for a configured
+coverage-scoped or scope-targeted developer group, then continues in rank order.
+Coverage selection measures all developer candidates through the batched per-test
+worker before choosing classes. Inspect skipped classes in
+`results/scope-selection.json` and `population/scope.md`. Existing focal-method
+and class-count stop rules still apply. Completed experiments and imported
+completed developer populations retain their saved selections.
+
+
 The developer group name `dev-unmapped` (including case variants) is reserved for the shared baseline exclusion audit. Choose another group name to keep scope exclusions separate from that audit.
 
-By default, `prepare` stops when a baseline test case cannot map unambiguously to a source method. Set `dev.unmapped: exclude` to continue with those cases excluded from every Dev denominator. The audit file `dev/dev-unmapped-excluded.csv` records each case, how many runs saw it, and the reason. Anchor metadata, generation funnels, and report notes disclose the excluded count. Mapped cases keep their existing stability rules.
+With `dev.discovery: source`, `prepare` stops by default when a baseline test case cannot map unambiguously to a source method. Set `dev.unmapped: exclude` to continue with those cases excluded from every Dev denominator. The audit file `dev/dev-unmapped-excluded.csv` records each case, how many runs saw it, and the reason. Anchor metadata, generation funnels, and report notes disclose the excluded count. Mapped cases keep their existing stability rules.
 
 Use `range.skip_untouched` to skip irrelevant commits for every group while retaining commit indices. Use `survival.environment_errors` to retry failures whose messages match configured patterns.
 
@@ -408,7 +429,7 @@ changes should go through normal stage invalidation.
 
 | Changed setting | Earliest affected stage |
 | --- | --- |
-| `project`, `anchor`, `range`, result-affecting `runner` settings, `dev.stable_runs`, or `dev.unmapped` | prepare |
+| `project`, `anchor`, `range`, result-affecting `runner` settings, `dev.stable_runs`, `dev.unmapped`, or `dev.discovery` | prepare |
 | `scope`, other `dev` settings, or generator names and methods | scope |
 | `model` or other generator settings | generate |
 | `screen` | screen |
@@ -417,7 +438,7 @@ changes should go through normal stage invalidation.
 | `coverage` | cover |
 | Other report inputs | report |
 
-When a developer group uses `coverage-scoped`, changes to `survival.environment_errors` also invalidate scope. That stage uses those retry settings during denominator selection.
+When a developer group uses `coverage-scoped`, changes to `survival.environment_errors` also invalidate scope. Historical per-method evidence used those retry settings; new scope measurements use bounded per-test coverage batches without flaky rescue.
 
 Use a normal run to process stale stages and their successors. Use `--until` to stop after a selected stage:
 
@@ -497,11 +518,11 @@ Before copying evidence, `dev-results` requires identical project repo paths,
 anchor SHAs, ordered commit SHAs in `results/commits.csv`, `skip_untouched`, and
 `dev/src-test-t` tree hashes (relative file paths and contents). It refuses an
 incompatible import with the differing field named in the error. Result-affecting
-runner/runtime settings, project module and test framework, baseline stability runs and `dev.unmapped`,
+runner/runtime settings, project module and test framework, baseline stability runs, `dev.unmapped`, and `dev.discovery`,
 survival rules, and coverage settings must also match. Scheduling and host wiring
 may differ. Archived generation/report options are not validated; unknown measurement
 options are refused instead of silently assuming compatibility.
-Saved compatibility manifests without `dev.unmapped` are treated as `error`.
+Saved compatibility manifests without `dev.unmapped` are treated as `error`; omitted `dev.discovery` is treated as `source`.
 Batch manifests also record the resolved coverage scope; older batch manifests
 without that proof must be reimported. Scope order and survey statistics may
 differ. Scope changes after import, including reselection by the scope stage,

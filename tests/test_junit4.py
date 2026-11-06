@@ -442,3 +442,50 @@ def test_container_owned_scratch_cleanup(tmp_path, java_environment, monkeypatch
     assert not (pool/'work/libs').exists()
     records=list((pool/'results/work-cleanup-commands').glob('*.json'))
     assert len(records)==4 and all(json.loads(p.read_text())['exit_code']==0 for p in records)
+
+
+@pytest.mark.java_integration
+@pytest.mark.parametrize('framework', ['junit4','junit5'])
+def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp_path, java_environment, framework):
+    import hashlib
+    from test_survival.rules.dev_denominator import frozen_method, identity
+    image, libs = java_environment
+    config=validate({'name':'inherited','project':{'repo':str(tmp_path),'test_framework':framework},'anchor':'t',
+                     'dev':{'discovery':'build'},
+                     'runner':{'docker':{'image':image,'mounts':{str(tmp_path):'/experiment',str(Path(libs).resolve()):'/experiment/work/libs'}}}})
+    sources=tmp_path/'dev/src-test-t/java/fixture';sources.mkdir(parents=True)
+    annotation='@org.junit.Test public' if framework=='junit4' else '@org.junit.jupiter.api.Test protected'
+    (sources/'Base.java').write_text('package fixture; public abstract class Base { '+annotation+' void inherited() { if (Production.value()!=2) throw new AssertionError(); } '+annotation+' void excluded() { throw new AssertionError("non-candidate must not execute"); } }')
+    for name in ('One','Two'):
+        (sources/(name+'.java')).write_text('package fixture; public class '+name+' extends Base {}')
+    production=tmp_path/'work/checkouts/0/src/main/java/fixture/Production.java';production.parent.mkdir(parents=True)
+    production.write_text('package fixture; public class Production { public static int value() { return 2; } }')
+    classes=tmp_path/'work/checkouts/0/target/classes';classes.mkdir(parents=True)
+    (tmp_path/'work/runtime').mkdir(parents=True)
+    (tmp_path/'work/classpath.txt').write_text('')
+    write_json(tmp_path/'results/anchor.json',{'sha':'anchor'})
+    write_json(tmp_path/'results/builds/0.json',{'sha':'anchor','build':'ok','classpath':'work/classpath.txt'})
+    adapter=JavaMavenAdapter(tmp_path,config)
+    with adapter.runner.session('inherited-fixture'):
+        run=adapter.runner.execute(['javac','-d',str(classes),str(production)],tmp_path,tmp_path/'production-compile.log',60)
+        assert run['exit_code']==0
+        inventory=adapter.list_test_methods(sources)
+        recovered=[m for m in inventory['methods'] if m.get('inherited') and m['method']=='inherited']
+        assert {m['class'] for m in recovered}=={'fixture.One','fixture.Two'}
+        members=[]
+        for row in recovered:
+            row['declaring_file']=row['declaring_file'].replace('/experiment/','')
+            t=frozen_method(identity(row))
+            t.update(source_root='dev/src-test-t/java',resource_root='dev/src-test-t',
+                     file_hash=hashlib.sha256((tmp_path/t['file']).read_bytes()).hexdigest())
+            members.append(t)
+        raw=adapter.run_group(0,'dev',members)
+        assert all(m['state']=='pass' for m in raw['methods']),raw
+        assert all(m['declaring_file'].endswith('/Base.java') for m in raw['methods'])
+        covered=adapter.worker(dict(action='policy-cover',index=0,sha='anchor',group='dev',methods=members,
+                                    candidate_suite=True,output='results/candidate.json',work='work/candidate'))
+        assert len(covered['runs'])==1
+        assert {(m['class'],m['state']) for m in covered['methods']}=={('fixture.One','pass'),('fixture.Two','pass')}
+        assert all(m['lines'] for m in covered['methods'])
+        executed=[line.split('\t')[2] for path in (tmp_path/'work/candidate').glob('*/dumps/tests.tsv') for line in path.read_text().splitlines()]
+        assert executed==['inherited','inherited']

@@ -22,6 +22,8 @@ diagnostics/class bytes, and check RSS/file-descriptor bounds under a 180-second
 The policy fixtures check per-test JaCoCo resets, parameterized Vintage tests,
 multiple source versions in one JVM, and isolation of container teardown probes
 in both Jupiter and Vintage.
+Inherited-test fixtures verify concrete subclass execution and source provenance
+through the normal runner and batched coverage in JUnit 4 and JUnit 5.
 Affected-selection fixtures check iterative removal of erroneous sources,
 transitive helper dependencies, runtime class hits outside the coverage scope,
 concurrent JVM chunks, and peak JVM memory evidence.

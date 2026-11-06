@@ -187,3 +187,26 @@ def test_transient_coverage_failure_is_cleared_after_a_successful_measurement(ba
         write_json(root/f'results/changes/{i}.json', dict(post_image={'src/main/java/A.java':[1]}))
     cover.run(b, None)
     assert [r['g_covered'] for r in read_csv(out/'coverage-commits.csv')] == ['1', '1']
+
+
+def test_candidate_scope_batches_select_only_candidates_with_bounded_groups(tmp_path,monkeypatch):
+    monkeypatch.setattr(policy_coverage,'compile_snapshot',lambda *a,**kw:(tmp_path/'classes',dict(exit_code=0)))
+    methods=[dict(id=str(i),file='src/Tests.java',source_root='src',file_hash='hash',
+                  **{'class':'Tests'},method=f't{i}') for i in range(600)]
+    calls=[]
+    def execute(command,cwd,log,timeout):
+        if 'PerTestCoverage' not in command:return dict(exit_code=0)
+        manifest=Path(command[-1]).read_text().splitlines();calls.append(manifest)
+        assert [len(Path(row.split('\t')[2]).read_text().splitlines()) for row in manifest]==[256,256,88]
+        for row in manifest:
+            output,_,selectors,*_=row.split('\t');output=Path(output);output.mkdir(parents=True)
+            selected=[line.split('\t') for line in Path(selectors).read_text().splitlines()]
+            assert all(len(pair)==2 for pair in selected), 'Class selection would execute excluded methods'
+            (output/'tests.tsv').write_text(''.join(f'{i}\t{cls}\t{name}\tSUCCESSFUL\t\n' for i,(cls,name) in enumerate(selected)))
+            for i in range(len(selected)):(output/f'{i}.tsv').write_text('src/main/java/A.java\t1\ttrue\n')
+        return dict(exit_code=0,seconds=1)
+    w=SimpleNamespace(EXP=tmp_path,HELPERS=tmp_path,JVM=dict(jacoco='1g'),TIMEOUTS=dict(compile=30,test_class=1),
+        classpath=lambda _:(tmp_path,''),jacoco_version=lambda _:'0.8.14',execute=execute,write_json=write_json)
+    policy_coverage.run(w,dict(index=0,sha='t',methods=methods,candidate_suite=True,work='work/coverage',output='result.json'))
+    assert len(calls)==1
+    assert len(read_json(tmp_path/'result.json')['methods'])==600

@@ -12,17 +12,22 @@ public final class MethodSelectors {
         Set<String> tests = new HashSet<>(Arrays.asList("Test", "ParameterizedTest", "RepeatedTest", "TestTemplate", "TestFactory"));
         Class<?> requested = Class.forName(args[0], false, MethodSelectors.class.getClassLoader());
         if(junit4 && Arrays.stream(requested.getAnnotations()).anyMatch(a->a.annotationType().getName().equals("org.junit.Ignore"))) return;
+        Set<String> seen = new HashSet<>();
+        java.util.List<Method> methods = new java.util.ArrayList<>();
         for (Class<?> type = requested; type != null; type = type.getSuperclass()) {
-            for (Method method : type.getDeclaredMethods()) {
-                boolean test = false;
-                if(junit4 && Arrays.stream(method.getDeclaredAnnotations()).anyMatch(a->a.annotationType().getName().equals("org.junit.Ignore"))) continue;
-                for (Annotation annotation : method.getDeclaredAnnotations()) {
-                    if (junit4 ? annotation.annotationType().getName().equals("org.junit.Test") : annotation.annotationType().getName().startsWith("org.junit.") && tests.contains(annotation.annotationType().getSimpleName())) test = true;
-                }
-                if (test) {
-                    String parameters = Arrays.stream(method.getParameterTypes()).map(Class::getTypeName).collect(Collectors.joining(","));
-                    System.out.println(method.getName() + "\t" + requested.getName() + "#" + method.getName() + (junit4?"":"(" + parameters + ")"));
-                }
+            methods.addAll(Arrays.asList(type.getDeclaredMethods()));
+        }
+        methods.addAll(Arrays.asList(requested.getMethods()));
+        for (Method method : methods) {
+            if (!seen.add(method.getName()+Arrays.toString(method.getParameterTypes())) || java.lang.reflect.Modifier.isPrivate(method.getModifiers())) continue;
+            boolean test = false;
+            if(junit4 && Arrays.stream(method.getDeclaredAnnotations()).anyMatch(a->a.annotationType().getName().equals("org.junit.Ignore"))) continue;
+            for (Annotation annotation : method.getDeclaredAnnotations()) {
+                if (junit4 ? annotation.annotationType().getName().equals("org.junit.Test") : annotation.annotationType().getName().startsWith("org.junit.") && tests.contains(annotation.annotationType().getSimpleName())) test = true;
+            }
+            if (test) {
+                String parameters = Arrays.stream(method.getParameterTypes()).map(Class::getTypeName).collect(Collectors.joining(","));
+                System.out.println(method.getName() + "\t" + requested.getName() + "#" + method.getName() + (junit4?"":"(" + parameters + ")"));
             }
         }
     }

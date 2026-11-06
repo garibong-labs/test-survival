@@ -101,6 +101,15 @@ def main(argv=None):
             import_experiment(args.exp_dir, args.source, args.what, display=display)
         elif args.command == 'stop':
             stop(args.exp_dir, display=display)
+        elif args.command == 'show' and (args.exp_dir/'results').is_dir():
+            from .summary import show
+            print(show(args.exp_dir, args.stage))
+        elif args.command == 'status' and not (args.exp_dir/'experiment.yaml').exists():
+            from .summary import saved_status
+            saved = saved_status(args.exp_dir)
+            if saved is None:
+                raise FileNotFoundError(args.exp_dir/'experiment.yaml')
+            print(saved)
         else:
             config = load(args.exp_dir)
             if args.command == 'rehash':

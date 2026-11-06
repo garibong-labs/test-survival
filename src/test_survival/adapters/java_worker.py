@@ -93,7 +93,8 @@ def classpath(index):
     testjars=[str(EXP/'work/libs'/name) for name in runner_test_jars(records)]
     folder=EXP/f'work/checkouts/{index}'/MODULE
     build=json.loads((RESULTS/f'builds/{index}.json').read_text())
-    cache=EXP/build['classpath']
+    selected=result_io.read_json(EXP/f'work/selection-classpaths/{index}.json', {})
+    cache=EXP/selected.get('classpath', build['classpath'])
     maven_dependencies.resolve(folder,cache,RESULTS/'builds/logs'/f'classpath-{index}',TIMEOUTS['build'],execute)
     return folder,':'.join([str(folder/'target/classes'),*testjars,*project_jars(cache.read_text())])
 

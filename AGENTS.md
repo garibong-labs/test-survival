@@ -29,3 +29,5 @@ This repository is public. `docs/` holds only user documentation for the CLI: ho
 Write every internal working document under `.local/docs/` instead. This includes implementation reviews and plans, verification and comparison records, evidence files (JSON, CSV, logs, profiles), handovers, and decision records. `.local/` is ignored by git, so these files stay on the local disk only.
 
 Tracked files (README, `docs/`, code, comments, PR descriptions) must not link to or name files under `.local/`. When a user document needs a verified fact, state the fact directly in that document.
+
+.local/docs/ holds documents and small evidence files only. Put clones, experiment outputs, build products, and other large scratch material under .local/work/ (also ignored by git).
