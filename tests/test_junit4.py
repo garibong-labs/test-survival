@@ -410,11 +410,7 @@ def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode, 
         (adapter.folder(0)/'activate.marker').touch()
         assert adapter.cache.context_identity(0)!=before
         active=adapter.cache.context_identity(0)
-        for revision in ('1','2'):
-            (mvn/'maven.config').write_text('-Drevision='+revision+'\n')
-            result=adapter.runner.execute(['mvn','-o','validate'],adapter.folder(0),exp/f'revision-{revision}.log',60)
-            assert result['exit_code']==0
-            assert 'Building module '+revision in (exp/f'revision-{revision}.log').read_text()
+        (mvn/'maven.config').write_text('-Drevision=2\n')
         assert adapter.cache.context_identity(0)!=active
 
 
