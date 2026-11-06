@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import struct
 
-RECORD_VERSION = 2  # Includes production hits from pre-plan test discovery.
+RECORD_VERSION = 3  # Includes discovery and every ancestor container's setup hits.
 
 
 class Reader:

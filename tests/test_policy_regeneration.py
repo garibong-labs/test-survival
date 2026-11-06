@@ -727,3 +727,33 @@ def test_rewrite_carries_a_kept_disagreement_into_the_reason(baseline,monkeypatc
     runs.run_index(2,{'shared'},alive={key(a),key(n)},dead_at={},label='regenerate',evaluated={key(a)})  # n enters; a is kept
     record=read_json(path)
     assert record['coverage_status']=='complete' and 'disagreed' in record['coverage_reason']
+
+
+@pytest.mark.parametrize('selection', ['all','affected'])
+@pytest.mark.parametrize('missing_second', [False,True])
+def test_policy_coverage_distinguishes_colliding_snapshot_methods(baseline, selection, missing_second):
+    from test_survival.policy import cover
+    from test_survival.policy.affected import logical_path
+    exp,config,root=baseline
+    config['policies']['regenerate_developer']=False
+    b=Baseline(exp,config);b.groups.append('llm')
+    b.execution_config['survival']['selection']=selection
+    tests=[dict(test_test('same'),execution_hash=digest) for digest in ('snapshot-a','snapshot-b')]
+    change=dict(index=1,sha='sha',date='date',subject='change',scope_executable=2,**{'scope_dev-scope_covered':1})
+    write_csv(root/'results/changed-lines.csv',[change],list(change))
+    write_json(root/'results/changes/1.json',dict(post_image={'src/main/java/A.java':[1,2]}))
+    observations=[dict(t,state='pass',lines=[['src/main/java/A.java',n]],selection_action='carried' if n==2 else 'executed')
+                  for n,t in enumerate(tests,1) if not (missing_second and n==2)]
+    for row in observations:
+        write_json(exp/f'results/policy/runs/{execution_id(row)}/1.json',dict(methods=[row]))
+    for policy in b.options['set']:
+        name=policy['name'];out=exp/'results/policy'/name
+        write_json(out/'alive.json',{'1':{'dev-scope':[], 'llm':tests}})
+        write_json(out/'segments.json',{'dev-scope':[{'start':0}], 'llm':[{'start':0},{'start':1,'segment':2}]})
+        write_json(logical_path(b,name,'llm',2,1),dict(methods=list(reversed(observations))),compress=True)
+    cover.run(b,None)
+    for policy in b.options['set']:
+        out=exp/'results/policy'/policy['name'];row=read_csv(out/'coverage-commits.csv')[0]
+        assert row['llm_covered']==('' if missing_second else '2')
+        assert row['llm_percent']==('' if missing_second else '100.0')
+        assert bool(read_csv(out/'coverage-missing.csv')) == missing_second

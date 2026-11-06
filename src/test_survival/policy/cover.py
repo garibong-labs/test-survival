@@ -2,7 +2,7 @@
 from ..io import result_exists, read_csv, read_json, write_csv, write_json
 from ..rules.coverage import usable_lines
 from .config import regenerates
-from .segments import execution_id, identity
+from .segments import execution_id, identity, key
 
 
 def run(b, step):
@@ -53,7 +53,9 @@ def run(b, step):
                             from .affected import logical_path
                             active = [s for s in segments[g] if int(s['start']) <= index][-1]
                             raw = read_json(logical_path(b,p,g,active['segment'],index), {})
-                        found = [r for r in raw.get('methods', []) if identity(r) == identity(t)]
+                            found = [r for r in raw.get('methods', []) if key(r) == key(t)]
+                        else:
+                            found = [r for r in raw.get('methods', []) if identity(r) == identity(t)]
                         if not found or 'lines' not in found[0]:
                             reasons.add(raw.get('coverage_reason') or 'missing per-test coverage')
                         elif not usable_lines(found[0]):

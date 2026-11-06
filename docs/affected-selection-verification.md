@@ -269,7 +269,7 @@ old progress undercount as historical evidence.
 
 ## Lifecycle, readers, and automated tests
 
-Final validation covers **870 tests**: 854 Python
+The benchmark revision's validation covers **870 tests**: 854 Python
 tests on both Python 3.12 and 3.14, plus all 16 real Java 25 fixtures, with zero
 Java skips, failures, or errors. The fixtures cover
 runtime reflection outside scope, discovery-only parameter-provider hits,
@@ -353,3 +353,37 @@ The actual roots are `/tmp/affected-selection-jsv-optimized` and
 `/tmp/affected-selection-dns-exact`. The helper-fallback reference is at
 `/tmp/affected-selection-optimized-fallback`, and the original before-change
 batch timing is retained at `/tmp/affected-selection-before`.
+
+## PR review follow-up
+
+Both review findings were reproduced in disposable fixtures before the fixes.
+The new Java fixture failed because a later nested test lacked the production
+dependency reached reflectively by its outer `@BeforeAll`. Two affected policy
+coverage cases failed because identical class/method names from different
+snapshots borrowed the first matching row. The equivalent all-mode coverage
+cases already passed.
+
+Runtime dependency capture now retains setup hits by test-container identity and
+inherits them through every ancestor. The Java regression covers sibling and
+deeper nested classes, parameterized descendants, and isolation from sibling
+test-body hits and unrelated roots. After changing only the reflectively reached
+production file, affected selection executes all four dependent methods, carries
+the unrelated method, and matches all-mode verdicts. Dependency records are now
+version 3; older records remain readable, but cannot authorize carries or satisfy
+affected policy execution requests. Resume and physical/baseline reuse fixtures
+verify that fresh evidence is required and an outdated carried pass cannot
+override a newly observed failure.
+
+Affected logical coverage now matches execution hash plus class and method. The
+regressions verify both snapshots' line union, reversed row order, carried lines,
+and missing-evidence reporting when one snapshot's row is absent. Digest-scoped
+all-mode records retain their existing lookup behavior.
+
+The follow-up full suite passes **879 tests** on Python 3.12: **862 Python tests
+and all 17 real Java 25 fixtures**, with no skips, in 153.44 s. The nested-setup
+fixture is included in CI's required fixture list.
+
+The large scratch experiment comparisons and performance measurements were not
+rerun for these review fixes. Their recorded revisions, counts, and timings above
+remain historical benchmark evidence. No original experiment was modified and
+no model calls were made.

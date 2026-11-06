@@ -13,7 +13,7 @@ from test_junit4 import java_environment
 
 def observation():
     return dict(state='pass', lines=[['src/main/java/p/A.java',4]], last_executed_index=0, last_executed_sha='t',
-                selection_action='executed',dependency_record=dict(version=2,selection='affected',unbounded=False,
+                selection_action='executed',dependency_record=dict(version=3,selection='affected',unbounded=False,
                 files=['src/main/java/p/A.java'],context=dict(known=True,entries=[['g','a','1','','jar']])))
 
 
@@ -56,6 +56,7 @@ def test_carried_origin_is_read_once_and_revalidated_after_replacement(tmp_path,
     ({'dependency_record':{}},[],False,'missing segment dependencies'),
     ({'dependency_record':{'version':1,'selection':'all'}},[],False,'missing segment dependencies'),
     ({'dependency_record':{'version':1,'selection':'affected'}},[],False,'missing segment dependencies'),
+    ({'dependency_record':{'version':2,'selection':'affected'}},[],False,'missing segment dependencies'),
     ({'remeasured_state':'fail'},[],False,'disagreeing repair'),
 ])
 def test_selection_triggers(change,paths,compiler,expected):
@@ -302,10 +303,61 @@ def test_policy_resume_requires_logical_rows_and_direct_physical_origin(tmp_path
     before={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
     assert records_complete(b)
     assert before=={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    outdated={**row,'dependency_record':{**row['dependency_record'],'version':2}}
+    write_json(origin,dict(sha='one',methods=[outdated]))
+    write_json(logical_path(b,'p','g',2,1),dict(sha='one',methods=[outdated]))
+    write_json(logical_path(b,'p','g',2,2),dict(sha='two',methods=[carry(outdated)]))
+    assert not records_complete(b)
+    write_json(logical_path(b,'p','g',2,1),dict(sha='one',methods=[row]))
+    write_json(logical_path(b,'p','g',2,2),dict(sha='two',methods=[carry(row)]))
     changed={**row,'lines':[]};write_json(origin,dict(sha='one',methods=[changed]))
     assert not records_complete(b)
     write_json(origin,dict(sha='one',methods=[row]));logical_path(b,'p','g',2,2).unlink()
     assert not records_complete(b)
+
+
+@pytest.mark.parametrize('source', ['physical','baseline'])
+def test_policy_execution_upgrades_outdated_dependency_evidence(tmp_path, source):
+    from test_survival.policy.affected import Decisions
+    from test_survival.policy.segments import key
+    from test_policy import test_test
+    test=test_test('one');context=observation()['dependency_record']['context']
+    row=executed({**test,**observation()},1,'one',context)
+    old={**row,'dependency_record':{**row['dependency_record'],'version':2}}
+    b=SimpleNamespace(exp=tmp_path,by_index={1:{'sha':'one'}},groups=['g'],
+                      scope={'classes':[{'file':'src/main/java/p/A.java','class':'p.A'}]},
+                      raw=lambda *args:dict(sha='one',methods=[old] if source=='baseline' else []))
+    calls=[]
+    def worker(job):
+        calls.append(job)
+        return {'methods':[row]}
+    adapter=SimpleNamespace(config={'project':{'repo':str(tmp_path),'module':'.'}},worker=worker)
+    runs=SimpleNamespace(adapter=adapter,initialize=lambda:None,excluded_for=lambda tests:set(),needed=set(),
+                         path=lambda index,digest:tmp_path/f'results/policy/runs/{digest}/{index}.json')
+    if source=='physical':write_json(runs.path(1,test['file_hash']),dict(sha='one',methods=[old]))
+    decisions=Decisions(b,runs)
+    fresh=decisions.physical(1,{key(test):test},context)
+    assert len(calls)==1 and fresh[key(test)]['dependency_record']['version']==3
+    assert decisions.physical(1,{key(test):test},context)==fresh
+    assert len(calls)==1
+
+
+def test_outdated_policy_carry_does_not_preserve_an_unobserved_pass(tmp_path):
+    from test_survival.policy.affected import Decisions, logical_path
+    from test_survival.policy.segments import key, segment
+    from test_policy import test_test
+    test=test_test('one');context=observation()['dependency_record']['context']
+    s=segment(2,1,[test],[]);b=SimpleNamespace(exp=tmp_path,by_index={2:{'sha':'two'}})
+    old=carry(executed({**test,**observation()},1,'one',context))
+    old['dependency_record']={**old['dependency_record'],'version':2}
+    write_json(logical_path(b,'p','g',2,2),dict(sha='two',methods=[old]))
+    runs=SimpleNamespace(adapter=SimpleNamespace(config={'project':{'repo':str(tmp_path),'module':'.'}}),initialize=lambda:None)
+    decisions=Decisions(b,runs)
+    decisions.selector=SimpleNamespace(context=lambda *args:context,decision=lambda *args,**kwargs:'missing segment dependencies')
+    actual=executed({**test,**observation(),'state':'fail'},2,'two',context)
+    decisions.physical=lambda *args:{key(test):actual}
+    rows=decisions.measure(2,[('p','g',s,{key(test)})])['p','g']
+    assert rows[0]['state']=='fail' and 'remeasured_state' not in rows[0]
 
 
 def test_baseline_control_carries_lines_and_resume_validates_origin(tmp_path, monkeypatch):
@@ -320,7 +372,7 @@ def test_baseline_control_carries_lines_and_resume_validates_origin(tmp_path, mo
         raw=worker(self,job)
         for t in raw['methods']:
             t['state']='pass'
-            t['dependency_record']=dict(version=2,selection='affected',unbounded=False,files=['src/main/java/A.java'])
+            t['dependency_record']=dict(version=3,selection='affected',unbounded=False,files=['src/main/java/A.java'])
         return raw
     monkeypatch.setattr(JavaMavenAdapter,'worker',instrumented)
     monkeypatch.setattr(Selector,'context',lambda *args:dict(known=True,entries=[]))
@@ -415,4 +467,91 @@ for t in result['methods']:
     r=subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival')+':/package:ro',
                       '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script],
                       capture_output=True,text=True,timeout=240)
+    assert r.returncode==0,r.stdout+r.stderr
+
+
+@pytest.mark.java_integration
+def test_nested_shared_setup_dependencies_select_every_descendant(tmp_path, java_environment):
+    image,libs=java_environment;root=Path(__file__).parents[1]
+    script=r'''
+from pathlib import Path
+import json,subprocess,sys
+sys.path.insert(0,'/package')
+from adapters import java_worker as w,policy_coverage
+from test_survival.selection import reason,executed
+exp=Path('/out');w.EXP=w.SHARED=exp;w.HELPERS=Path('/package/adapters/java')
+w.JVM={'javac':'256m','jacoco':'256m','launcher':'256m'};w.TIMEOUTS={'compile':60,'test_class':60}
+(exp/'work/libs').mkdir(parents=True)
+for jar in Path('/libs').glob('*.jar'):(exp/'work/libs'/jar.name).symlink_to(jar)
+main=exp/'src/main/java';(main/'p').mkdir(parents=True);(main/'outside').mkdir()
+(main/'p/A.java').write_text('package p; public class A { public static int value() { return 1; } }')
+for name in ('Hidden','Middle','LeftOnly','Unrelated'):
+ (main/f'outside/{name}.java').write_text('package outside; public class '+name+' { public static int value() { return 1; } }')
+classes=exp/'target/classes';classes.mkdir(parents=True)
+def compile_main():subprocess.run(['javac','-g','-d',str(classes),*[str(p) for p in main.rglob('*.java')]],check=True)
+compile_main()
+records=json.loads((w.HELPERS/'classpath-artifacts.json').read_text())
+cp=':'.join([str(classes),*['/libs/'+n for n in w.runner_test_jars(records)]])
+w.classpath=lambda _:(exp,cp);w.jacoco_version=lambda _:'0.8.14'
+source=exp/'tests';source.mkdir()
+(source/'Outer.java').write_text("""
+import org.junit.jupiter.api.*;
+import static org.junit.jupiter.api.Assertions.*;
+class Outer {
+ static int shared;
+ @BeforeAll static void prepare() throws Exception { shared=(Integer)Class.forName("outside.Hidden").getMethod("value").invoke(null); }
+ @Nested class Left { @Test void works() throws Exception { assertEquals(1,shared); assertEquals(1,p.A.value()); assertEquals(1,Class.forName("outside.LeftOnly").getMethod("value").invoke(null)); } }
+ @Nested class Right {
+  @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(ints={1,2})
+  void works(int ignored) { assertEquals(1,shared); assertEquals(1,p.A.value()); }
+ }
+ @Nested @TestInstance(TestInstance.Lifecycle.PER_CLASS) class Group {
+  int middle;
+  @BeforeAll void prepare() throws Exception { middle=(Integer)Class.forName("outside.Middle").getMethod("value").invoke(null); }
+  @Nested class First { @Test void works() { assertEquals(1,shared); assertEquals(1,middle); assertEquals(1,p.A.value()); } }
+  @Nested class Second { @Test void works() { assertEquals(1,shared); assertEquals(1,middle); assertEquals(1,p.A.value()); } }
+ }
+}
+class Separate {
+ @Test void works() throws Exception { assertEquals(1,Class.forName("outside.Unrelated").getMethod("value").invoke(null)); assertEquals(1,p.A.value()); }
+}
+""")
+methods=[dict(id=cls,file='tests/Outer.java',source_root='tests',resource_root='tests',file_hash='frozen',execution_hash='snapshot',
+              **{'class':cls},method='works') for cls in ('Outer$Left','Outer$Right','Outer$Group$First','Outer$Group$Second','Separate')]
+def run(label,mode,tests):
+ policy_coverage.run(w,dict(index=0,sha=label,selection=mode,chunk_workers=1,methods=tests,survival=True,
+  scope_files=['src/main/java/p/A.java'],scope_classes=['p.A'],work=label,output=label+'.json'))
+ rows=json.loads((exp/(label+'.json')).read_text())['methods']
+ return [{**next(t for t in tests if t['id']==row['id']), **row} for row in rows]
+before=run('before','affected',methods)
+for row in before:
+ assert row['state']=='pass',row
+ files=row['dependency_record']['files']
+ assert not row['dependency_record']['unbounded'],row
+ if row['class'].startswith('Outer$'):
+  assert 'src/main/java/outside/Hidden.java' in files,(row['class'],files)
+  if '$Group$' in row['class']:assert 'src/main/java/outside/Middle.java' in files,(row['class'],files)
+  else:assert 'src/main/java/outside/Middle.java' not in files,(row['class'],files)
+  assert ('src/main/java/outside/LeftOnly.java' in files)==(row['class']=='Outer$Left'),(row['class'],files)
+ else:
+  assert 'src/main/java/outside/Hidden.java' not in files,files
+  assert 'src/main/java/outside/Middle.java' not in files,files
+ assert all(file=='src/main/java/p/A.java' for file,line in row['lines'])
+# Only a reflectively reached production file changes; frozen tests stay intact.
+(main/'outside/Hidden.java').write_text('package outside; public class Hidden { public static int value() { return 2; } }')
+compile_main();context=dict(known=True,entries=[])
+selected=[row for row in before if reason(executed(row,0,'t',context),1,'changed',context,['src/main/java/outside/Hidden.java'],False)]
+assert {row['class'] for row in selected}=={row['class'] for row in before if row['class'].startswith('Outer$')}
+all_rows=run('changed-all','all',methods)
+affected_rows=run('changed-affected','affected',selected)
+carried={row['class']:row['state'] for row in before};carried.update({row['class']:row['state'] for row in affected_rows})
+assert carried=={row['class']:row['state'] for row in all_rows}
+assert all(row['state']=='fail' for row in affected_rows)
+assert not list((exp/'before').rglob('*.exec')) and not list((exp/'before').rglob('*.xml'))
+'''
+    # The embedded script imports the normal package for the selection decision.
+    r=subprocess.run(['docker','run','--rm','--network','none','-e','PYTHONPATH=/src',
+                      '-v',str(root/'src')+':/src:ro','-v',str(root/'src/test_survival')+':/package:ro',
+                      '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script],
+                     capture_output=True,text=True,timeout=180)
     assert r.returncode==0,r.stdout+r.stderr

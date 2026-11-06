@@ -98,11 +98,15 @@ public final class PerTestCoverage implements TestExecutionListener {
     }
 
     public synchronized void executionStarted(TestIdentifier id) {
-        if (!dependencies || !id.isTest()) return;
+        if (!dependencies) return;
         try {
-            MethodSource source = method(id);
-            if (source != null && !setupHits.containsKey(source.getClassName()))
-                setupHits.put(source.getClassName(), hits((byte[])dump.invoke(agent, false)));
+            // A container starts before its setup. Its first child starts after
+            // that setup, before any child can finish and reset the probes.
+            // Keep hits by container identity so nested siblings inherit shared
+            // ancestor setup without inheriting another sibling's test body.
+            Optional<TestIdentifier> parent = plan.getParent(id);
+            if (parent.isPresent() && !setupHits.containsKey(parent.get().getUniqueId()))
+                setupHits.put(parent.get().getUniqueId(), hits((byte[])dump.invoke(agent, false)));
         } catch (Throwable ex) { failure = ex; }
     }
 
@@ -119,7 +123,11 @@ public final class PerTestCoverage implements TestExecutionListener {
             if (dependencies) {
                 Set<String> names = hits(bytes);
                 names.addAll(discoveryHits);
-                names.addAll(setupHits.getOrDefault(source.getClassName(), Set.of()));
+                Optional<TestIdentifier> parent = plan.getParent(id);
+                while (parent.isPresent()) {
+                    names.addAll(setupHits.getOrDefault(parent.get().getUniqueId(), Set.of()));
+                    parent = plan.getParent(parent.get());
+                }
                 Files.write(output.resolve(name + ".classes"), names);
             }
             ExecFileLoader data = new ExecFileLoader();

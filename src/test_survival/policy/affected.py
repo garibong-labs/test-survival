@@ -7,6 +7,7 @@ from collections import defaultdict
 
 from ..io import read_json, write_json, write_csv
 from ..selection import Selector, carry, executed, counts
+from ..adapters.dependencies import RECORD_VERSION
 from ..rules.coverage import usable_lines
 from ..rules.survival import dead_method
 from ..work import release_checkout
@@ -17,6 +18,11 @@ from .execute import Runs, baseline_tests, generator_methods, screening_exclusio
 
 def logical_path(b, policy, group, number, index):
     return b.exp/f'results/policy/{policy}/decisions/{group}/{number}/{index}.json'
+
+
+def current_dependencies(row):
+    record = row.get('dependency_record') or {}
+    return record.get('version') == RECORD_VERSION and record.get('selection') == 'affected'
 
 
 def records_complete(b):
@@ -36,7 +42,7 @@ def records_complete(b):
                     if raw.get('sha') != b.by_index[index]['sha'] or set(rows) != {key(t) for t in s['tests']}: return False
                     for k,row in rows.items():
                         if row['state'] == 'dead': continue
-                        if not usable_lines(row): return False
+                        if not usable_lines(row) or not current_dependencies(row): return False
                         origin = row.get('last_executed_index')
                         if origin is None or not s['start'] <= origin <= index: return False
                         if row.get('selection_action') == 'carried':
@@ -69,7 +75,7 @@ class Decisions:
             row = next((r for r in raw.get('methods', []) if identity(r) == identity(t)), None)
             if row and raw.get('sha') == sha:
                 old[k] = row
-                if row.get('selection_action') == 'executed' and row.get('dependency_record') and usable_lines(row):
+                if row.get('selection_action') == 'executed' and current_dependencies(row) and usable_lines(row):
                     observed[k] = row
                     continue
             # Matching baseline actual executions can initialize a boundary;
@@ -79,7 +85,7 @@ class Decisions:
                 candidate = next((r for r in baseline.get('methods', []) if r.get('execution_hash') == execution_id(t)
                                   and identity(r) == identity(t)), None)
                 if (candidate and baseline.get('sha') == sha and candidate.get('selection_action') == 'executed'
-                        and candidate.get('dependency_record') and usable_lines(candidate)):
+                        and current_dependencies(candidate) and usable_lines(candidate)):
                     observed[k] = {**t, **candidate, 'id':t['id']}
                     break
             if k not in observed: missing.append(t)
@@ -144,6 +150,8 @@ class Decisions:
                 if k not in rows:
                     row = physical[k]
                     prior = previous[slot].get(k)
+                    if prior and prior.get('selection_action') == 'carried' and not current_dependencies(prior):
+                        prior = None  # An outdated carry is not an observed verdict.
                     verdict = {n:prior[n] for n in ('state','message','flaky') if n in prior} if prior else None
                     evidence = ('state','message','flaky','lines','dependency_record',
                                 'last_executed_index','last_executed_sha','remeasured_state')
