@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import shutil
+from zipfile import ZipFile
 
 from .snapshot_compile import compile_snapshot, filtered_roots
 from .dependencies import RECORD_VERSION
@@ -106,6 +107,7 @@ def run(w, job):
             if (resource_root/name).exists():
                 shutil.copytree(resource_root/name, runtime_dir/'src/test'/name)
     scope_options = []
+    initializer_options = []
     agent_options = 'output=none,dumponexit=false'
     if job.get('survival'):
         scope_file = work/'scope-files.txt'
@@ -117,6 +119,13 @@ def run(w, job):
             # Instrument exact production binaries, not third-party packages.
             classes = class_inventory(folder/'target/classes')
             agent_options += ',includes='+(':'.join(n.replace('/', '.') for n in sorted(classes)) or '__no_production__')
+            initializer_agent = work/'initializers.jar'
+            with ZipFile(initializer_agent, 'w') as jar:
+                jar.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nPremain-Class: PerTestCoverage$Initializers\n\n')
+                for path in helper.glob('PerTestCoverage*.class'): jar.write(path, path.name)
+            roots = [folder/'target/classes', *[classes for classes, _ in snapshots.values()]]
+            initializer_options = ['-Dsurvival.initializer.roots='+os.pathsep.join(map(str, roots)),
+                                   '-javaagent:'+str(initializer_agent)]
         else:
             agent_options += ',includes='+includes_pattern(job['scope_classes'])
     override = os.environ.get('SURVIVAL_JVM_JACOCO')
@@ -135,7 +144,7 @@ def run(w, job):
         tests = [t for _, members in chunk_outputs for t in members]
         memory = chunk/'memory.tsv'
         run = w.execute(['java', '-Xmx'+heap, *scope_options, '-Dsurvival.memory='+str(memory),
-                         f'-javaagent:{agent}={agent_options}', '-cp', str(helper)+':'+helper_cp,
+                         f'-javaagent:{agent}={agent_options}', *initializer_options, '-cp', str(helper)+':'+helper_cp,
                          'PerTestCoverage', str(chunk_manifest)], cwd, chunk/'console.txt',
                         w.TIMEOUTS['test_class']*len(tests))
         measured_memory = {key:int(value) for line in memory.read_text().splitlines() for key,value in [line.split('\t')]} if memory.exists() else {}
@@ -153,7 +162,7 @@ def run(w, job):
                 successful.extend(chunk_outputs)
     scope = set(job.get('scope_files', []))
     for output, tests in successful:
-        observed = defaultdict(list); covered = defaultdict(set); runtime = defaultdict(set); runtime_missing = set()
+        observed = defaultdict(list); covered = defaultdict(set); runtime = defaultdict(set); runtime_missing = set(); unbounded = set()
         path = output/'tests.tsv'
         for line in path.read_text().splitlines() if path.exists() else []:
             serial, cls, name, state, message = line.split('\t')
@@ -162,6 +171,7 @@ def run(w, job):
             dep_path = output/(serial+'.classes')
             if dep_path.exists(): runtime[ident].update(dep_path.read_text().splitlines())
             else: runtime_missing.add(ident)
+            if (output/(serial+'.unbounded')).exists(): unbounded.add(ident)
             for item in (output/(serial+'.tsv')).read_text().splitlines():
                 file, lineno, hit = item.split('\t'); coordinate = (file, int(lineno))
                 if job.get('survival') and file not in scope:
@@ -179,6 +189,8 @@ def run(w, job):
                     try:
                         classes, root, source = dependency_inputs[(t['class'],t['method'],t.get('execution_hash',t['file_hash']))]
                         record = dependencies.record({**t, 'file':str(source)}, classes, root, runtime[ident])
+                        if ident in unbounded:
+                            record.update(unbounded=True, reason='incomplete class-initializer attribution')
                     except (ValueError, OSError, RuntimeError) as exc: record['reason'] = str(exc)
                 methods[-1]['dependency_record'] = record
     if job.get('scope_universe'):

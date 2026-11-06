@@ -13,7 +13,7 @@ from test_junit4 import java_environment
 
 def observation():
     return dict(state='pass', lines=[['src/main/java/p/A.java',4]], last_executed_index=0, last_executed_sha='t',
-                selection_action='executed',dependency_record=dict(version=3,selection='affected',unbounded=False,
+                selection_action='executed',dependency_record=dict(version=4,selection='affected',unbounded=False,
                 files=['src/main/java/p/A.java'],context=dict(known=True,entries=[['g','a','1','','jar']])))
 
 
@@ -57,6 +57,7 @@ def test_carried_origin_is_read_once_and_revalidated_after_replacement(tmp_path,
     ({'dependency_record':{'version':1,'selection':'all'}},[],False,'missing segment dependencies'),
     ({'dependency_record':{'version':1,'selection':'affected'}},[],False,'missing segment dependencies'),
     ({'dependency_record':{'version':2,'selection':'affected'}},[],False,'missing segment dependencies'),
+    ({'dependency_record':{'version':3,'selection':'affected'}},[],False,'missing segment dependencies'),
     ({'remeasured_state':'fail'},[],False,'disagreeing repair'),
 ])
 def test_selection_triggers(change,paths,compiler,expected):
@@ -303,7 +304,7 @@ def test_policy_resume_requires_logical_rows_and_direct_physical_origin(tmp_path
     before={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
     assert records_complete(b)
     assert before=={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
-    outdated={**row,'dependency_record':{**row['dependency_record'],'version':2}}
+    outdated={**row,'dependency_record':{**row['dependency_record'],'version':3}}
     write_json(origin,dict(sha='one',methods=[outdated]))
     write_json(logical_path(b,'p','g',2,1),dict(sha='one',methods=[outdated]))
     write_json(logical_path(b,'p','g',2,2),dict(sha='two',methods=[carry(outdated)]))
@@ -323,7 +324,7 @@ def test_policy_execution_upgrades_outdated_dependency_evidence(tmp_path, source
     from test_policy import test_test
     test=test_test('one');context=observation()['dependency_record']['context']
     row=executed({**test,**observation()},1,'one',context)
-    old={**row,'dependency_record':{**row['dependency_record'],'version':2}}
+    old={**row,'dependency_record':{**row['dependency_record'],'version':3}}
     b=SimpleNamespace(exp=tmp_path,by_index={1:{'sha':'one'}},groups=['g'],
                       scope={'classes':[{'file':'src/main/java/p/A.java','class':'p.A'}]},
                       raw=lambda *args:dict(sha='one',methods=[old] if source=='baseline' else []))
@@ -337,7 +338,7 @@ def test_policy_execution_upgrades_outdated_dependency_evidence(tmp_path, source
     if source=='physical':write_json(runs.path(1,test['file_hash']),dict(sha='one',methods=[old]))
     decisions=Decisions(b,runs)
     fresh=decisions.physical(1,{key(test):test},context)
-    assert len(calls)==1 and fresh[key(test)]['dependency_record']['version']==3
+    assert len(calls)==1 and fresh[key(test)]['dependency_record']['version']==4
     assert decisions.physical(1,{key(test):test},context)==fresh
     assert len(calls)==1
 
@@ -349,7 +350,7 @@ def test_outdated_policy_carry_does_not_preserve_an_unobserved_pass(tmp_path):
     test=test_test('one');context=observation()['dependency_record']['context']
     s=segment(2,1,[test],[]);b=SimpleNamespace(exp=tmp_path,by_index={2:{'sha':'two'}})
     old=carry(executed({**test,**observation()},1,'one',context))
-    old['dependency_record']={**old['dependency_record'],'version':2}
+    old['dependency_record']={**old['dependency_record'],'version':3}
     write_json(logical_path(b,'p','g',2,2),dict(sha='two',methods=[old]))
     runs=SimpleNamespace(adapter=SimpleNamespace(config={'project':{'repo':str(tmp_path),'module':'.'}}),initialize=lambda:None)
     decisions=Decisions(b,runs)
@@ -372,7 +373,7 @@ def test_baseline_control_carries_lines_and_resume_validates_origin(tmp_path, mo
         raw=worker(self,job)
         for t in raw['methods']:
             t['state']='pass'
-            t['dependency_record']=dict(version=3,selection='affected',unbounded=False,files=['src/main/java/A.java'])
+            t['dependency_record']=dict(version=4,selection='affected',unbounded=False,files=['src/main/java/A.java'])
         return raw
     monkeypatch.setattr(JavaMavenAdapter,'worker',instrumented)
     monkeypatch.setattr(Selector,'context',lambda *args:dict(known=True,entries=[]))
@@ -553,5 +554,90 @@ assert not list((exp/'before').rglob('*.exec')) and not list((exp/'before').rglo
     r=subprocess.run(['docker','run','--rm','--network','none','-e','PYTHONPATH=/src',
                       '-v',str(root/'src')+':/src:ro','-v',str(root/'src/test_survival')+':/package:ro',
                       '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script],
+                     capture_output=True,text=True,timeout=180)
+    assert r.returncode==0,r.stdout+r.stderr
+
+
+@pytest.mark.java_integration
+@pytest.mark.parametrize('owner', ['test','production','failed','isolated'])
+def test_lazy_initializer_dependencies_survive_probe_resets(tmp_path, java_environment, owner):
+    image,libs=java_environment;root=Path(__file__).parents[1]
+    script=r'''
+from pathlib import Path
+import json,subprocess,sys
+sys.path.insert(0,'/package')
+from adapters import java_worker as w,policy_coverage
+from test_survival.selection import reason,executed
+exp=Path('/out');w.EXP=w.SHARED=exp;w.HELPERS=Path('/package/adapters/java')
+w.JVM={'javac':'256m','jacoco':'256m','launcher':'256m'};w.TIMEOUTS={'compile':60,'test_class':60}
+(exp/'work/libs').mkdir(parents=True)
+for jar in Path('/libs').glob('*.jar'):(exp/'work/libs'/jar.name).symlink_to(jar)
+main=exp/'src/main/java';(main/'p').mkdir(parents=True);(main/'outside').mkdir()
+(main/'p/A.java').write_text('package p; public class A { public static int value() { return 1; } }')
+(main/'outside/Hidden.java').write_text('package outside; public class Hidden { public static int value() { return 1; } }')
+(main/'outside/AfterOnly.java').write_text('package outside; public class AfterOnly { public static int value() { return 1; } }')
+source=exp/'tests';source.mkdir()
+helper="""
+public class Helper {
+ public static final int value=load();
+ static int load() { try { return (Integer)Class.forName("outside.Hidden").getMethod("value").invoke(null); } catch(Exception e) { throw new RuntimeException(e); } }
+}
+"""
+owner=sys.argv[1]
+if owner=='failed': helper=helper.replace('return (Integer)', 'int ignored=(Integer)').replace('.invoke(null);', '.invoke(null); throw new RuntimeException("initialization failed");')
+helper_root=main/'outside' if owner in ('production','isolated') else source
+(helper_root/'Helper.java').write_text(('package outside;\n' if owner in ('production','isolated') else '')+helper)
+body='org.junit.jupiter.api.Assertions.assertEquals(1,'+('outside.' if owner in ('production','isolated') else '')+'Helper.value);'
+if owner=='isolated':body='try (java.net.URLClassLoader loader=new java.net.URLClassLoader(new java.net.URL[]{java.nio.file.Path.of("/out/target/classes").toUri().toURL()},ClassLoader.getPlatformClassLoader())) { org.junit.jupiter.api.Assertions.assertEquals(1,Class.forName("outside.Helper",true,loader).getField("value").get(null)); }'
+if owner=='failed':body='org.junit.jupiter.api.Assertions.assertThrows(LinkageError.class, () -> { int value=Helper.value; });'
+(source/'T.java').write_text("""
+@org.junit.jupiter.api.TestMethodOrder(org.junit.jupiter.api.MethodOrderer.OrderAnnotation.class)
+class T {
+ @org.junit.jupiter.api.Test @org.junit.jupiter.api.Order(1) void first() throws Exception { BODY Class.forName("outside.AfterOnly").getMethod("value").invoke(null); org.junit.jupiter.api.Assertions.assertEquals(1,p.A.value()); }
+ @org.junit.jupiter.api.Test @org.junit.jupiter.api.Order(2) void second() throws Exception { BODY org.junit.jupiter.api.Assertions.assertEquals(1,p.A.value()); }
+}
+""".replace('BODY',body))
+classes=exp/'target/classes';classes.mkdir(parents=True)
+def compile_main():subprocess.run(['javac','-g','-d',str(classes),*[str(p) for p in main.rglob('*.java')]],check=True)
+compile_main()
+records=json.loads((w.HELPERS/'classpath-artifacts.json').read_text())
+cp=':'.join([str(classes),*['/libs/'+n for n in w.runner_test_jars(records)]])
+w.classpath=lambda _:(exp,cp);w.jacoco_version=lambda _:'0.8.14'
+methods=[dict(id=name,file='tests/T.java',source_root='tests',resource_root='tests',file_hash='frozen',execution_hash='snapshot',
+              **{'class':'T'},method=name) for name in ('first','second')]
+if owner=='test':
+ other=exp/'other';other.mkdir();(other/'Separate.java').write_text('class Separate { @org.junit.jupiter.api.Test void works() { org.junit.jupiter.api.Assertions.assertEquals(1,p.A.value()); } }')
+ methods.append(dict(id='separate',file='other/Separate.java',source_root='other',resource_root='other',file_hash='separate',execution_hash='separate',**{'class':'Separate'},method='works'))
+def run(label,mode,tests):
+ policy_coverage.run(w,dict(index=0,sha=label,selection=mode,chunk_workers=1,methods=tests,survival=True,
+  scope_files=['src/main/java/p/A.java']+(['src/main/java/outside/Helper.java'] if owner in ('production','isolated') else []),
+  scope_classes=['p.A']+(['outside.Helper'] if owner in ('production','isolated') else []),work=label,output=label+'.json'))
+ rows=json.loads((exp/(label+'.json')).read_text())['methods']
+ return [{**next(t for t in tests if t['id']==row['id']), **row} for row in rows]
+before=run('before','affected',methods)
+for row in before:
+ assert row['state']=='pass',row
+ record=row['dependency_record']
+ if row['id']=='separate':
+  assert not record['unbounded'] and 'src/main/java/outside/Hidden.java' not in record['files'],row
+  continue
+ if row['method']=='second':assert 'src/main/java/outside/AfterOnly.java' not in record['files'],row
+ if owner in ('failed','isolated'):assert record['unbounded'],row
+ else:
+  assert not record['unbounded'],row
+  assert 'src/main/java/outside/Hidden.java' in record['files'],row
+(main/'outside/Hidden.java').write_text('package outside; public class Hidden { public static int value() { return 2; } }')
+compile_main();context=dict(known=True,entries=[])
+selected=[r for r in before if reason(executed(r,0,'t',context),1,'changed',context,['src/main/java/outside/Hidden.java'],False)]
+assert len(selected)==2,selected
+all_rows=run('changed-all','all',methods);affected_rows=run('changed-affected','affected',selected)
+merged={r['id']:(r['state'],r['lines']) for r in before};merged.update({r['id']:(r['state'],r['lines']) for r in affected_rows})
+assert merged=={r['id']:(r['state'],r['lines']) for r in all_rows}
+assert all(r['state']==('pass' if owner=='failed' else 'fail') for r in affected_rows)
+assert not list((exp/'before').rglob('*.exec')) and not list((exp/'before').rglob('*.xml'))
+'''
+    r=subprocess.run(['docker','run','--rm','--network','none','-e','PYTHONPATH=/src',
+                      '-v',str(root/'src')+':/src:ro','-v',str(root/'src/test_survival')+':/package:ro',
+                      '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(tmp_path)+':/out',image,'python3','-c',script,owner],
                      capture_output=True,text=True,timeout=180)
     assert r.returncode==0,r.stdout+r.stderr

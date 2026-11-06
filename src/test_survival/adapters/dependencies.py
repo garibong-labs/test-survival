@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import struct
 
-RECORD_VERSION = 3  # Includes discovery and every ancestor container's setup hits.
+RECORD_VERSION = 4  # Includes discovery, ancestor setup, and lazy class initialization.
 
 
 class Reader:

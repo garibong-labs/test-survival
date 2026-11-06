@@ -757,3 +757,40 @@ def test_policy_coverage_distinguishes_colliding_snapshot_methods(baseline, sele
         assert row['llm_covered']==('' if missing_second else '2')
         assert row['llm_percent']==('' if missing_second else '100.0')
         assert bool(read_csv(out/'coverage-missing.csv')) == missing_second
+
+
+def test_affected_coverage_reads_and_indexes_each_logical_record_once(baseline, monkeypatch):
+    from collections import Counter
+    from test_survival.policy import cover
+    from test_survival.policy.affected import logical_path
+    exp,config,root=baseline
+    config['policies']['regenerate_developer']=False
+    b=Baseline(exp,config);b.groups.append('llm');b.execution_config['survival']['selection']='affected'
+    tests=[dict(test_test(str(n)),execution_hash='snapshot') for n in range(1000)]
+    change=dict(index=1,sha='sha',date='date',subject='change',scope_executable=100,**{'scope_dev-scope_covered':0})
+    write_csv(root/'results/changed-lines.csv',[change],list(change))
+    write_json(root/'results/changes/1.json',dict(post_image={'src/main/java/A.java':list(range(1,101))}))
+    observations=[dict(t,state='pass',lines=[['src/main/java/A.java',n] for n in range(1,101)]) for t in tests]
+    paths=[]
+    for policy in b.options['set']:
+        name=policy['name'];out=exp/'results/policy'/name
+        write_json(out/'alive.json',{'1':{'dev-scope':[], 'llm':tests}})
+        write_json(out/'segments.json',{'dev-scope':[{'start':0}], 'llm':[{'start':0},{'start':1,'segment':2}]})
+        path=logical_path(b,name,'llm',2,1);paths.append(path)
+        write_json(path,dict(methods=observations),compress=True)
+    reads=Counter();keys=Counter();read=cover.read_json;identify=cover.key
+    def counted(path,*args,**kwargs):
+        reads[path]+=1
+        return read(path,*args,**kwargs)
+    def keyed(row):
+        keys['rows']+=1
+        return identify(row)
+    monkeypatch.setattr(cover,'read_json',counted);monkeypatch.setattr(cover,'key',keyed)
+    cover.run(b,None)
+    assert {path:reads[path] for path in paths}==dict.fromkeys(paths,1)
+    assert keys['rows']==2*len(tests)*len(paths)
+    assert not any('/policy/runs/' in str(path) for path in reads)
+    for policy in b.options['set']:
+        out=exp/'results/policy'/policy['name']
+        assert read_csv(out/'coverage-commits.csv')[0]['llm_covered']=='100'
+        assert not read_csv(out/'coverage-missing.csv')

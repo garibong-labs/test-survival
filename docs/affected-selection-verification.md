@@ -387,3 +387,48 @@ The large scratch experiment comparisons and performance measurements were not
 rerun for these review fixes. Their recorded revisions, counts, and timings above
 remain historical benchmark evidence. No original experiment was modified and
 no model calls were made.
+
+### Second review follow-up
+
+The next review identified lazy class initialization after the setup snapshot
+and repeated logical-record parsing during policy coverage projection. Disposable
+regressions reproduced both before the fixes: later methods lacked a dependency
+reached reflectively by a test helper or production class initializer, and each
+of two policies read its 1,000-method logical record 1,000 times at one index.
+
+Affected JVMs now install initializer hooks after the JaCoCo transformer. The
+hooks do not reset probes or change JaCoCo's class IDs, scope-line attribution,
+or frozen class files. Production hits at initializer completion remain
+available to later methods in that snapshot. This is deliberately conservative:
+hits already present before the initializer may be reused inside it, so they
+cannot safely be subtracted. Such extra dependencies may cause extra executions.
+Failed/incomplete initialization or an isolated loader that cannot access the
+hook bridge produces unbounded evidence rather than changing test behavior.
+Dependency version 4 prevents reuse of earlier incomplete evidence.
+
+Real Java fixtures cover test and production initializers, caught initialization
+failure, isolated loaders, snapshot isolation, and exclusion of subsequent
+test-body hits from inherited initializer dependencies. Changing only the hidden
+production dependency selects both consumers and matches all-mode states and
+scope lines, including lines inside a production initializer. Existing nested
+setup, discovery, and concurrent snapshot fixtures remain part of validation.
+
+Coverage projection loads each logical record once per policy/group/index and
+indexes rows by snapshot/method identity. It avoids discarded physical-record
+reads in affected mode; physical records in all mode are also indexed once.
+The 1,000-method regression checks bounded read and key-lookup counts, complete
+line coverage, and absence of spurious missing-coverage rows.
+
+On one quiet-host projection-only measurement (two policies, one index, 1,000
+methods per policy, 100 lines per method), wall time drops from **33.992 s** at
+`cdf3f46` to **0.051 s** with the fix. Logical-file reads drop from **2,000 to 2**;
+key evaluations are **4,000** after the fix. This is a disposable fixture timing,
+not a new large-experiment survival benchmark.
+
+The full local suite passes **885 tests** on Python 3.12 in **189.46 s**: **864
+Python tests and all 21 real Java 25 fixtures**, with no skips, failures, or
+errors. CI's required-fixture list includes all four new initialization cases.
+
+The large experiment benchmarks were not rerun for this second review follow-up;
+their timings and executed/carried counts above describe their recorded revisions,
+not the new initializer instrumentation. No original experiments were modified.

@@ -150,7 +150,7 @@ Fresh batch method rows add `selection_action: executed | carried`,
 that observation's state and scope `lines`. Dead/not-selected inventory markers
 and unevaluated commit markers are excluded from execution counts.
 
-Affected actual executions add a `dependency_record` containing `version: 3`,
+Affected actual executions add a `dependency_record` containing `version: 4`,
 `selection: affected`, sorted module-relative production `files`, `unbounded`, and
 `context`. Dependencies union runtime production class hits, compiled test-tree
 references (stopping at production classes), and production simple names found as
@@ -160,10 +160,18 @@ classes or incomplete analysis are conservatively unbounded. Only dependency
 file sets and existing scope lines persist; no full-production line coverage,
 probe dumps, or XML are added by selection. Legacy/all rows without dependencies
 remain readable observations and cannot authorize an affected carry.
-Version 3 retains production class hits from pre-plan discovery (such as Vintage
-parameter providers) and setup from every ancestor test container. Shared outer
-setup therefore supports every nested descendant, including sibling classes.
-Prototype version-1/2 dependencies stay readable but require execution before
+Version 4 retains production class hits from pre-plan discovery (such as Vintage
+parameter providers), setup from every ancestor test container, and lazy class
+initialization in both production and frozen test-tree classes. Initializer hooks
+run after JaCoCo instrumentation, preserve its probes and class IDs, and retain
+class hits for later methods in the same snapshot. These hits are conservative:
+an initializer may reuse a probe hit earlier in the current interval, so all
+current production hits at initializer completion are retained. This can cause
+extra executions; later test-body hits are not retained by this mechanism.
+Incomplete initialization, unavailable hooks, or a custom loader unable to see
+the hook bridge marks the dependency record unbounded. Scope lines still use
+only the original per-test probe dump. No frozen class files are rewritten.
+Prototype version-1/2/3 dependencies stay readable but require execution before
 they can authorize another carry or satisfy an affected policy execution request.
 
 `results/selection-context/<index>.json` records the commit SHA, coordinate-list

@@ -1,4 +1,5 @@
 import java.io.*;
+import java.lang.instrument.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -12,21 +13,102 @@ import org.jacoco.cli.internal.core.analysis.*;
 import org.jacoco.cli.internal.core.tools.ExecFileLoader;
 import org.jacoco.cli.internal.asm.ClassReader;
 import org.jacoco.cli.internal.asm.ClassVisitor;
+import org.jacoco.cli.internal.asm.ClassWriter;
+import org.jacoco.cli.internal.asm.MethodVisitor;
 import org.jacoco.cli.internal.asm.Opcodes;
 
 /** One test JVM; isolated class loaders allow different versions of the same test class. */
 public final class PerTestCoverage implements TestExecutionListener {
+    private static volatile PerTestCoverage current;
     private final Path output;
     private final Map<String, byte[]> analysisClasses;
     private final Set<String> scope;
     private final boolean dependencies = Boolean.getBoolean("survival.dependencies");
     private final Map<String, Set<String>> setupHits = new HashMap<>();
     private Set<String> discoveryHits = Set.of();
+    private final Set<String> initializerHits = new TreeSet<>();
+    private int initializing;
+    private boolean initializerUnbounded;
     private TestPlan plan;
     private int serial;
     private Throwable failure;
     private final Object agent;
     private final java.lang.reflect.Method dump;
+
+    /** Runs after JaCoCo's transformer, preserving its original class IDs and
+     * probes. Hooks neither reset probes nor change the frozen class files. */
+    public static final class Initializers implements ClassFileTransformer {
+        private final Set<Path> roots = new HashSet<>();
+
+        public static void premain(String args, Instrumentation instrumentation) throws Exception {
+            Initializers transformer = new Initializers();
+            for (String root : System.getProperty("survival.initializer.roots").split(File.pathSeparator))
+                transformer.roots.add(Path.of(root).toRealPath());
+            instrumentation.addTransformer(transformer);
+            System.setProperty("survival.initializers", "true");
+        }
+
+        public byte[] transform(ClassLoader loader, String name, Class<?> redefining,
+                                java.security.ProtectionDomain domain, byte[] bytes) {
+            try {
+                if (domain == null || domain.getCodeSource() == null ||
+                    !domain.getCodeSource().getLocation().getProtocol().equals("file") ||
+                    !roots.contains(Path.of(domain.getCodeSource().getLocation().toURI()).toRealPath())) return null;
+                ClassReader reader = new ClassReader(bytes);
+                ClassWriter writer = new ClassWriter(reader, 0);
+                boolean[] changed = {false};
+                reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+                    public MethodVisitor visitMethod(int access, String method, String descriptor, String signature, String[] exceptions) {
+                        MethodVisitor delegate = super.visitMethod(access, method, descriptor, signature, exceptions);
+                        if (!method.equals("<clinit>")) return delegate;
+                        changed[0] = true;
+                        return new MethodVisitor(Opcodes.ASM9, delegate) {
+                            private void hook(String method) {
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, "PerTestCoverage", method, "()V", false);
+                            }
+                            public void visitCode() { super.visitCode(); hook("initializerStarted"); }
+                            public void visitInsn(int opcode) {
+                                if (opcode == Opcodes.RETURN) hook("initializerFinished");
+                                if (opcode == Opcodes.ATHROW) hook("initializerFailed");
+                                super.visitInsn(opcode);
+                            }
+                        };
+                    }
+                }, 0);
+                if (!changed[0]) return null;
+                // Custom test loaders need not expose our bridge. Leave their
+                // bytecode intact and conservatively invalidate attribution.
+                if (!Boolean.TRUE.equals(Class.forName("PerTestCoverage", false, loader)
+                        .getMethod("hasDependencyListener").invoke(null))) {
+                    System.setProperty("survival.initializer.failure", "true");
+                    return null;
+                }
+                return writer.toByteArray();
+            } catch (Throwable ex) {
+                // A transformer failure must not change the tests' behavior or
+                // silently leave their dependency evidence bounded.
+                System.setProperty("survival.initializer.failure", "true");
+                return null;
+            }
+        }
+    }
+
+    private synchronized void initializer(boolean finished, boolean failed) {
+        if (!dependencies) return;
+        if (!finished) { initializing++; return; }
+        initializerUnbounded |= failed;
+        try {
+            // Retain a conservative superset: probes already hit in the current
+            // interval may also run in the initializer, so subtraction is unsafe.
+            initializerHits.addAll(hits((byte[])dump.invoke(agent, false)));
+        } catch (Throwable ex) { initializerUnbounded = true; }
+        if (--initializing < 0) initializerUnbounded = true;
+    }
+
+    public static void initializerStarted() { if (current != null) current.initializer(false, false); }
+    public static void initializerFinished() { if (current != null) current.initializer(true, false); }
+    public static void initializerFailed() { if (current != null) current.initializer(true, true); }
+    public static boolean hasDependencyListener() { return current != null; }
 
     PerTestCoverage(Path output, Map<String, byte[]> analysisClasses) throws Exception {
         this.output = output;
@@ -123,12 +205,16 @@ public final class PerTestCoverage implements TestExecutionListener {
             if (dependencies) {
                 Set<String> names = hits(bytes);
                 names.addAll(discoveryHits);
+                names.addAll(initializerHits);
                 Optional<TestIdentifier> parent = plan.getParent(id);
                 while (parent.isPresent()) {
                     names.addAll(setupHits.getOrDefault(parent.get().getUniqueId(), Set.of()));
                     parent = plan.getParent(parent.get());
                 }
                 Files.write(output.resolve(name + ".classes"), names);
+                if (!Boolean.getBoolean("survival.initializers") || initializerUnbounded || initializing != 0 ||
+                    Boolean.getBoolean("survival.initializer.failure"))
+                    Files.writeString(output.resolve(name + ".unbounded"), "Incomplete class-initializer attribution");
             }
             ExecFileLoader data = new ExecFileLoader();
             data.load(new ByteArrayInputStream(bytes));
@@ -158,6 +244,7 @@ public final class PerTestCoverage implements TestExecutionListener {
     public static void batch(String[] args, Map<String, byte[]> classes) throws Exception {
         Path out = Paths.get(args[0]); Files.createDirectories(out);
         PerTestCoverage listener = new PerTestCoverage(out, classes);
+        current = listener;
         LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request()
             .configurationParameter("junit.jupiter.execution.parallel.enabled", "false")
             .configurationParameter("junit.vintage.execution.parallel.enabled", "false");

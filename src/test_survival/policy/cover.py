@@ -44,27 +44,31 @@ def run(b, step):
                     covered = int(value) if value != '' else ''
                 else:
                     hits = set(); reasons = {batch_missing[index,g]} if (index,g) in batch_missing else set()
+                    affected = b.execution_config['survival'].get('selection') == 'affected'
+                    if affected:
+                        from .affected import logical_path
+                        active = [s for s in segments[g] if int(s['start']) <= index][-1]
+                        raw = read_json(logical_path(b,p,g,active['segment'],index), {})
+                        by_method = {key(r):r for r in raw.get('methods', [])}
                     for t in alive[str(index)][g]:
-                        digest = execution_id(t)
-                        if digest not in cache:
-                            cache[digest] = read_json(b.exp/f'results/policy/runs/{digest}/{index}.json', {})
-                        raw = cache[digest]
-                        if b.execution_config['survival'].get('selection') == 'affected':
-                            from .affected import logical_path
-                            active = [s for s in segments[g] if int(s['start']) <= index][-1]
-                            raw = read_json(logical_path(b,p,g,active['segment'],index), {})
-                            found = [r for r in raw.get('methods', []) if key(r) == key(t)]
+                        if affected:
+                            found = by_method.get(key(t))
                         else:
-                            found = [r for r in raw.get('methods', []) if identity(r) == identity(t)]
-                        if not found or 'lines' not in found[0]:
+                            digest = execution_id(t)
+                            if digest not in cache:
+                                raw = read_json(b.exp/f'results/policy/runs/{digest}/{index}.json', {})
+                                cache[digest] = raw, {identity(r):r for r in raw.get('methods', [])}
+                            raw, by_method = cache[digest]
+                            found = by_method.get(identity(t))
+                        if found is None or 'lines' not in found:
                             reasons.add(raw.get('coverage_reason') or 'missing per-test coverage')
-                        elif not usable_lines(found[0]):
+                        elif not usable_lines(found):
                             # The member ran when the policies evaluated it, but the
                             # measurement that gave the row its (empty) lines did not
                             # execute it: unavailable, not zero.
-                            reasons.add('remeasure did not execute the method: '+str(found[0]['remeasured_state']))
+                            reasons.add('remeasure did not execute the method: '+str(found['remeasured_state']))
                         else:
-                            hits.update((f,int(n)) for f,n in found[0]['lines'] if f in scope)
+                            hits.update((f,int(n)) for f,n in found['lines'] if f in scope)
                     covered = '' if reasons else len(hits & executable)
                     if reasons and (index,g) not in batch_missing:
                         missing.append(dict(index=index, sha=row['sha'], group=g, reason='; '.join(sorted(reasons))))
