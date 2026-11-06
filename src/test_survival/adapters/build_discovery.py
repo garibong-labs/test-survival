@@ -9,6 +9,18 @@ from ..config import canonical_hash, record_runner_inputs
 from ..io import read_json, write_csv, write_json
 
 
+def has_reports(directory):
+    return any(p.is_file() for p in Path(directory).glob('TEST-*.xml'))
+
+
+def require_reports(directory):
+    if not has_reports(directory):
+        raise RuntimeError('No Surefire XML reports found in '+str(directory)+
+                           '; build discovery requires TEST-*.xml evidence. '
+                           'Custom report destinations, disabled XML reporting, and test phases '
+                           'that produce no reports are unsupported; no developer population was accepted.')
+
+
 def report_methods(directory, methods):
     by_class = defaultdict(list)
     for method in methods:
@@ -97,7 +109,7 @@ def discover(adapter, methods):
     output = exp/'results/dev-build-discovery.json'
     previous = read_json(output, {})
     destination = exp/'results/dev-build-reports'
-    if previous.get('input_sha256') == fingerprint and previous.get('complete') and destination.is_dir():
+    if previous.get('input_sha256') == fingerprint and previous.get('complete') and has_reports(destination):
         result = previous
     else:
         reports = folder/'target/surefire-reports'
@@ -116,7 +128,7 @@ def discover(adapter, methods):
         # Test failures are ignored by Maven; a nonzero exit is infrastructure or compilation failure.
         if result['exit_code'] or result.get('timeout'):
             raise RuntimeError('Build test-phase discovery failed; see results/dev-build-test-phase.log')
-        destination.mkdir(parents=True, exist_ok=True)
+        require_reports(destination)
     observed, unmapped, counts = report_methods(destination, methods)
     settings = surefire_config(folder/'pom.xml')
     candidates, excluded = [], []

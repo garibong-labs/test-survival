@@ -54,6 +54,26 @@ def test_nested_inheritance_and_overloads_stay_ambiguous(tmp_path):
     assert not observed and unmapped[0]['reason']=='ambiguous-source-method'
 
 
+def test_concrete_source_file_survives_mapping_freezing_and_snapshot(tmp_path):
+    inv = inventory()
+    inv['classes']['p.One']['path'] = 'dev/src-test-t/java/p/Family.java'
+    methods = [m for m in expand(inv)['methods'] if m['class']=='p.One' and m['method']=='protectedTest']
+    assert len(methods)==1
+    assert methods[0]['file']=='dev/src-test-t/java/p/Family.java'
+    (tmp_path/'TEST-p.One.xml').write_text('<testsuite><testcase classname="p.One" name="protectedTest"/></testsuite>')
+    observed, unmapped, _ = report_methods(tmp_path, methods)
+    assert observed=={('p.One','protectedTest'):['pass']} and not unmapped
+    kept, _ = coverage_scoped([dict(methods[0], stable='yes')], [dict(methods[0], status='pass', scope_lines_covered=1)])
+    frozen = frozen_method(kept[0])
+    assert frozen['file']=='dev/src-test-t/java/p/Family.java'
+    assert frozen['declaring_file']=='dev/src-test-t/java/p/Base.java'
+    for name in ('Family', 'Base'):
+        source=tmp_path/f'dev/src-test-t/java/p/{name}.java';source.parent.mkdir(parents=True, exist_ok=True);source.write_text(name)
+    pool=snapshot(tmp_path,tmp_path/'policy',[frozen],group='dev',method='dev',scope=[],prefix='pool')
+    assert pool[0]['file']=='pool/dev/src-test-t/java/p/Family.java'
+    assert pool[0]['declaring_file']=='pool/dev/src-test-t/java/p/Base.java'
+
+
 def test_regeneration_build_filter_preserves_concrete_inherited_pool_members(tmp_path,monkeypatch):
     from types import SimpleNamespace
     from test_survival.policy import pools
@@ -62,8 +82,9 @@ def test_regeneration_build_filter_preserves_concrete_inherited_pool_members(tmp
     from test_survival.io import write_json
     config=validate(dict(name='pool',anchor='t',project=dict(repo=str(tmp_path)),dev=dict(discovery='build')))
     source=tmp_path/'checkout/src/test/java/p';source.mkdir(parents=True)
-    for name in ('Base','One','Two','Excluded'):(source/(name+'.java')).write_text('class '+name+' {}')
+    for name in ('Base','Family','Excluded'):(source/(name+'.java')).write_text('class '+name+' {}')
     methods=[dict(**{'class':'p.'+name},method='works',kind='plain',body_hash='same-inherited-body',
+                  file='/experiment/dev/src-test-t/java/p/Family.java',
                   declaring_class='p.Base',declaring_file='/experiment/dev/src-test-t/java/p/Base.java') for name in ('One','Two')]
     methods.append(dict(**{'class':'p.Excluded'},method='tagged',kind='plain',body_hash='excluded'))
     selected=[]
@@ -94,6 +115,7 @@ def test_regeneration_build_filter_preserves_concrete_inherited_pool_members(tmp
     pool=pools.build_pool(b,dict(group='dev',index=2,sha='next'),2)
     assert {t['id'] for t in pool}=={'p.One#works','p.Two#works'}
     assert len(selected)==2 and all(t['declaring_file'].endswith('/p/Base.java') for t in pool)
+    assert all(t['file'].endswith('/p/Family.java') for t in pool)
 
 
 def test_lexically_enclosed_base_takes_precedence_over_same_package_type():

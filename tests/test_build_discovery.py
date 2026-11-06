@@ -148,3 +148,74 @@ def test_overloads_are_audited_as_ambiguous_not_as_unreported(tmp_path):
     assert discover(adapter,[method('overloaded'),method('overloaded')])==[]
     assert [r['reason'] for r in read_csv(tmp_path/'dev/dev-not-run-by-build.csv')]==['ambiguous-source-method']*2
     assert read_csv(tmp_path/'dev/build-report-unmapped.csv')[0]['reason']=='ambiguous-source-method'
+
+
+@pytest.mark.parametrize('legacy_empty', [False, True])
+def test_custom_report_directory_cannot_publish_empty_candidates(tmp_path, legacy_empty):
+    from test_survival.config import canonical_hash, record_runner_inputs
+    folder = tmp_path/'work/checkouts/0'; folder.mkdir(parents=True)
+    (folder/'pom.xml').write_text('''<project><build><plugins><plugin>
+        <artifactId>maven-surefire-plugin</artifactId><configuration>
+        <reportsDirectory>target/qa-xml</reportsDirectory></configuration></plugin></plugins></build></project>''')
+    write_json(tmp_path/'results/anchor.json', dict(sha='t'))
+    config = validate(dict(name='reports', anchor='t', project=dict(repo=str(tmp_path)), dev=dict(discovery='build')))
+    if legacy_empty:
+        fingerprint = canonical_hash(dict(sha='t', runner=record_runner_inputs(config['runner']), module='.'))
+        write_json(tmp_path/'results/dev-build-discovery.json', dict(input_sha256=fingerprint, complete=True))
+        (tmp_path/'results/dev-build-reports').mkdir()
+    calls = []
+    def execute(*args):
+        calls.append(args)
+        reports = folder/'target/qa-xml'; reports.mkdir(parents=True)
+        (reports/'TEST-p.Tests.xml').write_text('<testsuite><testcase name="works"/></testsuite>')
+        return dict(exit_code=0, seconds=1)
+    adapter = SimpleNamespace(exp=tmp_path, config=config, folder=lambda _:folder, runner=SimpleNamespace(execute=execute))
+    with pytest.raises(RuntimeError, match='Surefire XML reports'):
+        discover(adapter, [method('works')])
+    assert len(calls) == 1
+    assert not read_json(tmp_path/'results/dev-build-discovery.json')['complete']
+    assert not (tmp_path/'dev/dev-not-run-by-build.csv').exists()
+
+
+@pytest.mark.parametrize('saved_empty_repeat', [False, True])
+def test_build_stability_repeat_requires_report_evidence(tmp_path, monkeypatch, saved_empty_repeat):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    config = validate(dict(name='repeat', anchor='t', project=dict(repo=str(tmp_path)),
+                           dev=dict(discovery='build', stable_runs=2)))
+    adapter = JavaMavenAdapter(tmp_path, config)
+    folder = adapter.folder(0); (folder/'src/test/java/p').mkdir(parents=True)
+    (folder/'pom.xml').write_text('<project/>')
+    write_json(tmp_path/'results/anchor.json', dict(sha='t'))
+    monkeypatch.setattr(adapter, 'list_production_methods', lambda _:dict(classes={}, methods=[]))
+    monkeypatch.setattr(adapter, 'list_test_methods', lambda _:dict(classes={}, methods=[method('works')]))
+    monkeypatch.setattr(adapter.cache, 'resolve', lambda *a:None)
+    if saved_empty_repeat:
+        write_json(tmp_path/'results/baseline-run2.json', dict(index=2, attempts=[]))
+        (tmp_path/'results/baseline-reports/run2').mkdir(parents=True)
+    calls = []
+    def execute(command, *args):
+        calls.append(command)
+        directory = 'surefire-reports' if len(calls)==1 else 'qa-xml'
+        reports = folder/'target'/directory; reports.mkdir(parents=True, exist_ok=True)
+        (reports/'TEST-p.Tests.xml').write_text('<testsuite><testcase name="works"/></testsuite>')
+        return dict(exit_code=0, seconds=1)
+    monkeypatch.setattr(adapter.runner, 'execute', execute)
+    with pytest.raises(RuntimeError, match='Surefire XML reports'):
+        adapter.baseline()
+    assert len(calls) == 2
+    assert not (tmp_path/'dev/dev-methods-all.csv').exists()
+
+
+def test_skipped_only_xml_is_valid_evidence_for_empty_candidates(tmp_path):
+    folder = tmp_path/'work/checkouts/0'; folder.mkdir(parents=True)
+    (folder/'pom.xml').write_text('<project/>')
+    write_json(tmp_path/'results/anchor.json', dict(sha='t'))
+    def execute(*args):
+        reports = folder/'target/surefire-reports'; reports.mkdir(parents=True)
+        (reports/'TEST-p.Tests.xml').write_text('<testsuite><testcase name="disabled"><skipped/></testcase></testsuite>')
+        return dict(exit_code=0, seconds=1)
+    config = validate(dict(name='skipped', anchor='t', project=dict(repo=str(tmp_path)), dev=dict(discovery='build')))
+    adapter = SimpleNamespace(exp=tmp_path, config=config, folder=lambda _:folder, runner=SimpleNamespace(execute=execute))
+    assert discover(adapter, [method('disabled')])==[]
+    record = read_json(tmp_path/'results/dev-build-discovery.json')
+    assert record['complete'] and record['counts']['skipped']==1 and record['counts']['excluded']==1

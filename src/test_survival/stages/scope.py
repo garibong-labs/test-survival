@@ -144,12 +144,14 @@ def run(exp, config):
         else:
             selected_dev=denominator(baseline,g['denominator'],chosen,{n.rsplit('.',1)[-1] for n in inventory['main']['classes']})
             selected_methods={(r['class'],r['method']) for r in selected_dev}
-            excluded=[{**{k:r[k] for k in ['class','method','kind']},'status':'pass','scope_lines_covered':'','reason':'not-scope-targeted'} for r in baseline if r['stable']=='yes' and (r['class'],r['method']) not in selected_methods]
+            excluded=[{**identity(r),'status':'pass','scope_lines_covered':'','reason':'not-scope-targeted'} for r in baseline if r['stable']=='yes' and (r['class'],r['method']) not in selected_methods]
         denominators[g['name']]=selected_dev
         fields = ['class','method','kind']
+        if any(r.get('file') for r in selected_dev): fields += ['file']
         if any(r.get('declaring_file') for r in selected_dev): fields += ['declaring_class','declaring_file']
         write_csv(exp/denominator_file(g,index),selected_dev,fields)
         excluded_fields = ['class','method','kind','status','scope_lines_covered','reason']
+        if any(r.get('file') for r in excluded): excluded_fields += ['file']
         if any(r.get('declaring_file') for r in excluded): excluded_fields += ['declaring_class','declaring_file']
         write_csv(exp/f"dev/{g['name']}-excluded.csv",excluded,excluded_fields)
         excluded_counts[g['name']]=dict(excluded=len(excluded),failed_alone=sum(r['reason']=='failed-alone' for r in excluded))

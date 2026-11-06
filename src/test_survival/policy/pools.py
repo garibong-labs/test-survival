@@ -72,8 +72,8 @@ def build_pool(b, point, dev_target):
     main = adapter.list_production_methods(0)
     tests = adapter.list_test_methods(exp/'dev/src-test-t/java')
     for row in tests['methods']:
-        if row.get('declaring_file'):
-            row['declaring_file'] = row['declaring_file'].replace(adapter.runner.path(exp)+'/', '')
+        for key in ('file', 'declaring_file'):
+            if row.get(key): row[key] = row[key].removeprefix(adapter.runner.path(exp)+'/')
     write_json(exp/'results/source-inventory.json', dict(main=main, test=tests))
     scope = [c for c in b.scope['classes'] if c['class'] in main['classes']]
     focal = [m for m in main['methods'] if m['eligible'] and m['class'] in {c['class'] for c in scope}]

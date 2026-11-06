@@ -226,7 +226,12 @@ For a configured submodule it invokes the reactor with `-pl <module> -am`, and
 reads only that module's `target/surefire-reports/TEST-*.xml`. Prefetch the
 project's dependencies and Surefire provider into the runner's Maven cache before
 an offline run. A nonzero phase exit or timeout stops preparation; it does not
-produce an empty population. Failed methods still count as executed candidates,
+produce an empty population. Discovery and every stability repeat require at
+least one Surefire XML report. Custom report destinations, disabled XML reports,
+or test phases that produce no reports are currently unsupported and stop with
+an explicit error. An empty saved report directory is not reusable evidence.
+Reports containing only skipped cases can establish an empty candidate set.
+Failed methods still count as executed candidates,
 and the existing stability screen determines denominator eligibility. Parameterized
 and repeated invocations collapse to their source method. Skipped-only methods
 and unmappable report entries do not enter the candidate set.
@@ -237,7 +242,8 @@ as additional tests. Jupiter includes non-private
 superclass tests across package boundaries, including package-private tests. Candidate filtering, denominators,
 survival execution, and regeneration pools use the concrete class/method pair.
 `declaring_class` and `declaring_file` retain the method's source declaration;
-the execution `file` names the concrete class's source. Unresolved external
+the execution `file` retains the concrete class's inventoried source path, even
+when several top-level classes share a file. Unresolved external
 superclasses and ambiguous overloaded methods remain audited exclusions.
 
 Exclusion reasons use skipped reports and literal module configuration/source

@@ -2,7 +2,7 @@
 
 
 def identity(row):
-    return {k: row[k] for k in ('class', 'method', 'kind', 'declaring_class', 'declaring_file') if row.get(k)}
+    return {k: row[k] for k in ('class', 'method', 'kind', 'file', 'declaring_class', 'declaring_file') if row.get(k)}
 
 
 def unmapped_note(count):
@@ -71,7 +71,7 @@ def derive_record(source, group, denominator):
 
 
 def frozen_method(row):
-    file='dev/src-test-t/java/'+row['class'].split('$',1)[0].replace('.','/')+'.java'
+    file=row.get('file') or 'dev/src-test-t/java/'+row['class'].split('$',1)[0].replace('.','/')+'.java'
     return {**row,'file':file,'id':'|'.join([file,row['class'],row['method']])}
 
 

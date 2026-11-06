@@ -161,4 +161,5 @@ def expand(inventory, framework='junit5'):
         if data['kind'] != 'CLASS' or 'abstract' in data.get('modifiers', ''): continue
         inherited.extend({k:v for k,v in m.items() if k != '_signature'}
                          for m in members(owner, defaults(data, owner, {})) if m.get('inherited') and m['kind'])
-    return {**inventory, 'methods': inventory['methods']+inherited}
+    return {**inventory, 'methods': [dict(m, file=classes[m['class']]['path'])
+                                    for m in inventory['methods']+inherited]}

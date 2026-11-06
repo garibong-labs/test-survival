@@ -185,6 +185,9 @@ source methods with at least one executed, non-skipped Surefire invocation. The
 same rule applies to developer regeneration pools. Omitted settings retain
 `source` discovery. Exclusions and unmapped report entries are audited separately;
 control, survival, and policy execution still use the tool's test runner.
+Each discovery/stability run requires XML evidence in the configured module's
+`target/surefire-reports`; unsupported report locations or missing reports stop
+preparation instead of accepting an empty population.
 Inherited tests use the concrete class and method as their identity and execute
 through that class. Records retain `declaring_class` and `declaring_file` for
 source provenance. Overloaded test methods sharing a name remain ambiguous and

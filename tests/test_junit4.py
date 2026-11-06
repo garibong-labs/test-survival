@@ -471,7 +471,11 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
         override = 'public void inherited() { if (Production.value()!=2) throw new AssertionError(); }' if framework=='junit4' and name=='One' else ''
         if framework=='junit5' and name=='One':
             override=parameterized+' @Override public void works(String value) { if (Production.value()!=2) throw new AssertionError(); }'
-        (directory/(name+'.java')).write_text('package '+package+'; public class '+name+' extends fixture.Base { '+override+' }')
+            # Jupiter allows a package-private concrete class in another class's file.
+            base=sources/'Base.java'
+            base.write_text(base.read_text()+'\nclass One extends Base { '+override+' }')
+        else:
+            (directory/(name+'.java')).write_text('package '+package+'; public class '+name+' extends fixture.Base { '+override+' }')
     production=tmp_path/'work/checkouts/0/src/main/java/fixture/Production.java';production.parent.mkdir(parents=True)
     production.write_text('package fixture; public class Production { public static int value() { return 2; } }')
     classes=tmp_path/'work/checkouts/0/target/classes';classes.mkdir(parents=True)
@@ -510,6 +514,7 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
             assert invocations==['generic']
             overridden=[m for m in inventory['methods'] if m['class']=='fixture.One' and m['method']=='works' and m['kind']]
             assert len(overridden)==1
+            assert overridden[0]['file']=='dev/src-test-t/java/fixture/Base.java'
             member=frozen_method(identity(overridden[0]))
             member.update(source_root='dev/src-test-t/java',resource_root='dev/src-test-t',
                           file_hash=hashlib.sha256((tmp_path/member['file']).read_bytes()).hexdigest())
@@ -524,6 +529,8 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
             t.update(source_root='dev/src-test-t/java',resource_root='dev/src-test-t',
                      file_hash=hashlib.sha256((tmp_path/t['file']).read_bytes()).hexdigest())
             members.append(t)
+        if framework=='junit5':
+            assert next(t for t in members if t['class']=='fixture.One')['file']=='dev/src-test-t/java/fixture/Base.java'
         raw=adapter.run_group(0,'dev',members)
         assert all(m['state']=='pass' for m in raw['methods']),raw
         assert all(m['declaring_file'].endswith('/Base.java') for m in raw['methods'])

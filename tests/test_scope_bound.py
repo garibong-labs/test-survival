@@ -62,8 +62,9 @@ def test_scope_stage_records_skips_and_selected_denominator(tmp_path,monkeypatch
     write_json(tmp_path/'results/source-inventory.json',dict(main=dict(classes={cls:dict(path=f'src/main/java/{cls}.java') for cls in ('p.Popular','p.Focused')},methods=methods),test=dict(classes={})))
     write_json(tmp_path/'results/commit-paths.json',{'1':['src/main/java/p.Popular.java'],'2':['src/main/java/p.Popular.java','src/main/java/p.Focused.java']})
     baseline=[dict({'class':'p.Tests'},method=f't{i}',kind='plain',stable='yes',
+                   file='dev/src-test-t/java/p/Family.java',
                    declaring_class='p.Base',declaring_file='dev/src-test-t/java/p/Base.java') for i in range(401)]
-    write_csv(tmp_path/'dev/dev-methods-all.csv',baseline,['class','method','kind','stable','declaring_class','declaring_file'])
+    write_csv(tmp_path/'dev/dev-methods-all.csv',baseline,['class','method','kind','stable','file','declaring_class','declaring_file'])
     def execute(command,cwd,log,timeout):
         log.parent.mkdir(parents=True,exist_ok=True)
         log.write_text('class\tmethod\taccessor\np.Popular\tm0\tfalse\np.Focused\tm0\tfalse\n')
@@ -80,6 +81,8 @@ def test_scope_stage_records_skips_and_selected_denominator(tmp_path,monkeypatch
     assert 'would-be Dev(scope)=401' in (tmp_path/'population/scope.md').read_text()
     assert [r['method'] for r in read_csv(tmp_path/'dev/dev-denominator.csv')]==['t0']
     assert read_csv(tmp_path/'dev/dev-denominator.csv')[0]['declaring_class']=='p.Base'
+    from test_survival.rules.dev_denominator import frozen_method
+    assert frozen_method(read_csv(tmp_path/'dev/dev-denominator.csv')[0])['file']=='dev/src-test-t/java/p/Family.java'
     assert all(r['declaring_file'].endswith('/p/Base.java') for r in read_csv(tmp_path/'dev/dev-excluded.csv'))
     # A completed group's import invalidates scope, but must retain the same
     # validated instrumentation boundary without remeasuring the imported pool.

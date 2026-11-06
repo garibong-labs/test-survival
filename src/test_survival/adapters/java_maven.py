@@ -242,7 +242,11 @@ class JavaMavenAdapter:
 
     def list_test_methods(self, files):
         from .inherited_tests import expand
-        return expand(self.inventory(files, self.exp/'results/source-inventory-test.tsv'), self.test_framework())
+        inventory = expand(self.inventory(files, self.exp/'results/source-inventory-test.tsv'), self.test_framework())
+        for method in inventory['methods']:
+            for key in ('file', 'declaring_file'):
+                if method.get(key): method[key] = method[key].removeprefix(self.runner.path(self.exp)+'/')
+        return inventory
 
     def baseline(self):
         folder = self.folder(0)
@@ -276,11 +280,14 @@ class JavaMavenAdapter:
                 if destination.exists(): shutil.rmtree(destination)
                 shutil.copytree(self.exp/'results/dev-build-reports', destination, dirs_exist_ok=True)
                 write_json(record_path, dict(index=repeat, attempts=[read_json(self.exp/'results/dev-build-discovery.json')]))
-            if not record_path.exists():
+            from .build_discovery import has_reports, require_reports
+            if not record_path.exists() or build_discovery and not has_reports(destination):
                 self.cache.resolve(folder, 0)
                 reports = folder/'target/surefire-reports'
                 if reports.exists():
                     shutil.rmtree(reports)
+                if build_discovery and destination.exists():
+                    shutil.rmtree(destination)
                 attempts = []
                 for number, offline in enumerate((True, False), 1):
                     result = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), 'test'], folder,
@@ -294,6 +301,7 @@ class JavaMavenAdapter:
             observed = collections.defaultdict(list)
             if build_discovery:
                 from .build_discovery import report_methods
+                require_reports(destination)
                 observed, _, _ = report_methods(destination, [m for m in inventory['test']['methods'] if m['kind']])
                 observations.append(observed)
                 continue
@@ -336,6 +344,7 @@ class JavaMavenAdapter:
             row['stable'] = 'yes' if all(row[f'run{i}']=='pass' for i in range(1, len(observations)+1)) else 'no'
             rows.append(row)
         fields = ['class','method','kind','stable',*[f'run{i}' for i in range(1, len(observations)+1)]]
+        if any(r.get('file') for r in rows): fields += ['file']
         if any(r.get('declaring_file') for r in rows): fields += ['declaring_class','declaring_file']
         write_csv(self.exp/'dev/dev-methods-all.csv', rows, fields)
         return rows
