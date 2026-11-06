@@ -39,11 +39,18 @@ public final class PerTestCoverage implements TestExecutionListener {
      * probes. Hooks neither reset probes nor change the frozen class files. */
     public static final class Initializers implements ClassFileTransformer {
         private final Set<Path> roots = new HashSet<>();
+        private final Set<String> classes = new HashSet<>();
 
         public static void premain(String args, Instrumentation instrumentation) throws Exception {
             Initializers transformer = new Initializers();
             for (String root : System.getProperty("survival.initializer.roots").split(File.pathSeparator))
                 transformer.roots.add(Path.of(root).toRealPath());
+            for (Path root : transformer.roots) try (var files = Files.walk(root)) {
+                for (Path file : files.filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".class")).toList()) {
+                    String name = root.relativize(file).toString().replace(File.separatorChar, '/');
+                    transformer.classes.add(name.substring(0, name.length() - 6));
+                }
+            }
             instrumentation.addTransformer(transformer);
             System.setProperty("survival.initializers", "true");
         }
@@ -51,9 +58,13 @@ public final class PerTestCoverage implements TestExecutionListener {
         public byte[] transform(ClassLoader loader, String name, Class<?> redefining,
                                 java.security.ProtectionDomain domain, byte[] bytes) {
             try {
+                if (!classes.contains(name)) return null;
                 if (domain == null || domain.getCodeSource() == null ||
                     !domain.getCodeSource().getLocation().getProtocol().equals("file") ||
-                    !roots.contains(Path.of(domain.getCodeSource().getLocation().toURI()).toRealPath())) return null;
+                    !roots.contains(Path.of(domain.getCodeSource().getLocation().toURI()).toRealPath())) {
+                    System.setProperty("survival.initializer.failure", "true");
+                    return null;
+                }
                 ClassReader reader = new ClassReader(bytes);
                 ClassWriter writer = new ClassWriter(reader, 0);
                 boolean[] changed = {false};

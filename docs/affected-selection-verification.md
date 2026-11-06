@@ -402,8 +402,9 @@ or frozen class files. Production hits at initializer completion remain
 available to later methods in that snapshot. This is deliberately conservative:
 hits already present before the initializer may be reused inside it, so they
 cannot safely be subtracted. Such extra dependencies may cause extra executions.
-Failed/incomplete initialization or an isolated loader that cannot access the
-hook bridge produces unbounded evidence rather than changing test behavior.
+Failed/incomplete initialization, an isolated loader that cannot access the
+hook bridge, or a known class defined without its expected code source produces
+unbounded evidence rather than changing test behavior.
 Dependency version 4 prevents reuse of earlier incomplete evidence.
 
 Real Java fixtures cover test and production initializers, caught initialization
@@ -427,7 +428,9 @@ not a new large-experiment survival benchmark.
 
 The full local suite passes **885 tests** on Python 3.12 in **189.46 s**: **864
 Python tests and all 21 real Java 25 fixtures**, with no skips, failures, or
-errors. CI's required-fixture list includes all four new initialization cases.
+errors. A subsequent loader check adds a fifth initialization case, defining
+known classes without a code-source location. All five initialization cases pass
+in **33.65 s**; CI's required-fixture list now contains **22 Java fixtures**.
 
 The large experiment benchmarks were not rerun for this second review follow-up;
 their timings and executed/carried counts above describe their recorded revisions,

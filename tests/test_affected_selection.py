@@ -559,7 +559,7 @@ assert not list((exp/'before').rglob('*.exec')) and not list((exp/'before').rglo
 
 
 @pytest.mark.java_integration
-@pytest.mark.parametrize('owner', ['test','production','failed','isolated'])
+@pytest.mark.parametrize('owner', ['test','production','failed','isolated','defined'])
 def test_lazy_initializer_dependencies_survive_probe_resets(tmp_path, java_environment, owner):
     image,libs=java_environment;root=Path(__file__).parents[1]
     script=r'''
@@ -585,10 +585,11 @@ public class Helper {
 """
 owner=sys.argv[1]
 if owner=='failed': helper=helper.replace('return (Integer)', 'int ignored=(Integer)').replace('.invoke(null);', '.invoke(null); throw new RuntimeException("initialization failed");')
-helper_root=main/'outside' if owner in ('production','isolated') else source
-(helper_root/'Helper.java').write_text(('package outside;\n' if owner in ('production','isolated') else '')+helper)
-body='org.junit.jupiter.api.Assertions.assertEquals(1,'+('outside.' if owner in ('production','isolated') else '')+'Helper.value);'
+helper_root=main/'outside' if owner in ('production','isolated','defined') else source
+(helper_root/'Helper.java').write_text(('package outside;\n' if owner in ('production','isolated','defined') else '')+helper)
+body='org.junit.jupiter.api.Assertions.assertEquals(1,'+('outside.' if owner in ('production','isolated','defined') else '')+'Helper.value);'
 if owner=='isolated':body='try (java.net.URLClassLoader loader=new java.net.URLClassLoader(new java.net.URL[]{java.nio.file.Path.of("/out/target/classes").toUri().toURL()},ClassLoader.getPlatformClassLoader())) { org.junit.jupiter.api.Assertions.assertEquals(1,Class.forName("outside.Helper",true,loader).getField("value").get(null)); }'
+if owner=='defined':body="""ClassLoader loader=new ClassLoader(ClassLoader.getPlatformClassLoader()) { protected Class<?> findClass(String name) throws ClassNotFoundException { try { byte[] data=java.nio.file.Files.readAllBytes(java.nio.file.Path.of("/out/target/classes/"+name.replace('.','/')+".class")); return defineClass(name,data,0,data.length); } catch(java.io.IOException e) { throw new ClassNotFoundException(name,e); } } }; org.junit.jupiter.api.Assertions.assertEquals(1,Class.forName("outside.Helper",true,loader).getField("value").get(null));"""
 if owner=='failed':body='org.junit.jupiter.api.Assertions.assertThrows(LinkageError.class, () -> { int value=Helper.value; });'
 (source/'T.java').write_text("""
 @org.junit.jupiter.api.TestMethodOrder(org.junit.jupiter.api.MethodOrderer.OrderAnnotation.class)
@@ -610,8 +611,8 @@ if owner=='test':
  methods.append(dict(id='separate',file='other/Separate.java',source_root='other',resource_root='other',file_hash='separate',execution_hash='separate',**{'class':'Separate'},method='works'))
 def run(label,mode,tests):
  policy_coverage.run(w,dict(index=0,sha=label,selection=mode,chunk_workers=1,methods=tests,survival=True,
-  scope_files=['src/main/java/p/A.java']+(['src/main/java/outside/Helper.java'] if owner in ('production','isolated') else []),
-  scope_classes=['p.A']+(['outside.Helper'] if owner in ('production','isolated') else []),work=label,output=label+'.json'))
+  scope_files=['src/main/java/p/A.java']+(['src/main/java/outside/Helper.java'] if owner in ('production','isolated','defined') else []),
+  scope_classes=['p.A']+(['outside.Helper'] if owner in ('production','isolated','defined') else []),work=label,output=label+'.json'))
  rows=json.loads((exp/(label+'.json')).read_text())['methods']
  return [{**next(t for t in tests if t['id']==row['id']), **row} for row in rows]
 before=run('before','affected',methods)
@@ -622,7 +623,7 @@ for row in before:
   assert not record['unbounded'] and 'src/main/java/outside/Hidden.java' not in record['files'],row
   continue
  if row['method']=='second':assert 'src/main/java/outside/AfterOnly.java' not in record['files'],row
- if owner in ('failed','isolated'):assert record['unbounded'],row
+ if owner in ('failed','isolated','defined'):assert record['unbounded'],row
  else:
   assert not record['unbounded'],row
   assert 'src/main/java/outside/Hidden.java' in record['files'],row

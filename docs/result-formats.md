@@ -168,8 +168,9 @@ class hits for later methods in the same snapshot. These hits are conservative:
 an initializer may reuse a probe hit earlier in the current interval, so all
 current production hits at initializer completion are retained. This can cause
 extra executions; later test-body hits are not retained by this mechanism.
-Incomplete initialization, unavailable hooks, or a custom loader unable to see
-the hook bridge marks the dependency record unbounded. Scope lines still use
+Incomplete initialization, unavailable hooks, a custom loader unable to see
+the hook bridge, or a known class loaded without its expected code source marks
+the dependency record unbounded. Scope lines still use
 only the original per-test probe dump. No frozen class files are rewritten.
 Prototype version-1/2/3 dependencies stay readable but require execution before
 they can authorize another carry or satisfy an affected policy execution request.
