@@ -438,3 +438,36 @@ in **33.65 s**; CI's required-fixture list now contains **22 Java fixtures**.
 The large experiment benchmarks were not rerun for this second review follow-up;
 their timings and executed/carried counts above describe their recorded revisions,
 not the new initializer instrumentation. No original experiments were modified.
+
+### Third review follow-up
+
+The next review found repeated shared-evidence parsing in affected policy resume
+validation and physical execution coordination. Three disposable regressions
+reproduce the problem with 1,000 methods, 100 scope lines per method, and two
+snapshots whose class/method names collide. All three fail against `900f348` on
+read-count assertions and pass with the fix.
+
+Resume audits cache indexed logical origins and physical records, retaining at
+most 32 records at a time. Physical measurement calls load and index each needed
+physical record and baseline group once, and reuse that physical index when
+writing merged evidence. Indexes use snapshot plus class/method identity. Both
+caches are local to an operation: a later audit or measurement sees replaced
+files. Regressions verify unchanged read-only audit inputs, detection of a
+modified origin, and repair of exactly one method after its evidence is removed.
+
+Separate single-run fixture timings (1,000 methods, 100 lines each, two snapshots)
+compare `900f348` with this fix:
+
+| Operation | Before (s) | After (s) |
+|---|---:|---:|
+| Resume audit, executed index plus carried index | 48.324 | 0.083 |
+| Physical coordination reusing baseline evidence | 25.427 | 0.110 |
+| Physical coordination reusing existing physical evidence | 11.989 | 0.105 |
+
+The audit's shared logical-origin reads fall from **1,001 to 1**. Baseline group
+reads fall from **1,000 to 1**; each physical record is read once per measurement,
+including the merge/write step. The full Python suite passes **867 tests** in
+62.18 s, with the 22 Java fixtures deselected locally for this Python-only change.
+
+No Java instrumentation or selection rules change in this follow-up. Large
+experiment benchmarks were not rerun, and original experiments remain untouched.

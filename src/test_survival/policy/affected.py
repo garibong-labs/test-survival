@@ -4,6 +4,7 @@ A logical row belongs to a policy/group/segment. Physical runs never contain
 selection carries and can satisfy multiple logical consumers at the same SHA.
 """
 from collections import defaultdict
+from functools import lru_cache
 
 from ..io import read_json, write_json, write_csv
 from ..selection import Selector, carry, executed, counts
@@ -12,7 +13,7 @@ from ..rules.coverage import usable_lines
 from ..rules.survival import dead_method
 from ..work import release_checkout
 from .config import active_plan, regenerates, COVERAGE_VERSION
-from .segments import execution_id, identity, key, segment, regenerate, evaluate
+from .segments import execution_id, key, segment, regenerate, evaluate
 from .execute import Runs, baseline_tests, generator_methods, screening_exclusions, settle
 
 
@@ -27,6 +28,13 @@ def current_dependencies(row):
 
 def records_complete(b):
     """Read-only resume check for logical decisions and their actual origins."""
+    # Bound retained coverage evidence during a long audit. The cache belongs
+    # only to this invocation, so a later audit sees replacements and repairs.
+    @lru_cache(maxsize=32)
+    def evidence(path):
+        raw = read_json(path, {})
+        return raw, {key(r):r for r in raw.get('methods', [])}
+
     for policy in b.options['set']:
         p = policy['name']
         segments = read_json(b.exp/f'results/policy/{p}/segments.json')
@@ -37,8 +45,7 @@ def records_complete(b):
                 end = entries[number+1]['start'] if number+1 < len(entries) else max(b.by_index)
                 for index in range(s['start'], end+1):
                     if index != s['start'] and not b.evaluable(index): continue
-                    raw = read_json(logical_path(b,p,g,s['segment'],index), {})
-                    rows = {key(r):r for r in raw.get('methods', [])}
+                    raw, rows = evidence(logical_path(b,p,g,s['segment'],index))
                     if raw.get('sha') != b.by_index[index]['sha'] or set(rows) != {key(t) for t in s['tests']}: return False
                     for k,row in rows.items():
                         if row['state'] == 'dead': continue
@@ -47,13 +54,13 @@ def records_complete(b):
                         if origin is None or not s['start'] <= origin <= index: return False
                         if row.get('selection_action') == 'carried':
                             if origin >= index or row.get('carried_from_index') != origin: return False
-                            prior = read_json(logical_path(b,p,g,s['segment'],origin), {})
-                            actual = next((r for r in prior.get('methods', []) if key(r) == k), {})
+                            _, prior = evidence(logical_path(b,p,g,s['segment'],origin))
+                            actual = prior.get(k, {})
                             if actual.get('selection_action') != 'executed' or any(actual.get(n) != row.get(n) for n in
                                     ('state','lines','dependency_record','last_executed_index','last_executed_sha')): return False
                         elif row.get('selection_action') != 'executed' or origin != index: return False
-                        physical = read_json(b.exp/f'results/policy/runs/{execution_id(row)}/{origin}.json', {})
-                        actual = next((r for r in physical.get('methods', []) if key(r) == k), {})
+                        physical, physical_rows = evidence(b.exp/f'results/policy/runs/{execution_id(row)}/{origin}.json')
+                        actual = physical_rows.get(k, {})
                         if (physical.get('sha') != b.by_index[origin]['sha'] or actual.get('selection_action') != 'executed'
                                 or any(actual.get(n) != row.get(n) for n in ('lines','dependency_record','last_executed_sha'))): return False
     return True
@@ -69,10 +76,15 @@ class Decisions:
     def physical(self, index, wanted, context):
         """Reuse same-index actual executions; repair only unusable observations."""
         observed = {}; missing = []; old = {}
+        physical_records = {}; baseline_records = {}
         sha = self.b.by_index[index]['sha']
         for k,t in wanted.items():
-            raw = read_json(self.runs.path(index, execution_id(t)), {})
-            row = next((r for r in raw.get('methods', []) if identity(r) == identity(t)), None)
+            digest = execution_id(t)
+            if digest not in physical_records:
+                raw = read_json(self.runs.path(index, digest), {})
+                physical_records[digest] = raw, {key(r):r for r in raw.get('methods', [])}
+            raw, rows = physical_records[digest]
+            row = rows.get(k)
             if row and raw.get('sha') == sha:
                 old[k] = row
                 if row.get('selection_action') == 'executed' and current_dependencies(row) and usable_lines(row):
@@ -81,9 +93,11 @@ class Decisions:
             # Matching baseline actual executions can initialize a boundary;
             # a baseline selection carry cannot initialize the new segment.
             for g in self.b.groups:
-                baseline = self.b.raw(index, g)
-                candidate = next((r for r in baseline.get('methods', []) if r.get('execution_hash') == execution_id(t)
-                                  and identity(r) == identity(t)), None)
+                if g not in baseline_records:
+                    baseline = self.b.raw(index, g)
+                    baseline_records[g] = baseline, {key(r):r for r in baseline.get('methods', []) if r.get('execution_hash')}
+                baseline, baseline_rows = baseline_records[g]
+                candidate = baseline_rows.get(k)
                 if (candidate and baseline.get('sha') == sha and candidate.get('selection_action') == 'executed'
                         and current_dependencies(candidate) and usable_lines(candidate)):
                     observed[k] = {**t, **candidate, 'id':t['id']}
@@ -107,9 +121,9 @@ class Decisions:
         for k,t in wanted.items(): grouped[execution_id(t)].append(observed[k])
         for digest, rows in grouped.items():
             path = self.runs.path(index, digest)
-            prior = read_json(path, {})
-            combined = {identity(r):r for r in prior.get('methods', [])} if prior.get('sha') == sha else {}
-            combined.update({identity(r):r for r in rows})
+            prior, prior_rows = physical_records[digest]
+            combined = dict(prior_rows) if prior.get('sha') == sha else {}
+            combined.update({key(r):r for r in rows})
             record = dict(index=index, sha=sha, status='evaluated', coverage_version=COVERAGE_VERSION,
                           coverage_status='complete' if all(usable_lines(r) for r in combined.values()) else 'missing',
                           methods=list(combined.values()))
