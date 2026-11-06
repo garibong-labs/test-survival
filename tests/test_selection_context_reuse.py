@@ -121,6 +121,7 @@ def test_reactor_classpath_template_is_retained_without_maven_reresolution(tmp_p
     config=validate(dict(name='x',anchor='t',project=dict(repo=str(tmp_path)),survival=dict(selection='affected',execution='batch')))
     resolutions=[]; workers=[]
     def execute(command,cwd,log,timeout):
+        if command[1]=='-c':return dict(exit_code=0)
         workers.append(command)
         job=read_json(command[-1]);cache=tmp_path/job['cache']
         if not cache.exists():
@@ -240,3 +241,77 @@ def test_explicit_maven_basedir_is_collected(tmp_path,monkeypatch):
     before=collect(repo)
     config.write_text('-Drevision=2')
     assert collect(repo)!=before
+
+
+def test_referenced_parent_models_and_activation_inputs(tmp_path, monkeypatch):
+    repo=tmp_path/'repo';repo.mkdir()
+    (repo/'pom.xml').write_text('<project><parent><relativePath>parent.xml</relativePath></parent></project>')
+    parent=repo/'parent.xml'
+    parent.write_text('<project><parent><relativePath>../external.xml</relativePath></parent></project>')
+    external=tmp_path/'external.xml'
+    external.write_text('<project><properties><revision>1</revision></properties></project>')
+    before=collect(repo)
+    assert collect(repo)==before
+    external.write_text('<project><properties><revision>2</revision></properties></project>')
+    assert collect(repo)!=before
+    parent.write_text('<project><profiles><profile><activation><file><exists>marker</exists></file></activation></profile></profiles></project>')
+    before=collect(repo)
+    (repo/'marker').touch()
+    assert collect(repo)!=before
+    parent.write_text('<project><properties><version>${env.PARENT_VERSION}</version></properties></project>')
+    before=collect(repo)
+    monkeypatch.setenv('PARENT_VERSION','secret')
+    after=collect(repo)
+    assert after!=before and 'secret' not in str(after)
+
+
+def test_unresolved_parent_reference_disables_reuse_and_cycles_terminate(tmp_path):
+    pom=tmp_path/'pom.xml'
+    pom.write_text('<project><parent><relativePath>${parent.location}</relativePath></parent></project>')
+    assert collect(tmp_path)!=collect(tmp_path)
+    pom.write_text('<project><parent><relativePath>parent.xml</relativePath></parent></project>')
+    (tmp_path/'parent.xml').write_text('<project><parent><relativePath>pom.xml</relativePath></parent></project>')
+    assert collect(tmp_path)==collect(tmp_path)
+
+
+def test_java_options_properties_settings_and_activation(tmp_path, monkeypatch):
+    (tmp_path/'pom.xml').write_text('<project/>')
+    monkeypatch.setenv('_JAVA_OPTIONS','-Drevision=1')
+    before=collect(tmp_path)
+    monkeypatch.setenv('_JAVA_OPTIONS','-Drevision=2')
+    assert collect(tmp_path)!=before
+    home=tmp_path/'effective-home';(home/'.m2').mkdir(parents=True)
+    settings=home/'.m2/settings.xml';settings.write_text('<settings/>')
+    monkeypatch.setenv('MAVEN_OPTS','-Duser.home=/wrong/home -Dmarker=/wrong/marker')
+    monkeypatch.setenv('_JAVA_OPTIONS',f'-Duser.home={home} -Dmarker={tmp_path}/marker')
+    before=collect(tmp_path)
+    settings.write_text('<settings><offline>true</offline></settings>')
+    assert collect(tmp_path)!=before
+    (tmp_path/'pom.xml').write_text('<project><profiles><profile><activation><file><exists>${marker}</exists></file></activation></profile></profiles></project>')
+    before=collect(tmp_path)
+    assert before==collect(tmp_path)
+    (tmp_path/'marker').touch()
+    assert collect(tmp_path)!=before
+
+
+def test_affected_classpath_cache_repairs_deleted_container_jar(tmp_path):
+    import subprocess
+    from test_survival.config import validate
+    from test_survival.runner.cache import ClasspathCache
+    config=validate(dict(name='x',anchor='t',project=dict(repo=str(tmp_path)),survival=dict(selection='affected',execution='batch')))
+    jar=tmp_path/'test-only.jar';resolutions=[]
+    def execute(command,cwd,log,timeout):
+        if command[1]=='-c':
+            return dict(exit_code=subprocess.run(command,cwd=cwd).returncode)
+        job=read_json(command[-1]);resolutions.append(job['index'])
+        jar.touch();(tmp_path/job['cache']).write_text(str(jar))
+        write_json(tmp_path/job['output'],dict(attempts=[]))
+        return dict(exit_code=0)
+    runner=SimpleNamespace(execute=execute,path=str)
+    cache=ClasspathCache(tmp_path,config,runner);cache.context_identity=lambda index:'same'
+    for index in (0,1,2):
+        folder=tmp_path/f'work/checkouts/{index}';folder.mkdir(parents=True);(folder/'pom.xml').write_text('<project/>')
+        if index==2:jar.unlink()
+        cache.resolve(folder,index)
+        assert jar.exists()
+    assert resolutions==[0,2]

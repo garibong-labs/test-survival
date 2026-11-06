@@ -198,12 +198,18 @@ JUnit exclusions and runner-library additions, in classpath order, using group,
 artifact, version, classifier and type. Project output directories are excluded.
 Affected classpath caching uses the contents of every repository POM, Maven
 settings and `.mvn` configuration, and the resolved runner image identity.
+Local parent POM references are followed recursively, including parents with
+filenames other than `pom.xml` and parents outside the checkout. Parent contents
+and profile activation inputs participate; unresolved parent paths disable reuse.
 Configuration is collected from the actual Maven invocation directory (the
 configured module): Maven uses the nearest ancestor `.mvn` unless `MAVEN_BASEDIR`
 overrides it, and relative settings paths resolve against the invocation directory. The
 selection context is reused from the previous evaluated index while those inputs
 remain identical; otherwise it is resolved again. Settings are hashed inside the
 runner, so mounted user/global settings participate without recording credentials.
+JVM options, including `_JAVA_OPTIONS`, determine the effective user home and
+activation properties. Cached dependency paths are checked inside the runner;
+missing entries invoke the existing Maven classpath repair.
 File-profile activation checks and referenced environment properties also
 participate. Unresolved activation paths or unbounded system-property activations conservatively
 disable context reuse.

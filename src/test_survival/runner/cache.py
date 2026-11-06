@@ -47,8 +47,18 @@ class ClasspathCache:
                     raise RuntimeError('Cannot identify the Compose runner image')
             image = subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',name], text=True).strip()
         manifest = Path(__file__).parents[1]/'adapters/java/classpath-artifacts.json'
-        return canonical_hash(dict(version=3, inputs=read_json(output), image=image, module=self.config['project']['module'],
+        return canonical_hash(dict(version=4, inputs=read_json(output), image=image, module=self.config['project']['module'],
                                    runner_libraries=hashlib.sha256(manifest.read_bytes()).hexdigest()))
+
+    def valid(self, cache, folder, index, logs):
+        """Check dependency paths in the runner, where the Maven volume lives."""
+        result = self.runner.execute(['python3', '-c',
+            'import pathlib,sys; p=pathlib.Path(sys.argv[1]); '
+            'sys.exit(0 if p.is_file() and all(pathlib.Path(s).exists() '
+            'for s in p.read_text().strip().split(":") if s) else 1)',
+            self.runner.path(cache)], folder, logs/f'classpath-{index}-validate.txt',
+            self.config['runner']['timeouts']['build'])
+        return result['exit_code'] == 0
 
     def resolve(self, folder, index, *, log_root=None):
         digest = hashlib.sha256((folder / 'pom.xml').read_bytes()).hexdigest()
@@ -62,11 +72,11 @@ class ClasspathCache:
             reuse = self.config['runner']['reuse']['classpath_cache']
             if enabled and not affected and reuse and not cache.exists() and (Path(reuse) / cache.name).is_file():
                 shutil.copy2(Path(reuse) / cache.name, cache)
-            if not (affected and enabled and cache.is_file()):
+            logs = log_root or self.exp/'results/builds/logs'
+            if not (affected and enabled and cache.is_file() and self.valid(cache, folder, index, logs)):
                 # Maven paths belong to the container, not the orchestrator's filesystem.
                 job = self.exp / f'work/classpath-jobs/{index}.json'
                 output = f'work/classpath-jobs/{index}-result.json'
-                logs = log_root or self.exp/'results/builds/logs'
                 write_json(job, dict(action='classpath', logs=str(logs.relative_to(self.exp)), experiment=self.runner.path(self.exp),
                                     folder=self.runner.path(folder), module=self.config['project']['module'],
                                     cache=str(cache.relative_to(self.exp)), index=index, force=not enabled,

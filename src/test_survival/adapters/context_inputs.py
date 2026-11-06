@@ -15,6 +15,37 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
 
+def local_models(root):
+    """Follow Maven's local parent chain, including nonstandard model filenames."""
+    pending = [(p, 0) for p in sorted(root.rglob('pom.xml'))]
+    models, unknown = {}, []
+    while pending:
+        path, depth = pending.pop()
+        path = path.resolve()
+        label = (str(path.relative_to(root)) if path.is_relative_to(root) else
+                 'external-parent/'+hashlib.sha256(str(path).encode()).hexdigest())
+        if label in models: continue
+        models[label] = path
+        if not path.is_file(): continue
+        try:
+            tree = ET.fromstring(path.read_text())
+            for node in tree.iter(): node.tag = node.tag.split('}')[-1]
+            parent = tree.find('parent')
+            if parent is None: continue
+            relative = parent.find('relativePath')
+            value = '../pom.xml' if relative is None else (relative.text or '').strip()
+            if not value: continue  # Explicit empty path disables local lookup.
+            if '${' in value or depth >= 128:
+                unknown.append(label)
+                continue
+            target = path.parent/value
+            if target.is_dir(): target = target/'pom.xml'
+            if target.is_file(): pending.append((target, depth+1))
+        except ET.ParseError:
+            unknown.append(label)
+    return models, unknown
+
+
 def activation_inputs(root, models, properties):
     """Bound file activation and referenced environment values without an effective POM.
 
@@ -68,7 +99,8 @@ def collect(root, invocation=None):
     override = os.environ.get('MAVEN_BASEDIR')
     maven_base = ((invocation/override).resolve() if override else
                   next((p for p in ancestors if (p/'.mvn').is_dir()), invocation))
-    files = {str(p.relative_to(root)): digest(p) for p in sorted(root.rglob('pom.xml'))}
+    poms, unknown_parents = local_models(root)
+    files = {label: digest(p) for label, p in poms.items()}
     configs = {root, maven_base, *(p for p in ancestors if p.is_relative_to(root))}
     for directory in sorted(configs):
         for p in sorted((directory/'.mvn').rglob('*')):
@@ -80,6 +112,9 @@ def collect(root, invocation=None):
     jvm_args = ' '.join(os.environ.get(k, '') for k in ('JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS'))
     if jvm_config.is_file(): jvm_args += ' '+jvm_config.read_text()
     jvm_args += ' '+os.environ.get('MAVEN_OPTS', '')
+    # HotSpot applies this after command-line JVM options, unlike the prepended
+    # JAVA_TOOL_OPTIONS and JDK_JAVA_OPTIONS.
+    jvm_args += ' '+os.environ.get('_JAVA_OPTIONS', '')
     properties = {arg[2:].split('=',1)[0]:arg.split('=',1)[1] if '=' in arg else ''
                   for arg in shlex.split(jvm_args) if arg.startswith('-D')}
     user_home = Path(properties.get('user.home', str(Path.home())))
@@ -103,11 +138,13 @@ def collect(root, invocation=None):
     properties.update({arg[2:].split('=',1)[0]:arg.split('=',1)[1] if '=' in arg else ''
                        for arg in args if arg.startswith('-D')})
     properties.setdefault('user.home', str(user_home))
-    poms = sorted(root.rglob('pom.xml'))
-    models = [(str(p.relative_to(root)), p, [p.parent]) for p in poms]
-    models += [('settings-'+label, p, [m.parent for m in poms]) for label,p in settings_paths.items()]
+    models = [(label, p, [p.parent]) for label, p in poms.items()]
+    models += [('settings-'+label, p, [m.parent for m in poms.values()]) for label,p in settings_paths.items()]
     activation = activation_inputs(maven_base, models, properties)
-    environment = {k: os.environ.get(k) for k in ('MAVEN_ARGS','MAVEN_OPTS','MAVEN_BASEDIR','MAVEN_HOME','M2_HOME','JAVA_HOME','JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS')}
+    if unknown_parents:
+        activation['unbounded'].extend('parent:'+label for label in unknown_parents)
+        activation['nonce'] = uuid.uuid4().hex
+    environment = {k: os.environ.get(k) for k in ('MAVEN_ARGS','MAVEN_OPTS','MAVEN_BASEDIR','MAVEN_HOME','M2_HOME','JAVA_HOME','JAVA_TOOL_OPTIONS','JDK_JAVA_OPTIONS','_JAVA_OPTIONS')}
     base_identity = (str(maven_base.relative_to(root)) if maven_base.is_relative_to(root) else
                      'external:'+hashlib.sha256(str(maven_base).encode()).hexdigest())
     return dict(invocation=str(invocation.relative_to(root)), maven_base=base_identity, poms_and_maven=files,

@@ -398,6 +398,12 @@ def test_dependency_identity_with_real_runner(tmp_path, java_environment, mode, 
         cp = exp/'work/classpath.txt'
         cp.write_text(adapter.runner.path(jar))
         directory = exp/'results/identity'
+        assert adapter.cache.valid(cp, adapter.folder(0), 0, directory)
+        removed=adapter.runner.execute(['python3','-c','import pathlib,sys; pathlib.Path(sys.argv[1]).unlink()',
+                                        adapter.runner.path(jar)], adapter.folder(0), directory/'remove-jar.log', 30)
+        assert removed['exit_code']==0
+        assert not adapter.cache.valid(cp, adapter.folder(0), 0, directory)
+        jar.write_bytes(b'fixture dependency')
         expected = [dict(path=adapter.runner.path(jar), sha256=hashlib.sha256(jar.read_bytes()).hexdigest())]
         assert adapter.dependency_identity(0, dict(classpath='work/classpath.txt'), directory) == expected
         assert json.loads((directory/'dependencies.json').read_text()) == expected
@@ -472,12 +478,18 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
     sources=tmp_path/'dev/src-test-t/java/fixture';sources.mkdir(parents=True)
     annotation='@org.junit.Test public' if framework=='junit4' else '@org.junit.jupiter.api.Test'
     (sources/'Base.java').write_text('package fixture; public abstract class Base { '+annotation+' void inherited() { if (Production.value()!=2) throw new AssertionError(); } '+annotation+' void excluded() { throw new AssertionError("non-candidate must not execute"); } }')
+    parameterized='@org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"value"})'
+    if framework=='junit5':
+        base=sources/'Base.java'
+        base.write_text(base.read_text().rstrip().removesuffix('}')+parameterized+' public void works(java.lang.String value) { throw new AssertionError("override must execute"); } }')
     expected_classes=set()
     for name in ('One','Two'):
         package='other' if framework=='junit5' and name=='Two' else 'fixture'
         directory=sources.parent/package;directory.mkdir(exist_ok=True)
         expected_classes.add(package+'.'+name)
         override = 'public void inherited() { if (Production.value()!=2) throw new AssertionError(); }' if framework=='junit4' and name=='One' else ''
+        if framework=='junit5' and name=='One':
+            override=parameterized+' @Override public void works(String value) { if (Production.value()!=2) throw new AssertionError(); }'
         (directory/(name+'.java')).write_text('package '+package+'; public class '+name+' extends fixture.Base { '+override+' }')
     production=tmp_path/'work/checkouts/0/src/main/java/fixture/Production.java';production.parent.mkdir(parents=True)
     production.write_text('package fixture; public class Production { public static int value() { return 2; } }')
@@ -491,6 +503,14 @@ def test_inherited_identity_survives_concrete_execution_and_batched_coverage(tmp
         run=adapter.runner.execute(['javac','-d',str(classes),str(production)],tmp_path,tmp_path/'production-compile.log',60)
         assert run['exit_code']==0
         inventory=adapter.list_test_methods(sources.parent)
+        if framework=='junit5':
+            overridden=[m for m in inventory['methods'] if m['class']=='fixture.One' and m['method']=='works' and m['kind']]
+            assert len(overridden)==1
+            member=frozen_method(identity(overridden[0]))
+            member.update(source_root='dev/src-test-t/java',resource_root='dev/src-test-t',
+                          file_hash=hashlib.sha256((tmp_path/member['file']).read_bytes()).hexdigest())
+            overridden_run=adapter.run_group(0,'dev',[member])
+            assert len(overridden_run['methods'])==1 and overridden_run['methods'][0]['state']=='pass',overridden_run
         recovered=[m for m in inventory['methods'] if m.get('inherited') and m['method']=='inherited']
         assert {m['class'] for m in recovered}==expected_classes
         members=[]

@@ -111,3 +111,16 @@ def test_junit4_unannotated_override_keeps_inherited_test():
     result=expand(inv,framework='junit4')
     inherited=[m for m in result['methods'] if m['class']=='p.One' and m['method']=='publicTest' and m['kind']]
     assert len(inherited)==1 and inherited[0]['declaring_class']=='p.Base'
+
+
+def test_override_parameter_type_spellings_map_to_one_method(tmp_path):
+    inv=inventory()
+    inv['classes']['p.Base']['imports']='java.util.List'
+    inv['classes']['p.One']['imports']='java.util.*'
+    inv['methods']=[dict(**{'class':owner},method='works',kind='parameterized',signature=signature,modifiers='public')
+                    for owner,signature in [('p.Base','works(java.lang.String, List<String>[])'),('p.One','works(String, java.util.List<java.lang.String>[])')]]
+    methods=[m for m in expand(inv)['methods'] if m['class']=='p.One' and m['kind']]
+    (tmp_path/'TEST-one.xml').write_text('<testsuite><testcase classname="p.One" name="works[1]"/></testsuite>')
+    observed,unmapped,_=report_methods(tmp_path,methods)
+    assert observed=={('p.One','works'):['pass']} and not unmapped
+    assert len(methods)==1
