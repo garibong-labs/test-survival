@@ -30,8 +30,8 @@ class Steps:
         if prior and prior.get('config_hash') != self.digest:
             raise ConfigError('Policy inputs changed; use --force to rebuild policy evidence')
         # Upgrade aggregate steps without rebuilding pools or valid run records.
-        # Revision 3 repairs previously seeded non-executing coverage retries.
-        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=3)
+        # Revision 4 includes untagged legacy baseline evaluations in totals.
+        revision = dict(coverage_version=COVERAGE_VERSION, regenerate_developer=self.b.options.get('regenerate_developer', True), survive=4)
         revision['developer'] = {p['name']:p.get('developer', 'regenerate' if self.b.options.get('regenerate_developer', True) else 'keep') for p in self.b.options['set']}
         fresh = True
         if name.startswith('run-'):

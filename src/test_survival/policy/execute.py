@@ -317,6 +317,22 @@ def baseline_tests(b):
                         scope=b.scope['classes'], prefix='results/policy/baseline-sources') for g in b.groups}
 
 
+def baseline_observations(b, index, group, tests):
+    """Copy evaluable baseline rows into policy identities and accounting.
+
+    Legacy observations predate selection tags. They count as executed, but
+    supply no new dependency evidence or execution origin for affected carries.
+    """
+    raw = {r['id']:r for r in b.raw(index,group)['methods']}
+    rows = []
+    for test in tests:
+        row = {**test, **raw[test['origin_id']], 'id':key(test)}
+        if 'selection_action' not in row and row['state'] in FAILURES | {'pass'}:
+            row['selection_action'] = 'executed'
+        rows.append(row)
+    return rows
+
+
 def survive(b, plan, pools, step):
     if b.execution_config['survival'].get('selection') == 'affected':
         from .affected import survive as selected_survive
@@ -367,9 +383,7 @@ def survive(b, plan, pools, step):
                 s = current[p][g]; observations = []
                 if evaluable:
                     if s['segment'] == 1:
-                        raw = b.raw(index,g)
-                        by_id = {r['id']:r for r in raw['methods']}
-                        observations = [{**by_id[t['origin_id']], 'id':key(t)} for t in s['tests']]
+                        observations = baseline_observations(b,index,g,s['tests'])
                     else:
                         observations = assemble(s['tests'], {h:runs.get(index,h) for h in sorted({execution_id(t) for t in s['tests']})})
                 if index and not evaluable and s['segment'] > 1:

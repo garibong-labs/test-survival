@@ -14,7 +14,7 @@ from ..rules.survival import dead_method
 from ..work import release_checkout
 from .config import active_plan, regenerates, COVERAGE_VERSION
 from .segments import execution_id, key, segment, regenerate, evaluate
-from .execute import Runs, baseline_tests, generator_methods, screening_exclusions, settle
+from .execute import Runs, baseline_tests, baseline_observations, generator_methods, screening_exclusions, settle
 
 
 def logical_path(b, policy, group, number, index):
@@ -223,8 +223,7 @@ def survive(b, plan, pools, step):
                 s = current[p][g]; observations = []
                 if evaluable:
                     if s['segment'] == 1:
-                        raw = {r['id']:r for r in b.raw(index,g)['methods']}
-                        observations = [{**t,**raw[t['origin_id']],'id':key(t)} for t in s['tests']]
+                        observations = baseline_observations(b,index,g,s['tests'])
                     else: observations = measured[p,g]
                     record(p,g,index,[r for r in observations if r['id'] in alive[p][g]],'evaluate')
                 alive[p][g],lost,stats[g] = evaluate(s,alive[p][g],observations,evaluated=evaluable)

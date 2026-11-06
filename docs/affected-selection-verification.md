@@ -471,3 +471,26 @@ including the merge/write step. The full Python suite passes **867 tests** in
 
 No Java instrumentation or selection rules change in this follow-up. Large
 experiment benchmarks were not rerun, and original experiments remain untouched.
+
+### Fourth review follow-up
+
+A legacy baseline's raw observations lack `selection_action`, so both policy
+paths omitted their first-segment evaluations from executed/carried totals.
+Disposable fixtures reproduce this in both `all` and `affected`: one passing
+evaluation followed by one failing evaluation incorrectly totals zero.
+
+Both paths now share baseline-observation normalization. Untagged evaluable
+pass/failure observations count as executed; existing executed/carried tags
+remain intact. The copy gains no dependencies or execution origin. Unevaluated
+commits and dead/not-selected markers remain excluded, and the baseline stays
+read-only. Policy aggregate revision 4 causes an explicitly resumed old policy
+to rebuild these totals without invalidating pools or physical run records.
+
+Regressions cover both selection modes, tagged and untagged baselines, skipped
+indices, affected phase/progress counts, all legacy outcome states, and repair
+of completed revision-3 totals. They verify identical baseline bytes, preserved
+pool evidence, and unchanged survival/first-failure tables. No original
+experiment, model call, or Java execution is needed for the accounting repair.
+The full local Python suite passes **880 tests** in **67.12 s**, with 22 Java
+fixtures deselected. Large experiment equality and performance runs were not
+repeated for this accounting-only change.
