@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 
 MANIFEST = Path(__file__).resolve().parents[1]/'src/test_survival/adapters/java/classpath-artifacts.json'
 FIXTURES = {
+    'test_maven_parent_context_cache_acceptance',
     'test_candidate_coverage_preserves_isolated_setup_and_initializer_lines',
     'test_real_iterative_compilation_and_dependency_graph',
     'test_broad_runtime_hits_parallel_chunks_and_memory',

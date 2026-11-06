@@ -199,8 +199,20 @@ artifact, version, classifier and type. Project output directories are excluded.
 Affected classpath caching uses the contents of every repository POM, Maven
 settings and `.mvn` configuration, and the resolved runner image identity.
 Local parent POM references are followed recursively, including parents with
-filenames other than `pom.xml` and parents outside the checkout. Parent contents
-and profile activation inputs participate; unresolved parent paths disable reuse.
+filenames other than `pom.xml` and parents outside the checkout. A local parent
+is trusted only when its literal group, artifact, and version match the declared
+parent, and the entire chain can be established that way. Inherited profile
+activation is checked in each descendant module's evaluation directory, including
+through transitive parents.
+
+Repository-parent fallbacks deliberately disable classpath and selection-context
+reuse: this includes `<relativePath/>`, missing local parents, and local POMs with
+different coordinates. Unprovable coordinates (including inherited/interpolated
+coordinates or version ranges), unresolved paths, and cyclic chains also disable
+reuse. The tool does not implement Maven's repository parent resolver.
+Both entry points recheck these inputs on every call, including same-index resumes;
+old cache keys cannot bypass this rule. Maven's local artifact repository still
+provides its normal dependency reuse.
 Alternate models selected by `-f` or `--file` in `.mvn/maven.config` or
 `MAVEN_ARGS` resolve against the invocation directory. Their local parents,
 modules, and activation inputs also participate in the identity.

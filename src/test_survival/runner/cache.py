@@ -47,7 +47,7 @@ class ClasspathCache:
                     raise RuntimeError('Cannot identify the Compose runner image')
             image = subprocess.check_output(['docker','image','inspect','--format','{{.Id}}',name], text=True).strip()
         manifest = Path(__file__).parents[1]/'adapters/java/classpath-artifacts.json'
-        return canonical_hash(dict(version=5, inputs=read_json(output), image=image, module=self.config['project']['module'],
+        return canonical_hash(dict(version=6, inputs=read_json(output), image=image, module=self.config['project']['module'],
                                    runner_libraries=hashlib.sha256(manifest.read_bytes()).hexdigest()))
 
     def valid(self, cache, folder, index, logs):

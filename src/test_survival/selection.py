@@ -98,13 +98,14 @@ class Selector:
         prefix = self.module+'/' if self.module not in ('','.') else ''
         return [p[len(prefix):] for p in paths if p and p.startswith(prefix)], compiler
 
-    @lru_cache(maxsize=128)
     def context(self, index, sha):
+        # Inputs can change on a same-index resume (including outside Git).
+        # Never let an in-memory result bypass the shared cache eligibility key.
         path = f'results/selection-context/{index}.json'
         self.adapter.checkout(index, sha)
         identity = self.adapter.cache.context_identity(index)
         existing = read_json(self.adapter.exp/path, {})
-        if (existing.get('sha') == sha and existing.get('input_sha256') == identity and existing.get('version') == 1
+        if (existing.get('sha') == sha and existing.get('input_sha256') == identity and existing.get('version') == 1 and existing.get('known')
                 and existing.get('classpath') and (self.adapter.exp/existing['classpath']).is_file()):
             write_json(self.adapter.exp/f'work/selection-classpaths/{index}.json', dict(classpath=existing['classpath']))
             return existing

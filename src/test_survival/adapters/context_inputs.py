@@ -36,37 +36,82 @@ def alternate_models(args, invocation):
     return paths, unknown
 
 
+def read_model(path):
+    tree = ET.fromstring(path.read_text())
+    for node in tree.iter(): node.tag = node.tag.split('}')[-1]
+    return tree
+
+
+def literal_coordinates(node):
+    values = tuple((node.findtext(name) or '').strip() for name in ('groupId', 'artifactId', 'version'))
+    if not all(value and '${' not in value for value in values): return None
+    # Ranges and repository-selected versions require Maven's resolver too.
+    if values[2] in ('LATEST', 'RELEASE') or any(c in values[2] for c in '[],()'): return None
+    return values
+
+
 def local_models(root, additional=()):
-    """Follow local parent/module references, including nonstandard model filenames."""
-    pending = [(p, 0) for p in [*sorted(root.rglob('pom.xml')), *additional]]
-    models, unknown = {}, []
+    """Trust only provably matching local parents; never emulate repository lookup.
+
+    Carry the child's evaluation directory through every parent edge. A parent
+    profile's basedir is not necessarily the directory containing its POM.
+    """
+    pending = [(p, p.parent, ()) for p in [*sorted(root.rglob('pom.xml')), *additional]]
+    models, bases, trees, seen, unknown = {}, {}, {}, set(), set()
     while pending:
-        path, depth = pending.pop()
-        path = path.resolve()
+        path, base, lineage = pending.pop()
+        path, base = path.resolve(), base.resolve()
         label = (str(path.relative_to(root)) if path.is_relative_to(root) else
                  'external-model/'+hashlib.sha256(str(path).encode()).hexdigest())
-        if label in models: continue
         models[label] = path
-        if not path.is_file(): continue
+        bases.setdefault(label, set()).add(base)
+        if path in lineage or len(lineage) >= 128:
+            unknown.add(label+':cyclic-or-deep-model-chain')
+            continue
+        if (path, base) in seen: continue
+        seen.add((path, base))
+        if not path.is_file():
+            unknown.add(label+':missing-model')
+            continue
         try:
-            tree = ET.fromstring(path.read_text())
-            for node in tree.iter(): node.tag = node.tag.split('}')[-1]
+            if path not in trees: trees[path] = read_model(path)
+            tree = trees[path]
             parent = tree.find('parent')
-            references = [(node.text or '').strip() for node in tree.findall('.//modules/module')]
             if parent is not None:
                 relative = parent.find('relativePath')
                 value = '../pom.xml' if relative is None else (relative.text or '').strip()
-                if value: references.append(value)  # Empty relativePath disables local lookup.
-            for value in references:
-                if not value or '${' in value or depth >= 128:
-                    unknown.append(label)
+                target = path.parent/value if value else None
+                if target is not None and target.is_dir(): target = target/'pom.xml'
+                if not value:
+                    unknown.add(label+':repository-parent:empty-relative-path')
+                elif '${' in value:
+                    unknown.add(label+':unresolved-parent-path')
+                elif not target.is_file():
+                    unknown.add(label+':repository-parent:missing-local-parent')
+                else:
+                    candidate = read_model(target)
+                    expected, actual = literal_coordinates(parent), literal_coordinates(candidate)
+                    if expected is None or actual is None:
+                        # Even inherited/interpolated coordinates need Maven's
+                        # model builder. Prefer no reuse over a partial resolver.
+                        unknown.add(label+':unprovable-parent-coordinates')
+                    elif actual != expected:
+                        unknown.add(label+':repository-parent:mismatched-local-parent')
+                    else:
+                        pending.append((target, base, (*lineage, path)))
+            for node in tree.findall('.//modules/module'):
+                value = (node.text or '').strip()
+                if not value or '${' in value:
+                    unknown.add(label+':unresolved-module-path')
                     continue
                 target = path.parent/value
                 if target.is_dir(): target = target/'pom.xml'
-                if target.is_file(): pending.append((target, depth+1))
-        except ET.ParseError:
-            unknown.append(label)
-    return models, unknown
+                # Aggregation and inheritance may legitimately point in opposite
+                # directions. A module starts a new parent-chain traversal.
+                pending.append((target, target.parent, ()))
+        except (ET.ParseError, OSError):
+            unknown.add(label+':unreadable-model')
+    return models, sorted(unknown), {label: sorted(values) for label, values in bases.items()}
 
 
 def activation_inputs(root, models, properties):
@@ -125,7 +170,7 @@ def collect(root, invocation=None):
     config = maven_base/'.mvn/maven.config'
     args = shlex.split(os.environ.get('MAVEN_ARGS', '')) + shlex.split(config.read_text() if config.is_file() else '')
     additional, unknown_models = alternate_models(args, invocation)
-    poms, unknown_references = local_models(root, additional)
+    poms, unknown_references, evaluation_bases = local_models(root, additional)
     unknown_models.extend('model-reference:'+label for label in unknown_references)
     files = {label: digest(p) for label, p in poms.items()}
     configs = {root, maven_base, *(p for p in ancestors if p.is_relative_to(root))}
@@ -163,7 +208,7 @@ def collect(root, invocation=None):
     properties.update({arg[2:].split('=',1)[0]:arg.split('=',1)[1] if '=' in arg else ''
                        for arg in args if arg.startswith('-D')})
     properties.setdefault('user.home', str(user_home))
-    models = [(label, p, [p.parent]) for label, p in poms.items()]
+    models = [(label, p, evaluation_bases[label]) for label, p in poms.items()]
     models += [('settings-'+label, p, [m.parent for m in poms.values()]) for label,p in settings_paths.items()]
     activation = activation_inputs(maven_base, models, properties)
     if unknown_models:
