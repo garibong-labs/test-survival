@@ -13,6 +13,12 @@ from .dependencies import RECORD_VERSION
 
 COVERAGE_VERSION = 3  # Retry legacy missing records with bounded instrumentation.
 MAX_SNAPSHOT_GROUPS = 8
+# Candidate suites run every test in its own isolated class loader. Tests that leave
+# threads behind keep their loader and its classes alive, so metaspace grows with the
+# number of tests executed by one JVM. Bound that number per JVM; the explicit exit
+# at the end of each JVM discards the leaked threads and loaders together.
+CANDIDATE_TESTS_PER_GROUP = 64
+CANDIDATE_GROUPS_PER_JVM = 1
 
 
 def includes_pattern(classes):
@@ -62,7 +68,7 @@ def run(w, job):
     groups = defaultdict(list)
     for ordinal, t in enumerate(job['methods']):
         root = t.get('source_root', str(Path(t['file']).parent))
-        group = ordinal // 256 if job.get('candidate_suite') else 'suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])
+        group = ordinal // CANDIDATE_TESTS_PER_GROUP if job.get('candidate_suite') else 'suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])
         groups[root, group].append(t)
     manifest = []; outputs = []; compile_runs = []; snapshots = {}; rejected = []
     for number, tests in enumerate(groups.values()):
@@ -132,13 +138,14 @@ def run(w, job):
                environment={'SURVIVAL_JVM_JACOCO': override} if override else {})
     w.write_json(work/'coverage-jvm.json', dict(jvm=jvm, agent_options=agent_options))
     methods = rejected; universe = set(); runs = []; files = []; successful = []
+    step = CANDIDATE_GROUPS_PER_JVM if job.get('candidate_suite') else MAX_SNAPSHOT_GROUPS
     def launch(start):
-        chunk = work/'chunks'/str(start//MAX_SNAPSHOT_GROUPS); chunk.mkdir(parents=True)
+        chunk = work/'chunks'/str(start//step); chunk.mkdir(parents=True)
         cwd = chunk/'runtime'; cwd.mkdir()
         if (runtime_dir/'src').exists(): shutil.copytree(runtime_dir/'src', cwd/'src')
         chunk_manifest = chunk/'batches.tsv'
-        chunk_manifest.write_text('\n'.join(manifest[start:start+MAX_SNAPSHOT_GROUPS])+'\n')
-        chunk_outputs = outputs[start:start+MAX_SNAPSHOT_GROUPS]
+        chunk_manifest.write_text('\n'.join(manifest[start:start+step])+'\n')
+        chunk_outputs = outputs[start:start+step]
         tests = [t for _, members in chunk_outputs for t in members]
         memory = chunk/'memory.tsv'
         initializer_options = []
@@ -156,7 +163,7 @@ def run(w, job):
         measured_memory = {key:int(value) for line in memory.read_text().splitlines() for key,value in [line.split('\t')]} if memory.exists() else {}
         return chunk, chunk_outputs, tests, dict(run, manifest=str(chunk_manifest.relative_to(w.EXP)), groups=len(chunk_outputs), memory=measured_memory)
     with ThreadPoolExecutor(max_workers=job.get('chunk_workers', 1)) as executor:
-        launched = executor.map(launch, range(0, len(manifest), MAX_SNAPSHOT_GROUPS))
+        launched = executor.map(launch, range(0, len(manifest), step))
         for chunk, chunk_outputs, tests, run in launched:
             runs.append(run)
             if run['exit_code'] or run.get('timeout'):

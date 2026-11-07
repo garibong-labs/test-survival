@@ -198,7 +198,7 @@ def test_candidate_scope_batches_select_only_candidates_with_bounded_groups(tmp_
         if 'PerTestCoverage' not in command:return dict(exit_code=0)
         manifest=Path(command[-1]).read_text().splitlines();calls.append(manifest)
         assert '-Dsurvival.coverage.isolateMethods=true' in command
-        assert [len(Path(row.split('\t')[2]).read_text().splitlines()) for row in manifest]==[256,256,88]
+        assert [len(Path(row.split('\t')[2]).read_text().splitlines()) for row in manifest] in ([64],[24])
         for row in manifest:
             output,_,selectors,*_=row.split('\t');output=Path(output);output.mkdir(parents=True)
             selected=[line.split('\t') for line in Path(selectors).read_text().splitlines()]
@@ -209,5 +209,6 @@ def test_candidate_scope_batches_select_only_candidates_with_bounded_groups(tmp_
     w=SimpleNamespace(EXP=tmp_path,HELPERS=tmp_path,JVM=dict(jacoco='1g'),TIMEOUTS=dict(compile=30,test_class=1),
         classpath=lambda _:(tmp_path,''),jacoco_version=lambda _:'0.8.14',execute=execute,write_json=write_json)
     policy_coverage.run(w,dict(index=0,sha='t',methods=methods,candidate_suite=True,work='work/coverage',output='result.json'))
-    assert len(calls)==1
+    # 600 candidates in groups of 64, one group per JVM: nine full JVMs and one of 24
+    assert len(calls)==10 and sorted(len(Path(r[0].split('\t')[2]).read_text().splitlines()) for r in calls)==[24]+[64]*9
     assert len(read_json(tmp_path/'result.json')['methods'])==600
