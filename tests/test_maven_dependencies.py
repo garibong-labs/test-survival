@@ -150,7 +150,7 @@ def test_submodule_artifact_goals_package_the_reactor_first(tmp_path):
     folder = tmp_path/'implementation'
     args, cwd = dependencies.command('dependency:build-classpath', folder, 'implementation', offline=True, options=('-DincludeScope=test',))
     assert cwd == tmp_path
-    assert args == ['mvn', '-q', '-o', '-pl', 'implementation', '-am', '-DskipTests', 'package', 'dependency:build-classpath', '-DincludeScope=test']
+    assert args == ['mvn', '-q', '-o', '-pl', 'implementation', '-am', '-Dmaven.test.skip=true', 'package', 'dependency:build-classpath', '-DincludeScope=test']
     args, _ = dependencies.command('dependency:go-offline', folder, 'implementation', refresh=True)
     assert args == ['mvn', '-q', '-U', '-pl', 'implementation', '-am', 'dependency:go-offline']
     # A root module keeps the original command and working directory.

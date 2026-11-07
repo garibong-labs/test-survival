@@ -221,9 +221,11 @@ affected-selection dependency listing, and KTester dependency copying. Sibling
 modules between releases carry SNAPSHOT versions that exist in no repository;
 Maven finds them only inside the reactor. Goals that list the module's
 dependencies (`dependency:build-classpath`, `dependency:list`,
-`dependency:copy-dependencies`) first run `-DskipTests package` in the same
+`dependency:copy-dependencies`) first run `-Dmaven.test.skip=true package` in the same
 invocation, so each sibling resolves to the jar built from that commit's own
 checkout, for example `common/target/<artifact>-<version>.jar`.
+Test compilation is skipped there too, so a commit whose own tests no longer
+compile still resolves. A dependency on a sibling's `test-jar` is not supported.
 
 Because such a classpath names files inside one index's checkout, a submodule
 classpath is resolved per index and never shared through `pom-sha256`. A

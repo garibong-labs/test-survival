@@ -31,7 +31,9 @@ def reactor(folder, module):
 def command(goal, folder, module='.', *, offline=False, refresh=False, options=()):
     """Maven command and working directory; artifact goals package the reactor first."""
     cwd, selector = reactor(folder, module)
-    build = ['-DskipTests', 'package'] if selector and goal in REACTOR_ARTIFACT_GOALS else []
+    # maven.test.skip also skips test compilation: a checkout whose own tests no longer
+    # compile still has usable production code and dependencies.
+    build = ['-Dmaven.test.skip=true', 'package'] if selector and goal in REACTOR_ARTIFACT_GOALS else []
     flags = ['-o'] if offline else ['-U'] if refresh else []
     return ['mvn', '-q', *flags, *selector, *build, goal, *options], cwd
 
