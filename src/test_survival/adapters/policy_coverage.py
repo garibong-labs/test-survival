@@ -21,6 +21,21 @@ CANDIDATE_TESTS_PER_GROUP = 64
 CANDIDATE_GROUPS_PER_JVM = 1
 
 
+def link_tree(source, destination):
+    """Copy a resource tree with hard links where the filesystem allows it.
+
+    Frozen test resources can be hundreds of megabytes (ojAlgo keeps 447 MB of
+    optimisation model files under src/test/resources at its anchor). One copy per
+    job and per JVM chunk filled a disk within hours. Hard links share the bytes;
+    a filesystem that refuses them falls back to a plain copy.
+    """
+    try:
+        shutil.copytree(source, destination, copy_function=os.link)
+    except OSError:
+        shutil.rmtree(destination, ignore_errors=True)
+        shutil.copytree(source, destination)
+
+
 def includes_pattern(classes):
     """JaCoCo package patterns for the production scope (including nested types)."""
     patterns = set()
@@ -112,7 +127,7 @@ def run(w, job):
         resource_root = w.EXP/job['methods'][0].get('resource_root', 'dev/src-test-t')
         for name in ('resources', 'suite'):
             if (resource_root/name).exists():
-                shutil.copytree(resource_root/name, runtime_dir/'src/test'/name)
+                link_tree(resource_root/name, runtime_dir/'src/test'/name)
     scope_options = ['-Dsurvival.coverage.isolateMethods=true'] if job.get('candidate_suite') else []
     initializer_agent = None
     agent_options = 'output=none,dumponexit=false'
@@ -142,7 +157,7 @@ def run(w, job):
     def launch(start):
         chunk = work/'chunks'/str(start//step); chunk.mkdir(parents=True)
         cwd = chunk/'runtime'; cwd.mkdir()
-        if (runtime_dir/'src').exists(): shutil.copytree(runtime_dir/'src', cwd/'src')
+        if (runtime_dir/'src').exists(): link_tree(runtime_dir/'src', cwd/'src')
         chunk_manifest = chunk/'batches.tsv'
         chunk_manifest.write_text('\n'.join(manifest[start:start+step])+'\n')
         chunk_outputs = outputs[start:start+step]
