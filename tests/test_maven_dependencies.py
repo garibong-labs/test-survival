@@ -232,3 +232,17 @@ def test_submodule_baseline_runs_past_upstream_failures_and_requires_module_repo
         assert not (tmp_path/'results/baseline-run1.json').exists()
     assert commands[0] == (['mvn', '-q', '-o', '-pl', 'implementation', '-am', '-Dmaven.test.failure.ignore=true', 'test'],
                            tmp_path/'work/checkouts/0')
+
+
+@pytest.mark.parametrize('module', ['.', 'implementation'])
+def test_pre_reactor_records_are_reused_only_for_root_modules(tmp_path, module):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.adapters.run_reuse import PRE_REACTOR, survival_provenance_matches
+    adapter = JavaMavenAdapter(tmp_path, validate_config({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo', 'module': module}}))
+    current = adapter.provenance()
+    # An 846e056 record never had the reactor key.
+    previous = {**{k: v for k, v in current.items() if k != 'reactor_module'}, **PRE_REACTOR}
+    assert survival_provenance_matches(previous, current) == (module == '.')
+    source = tmp_path/'Generated.java'; source.write_text('class Generated {}')
+    old = adapter.screen_fingerprint(source, 1, provenance=previous)
+    assert (old in adapter.screen_fingerprints(source, 1)) == (module == '.')

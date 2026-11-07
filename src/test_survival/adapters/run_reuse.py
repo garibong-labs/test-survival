@@ -28,6 +28,8 @@ PRE_EXPLICIT_EXIT = {
 }
 # Main 846e056, before submodule commands moved to the reactor root. A root
 # module (project.module: .) runs the same Maven commands with the same cache keys.
+# Submodule provenances carry `reactor_module`, which no record from this era has,
+# so this era never matches them.
 PRE_REACTOR = {
     'java_maven.py': '23cfe6cfe3c0cc135ef236ca8796fd9568a460718e9a4d90e2c8f46b894e1e55',
     'java_worker.py': '3a8bef2cf3c2bccc09cf261f0bad7f963eab878725eb9cae213e59d82c79dbcd',

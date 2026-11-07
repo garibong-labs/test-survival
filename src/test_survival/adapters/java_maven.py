@@ -3,7 +3,7 @@ import collections
 import hashlib
 import io
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
@@ -365,7 +365,13 @@ class JavaMavenAdapter:
         paths.append(Path(__file__).parents[1]/'io.py')
         paths.append(Path(__file__).parents[1]/'selection.py')
         paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py','dependencies.py','selection_context.py'))
-        return {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
+        result = {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
+        # Submodules build siblings from each checkout's reactor; no record from an
+        # earlier provenance (none carries this key) is equivalent to that execution.
+        module = str(PurePosixPath(self.config['project']['module']))
+        if module != '.':
+            result['reactor_module'] = module
+        return result
 
     def worker(self, job):
         self.ensure_anchor()
