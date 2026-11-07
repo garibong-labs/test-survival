@@ -93,9 +93,8 @@ def build_pool(b, point, dev_target):
         method = 'dev'
         members = []
         candidates = [r for r in tests['methods'] if r['kind']]
-        if config['dev'].get('discovery', 'source') == 'build':
-            from ..adapters.build_discovery import discover
-            candidates = discover(adapter, candidates)
+        from ..adapters.build_discovery import discover
+        candidates = discover(adapter, candidates)
         for row in candidates:
             if not row['kind']:
                 continue
@@ -104,8 +103,9 @@ def build_pool(b, point, dev_target):
             t.update(body_hash=row['body_hash'], source_root='dev/src-test-t/java', resource_root='dev/src-test-t',
                      file_hash=hashlib.sha256((exp/t['file']).read_bytes()).hexdigest())
             members.append(t)
-        build_discovery = config['dev'].get('discovery', 'source') == 'build'
-        full = coverage(adapter, 0, members, 'dev-full', full_suite=not build_discovery, candidate_suite=build_discovery)
+        # Class selectors would execute excluded siblings of retained methods.
+        candidate_suite = config['dev'].get('discovery', 'source') == 'build' or bool(config['dev'].get('exclude'))
+        full = coverage(adapter, 0, members, 'dev-full', full_suite=not candidate_suite, candidate_suite=candidate_suite)
         scope_files = {c['file'] for c in scope}
         observed = {(m['class'],m['method']):m for m in full['methods']}
         if b.dev[group]['denominator'] == 'coverage-scoped':

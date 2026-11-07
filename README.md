@@ -203,6 +203,15 @@ and class-count stop rules still apply. Completed experiments and imported
 completed developer populations retain their saved selections.
 
 
+Use `dev.exclude` to keep individual developer tests out of every candidate set.
+Entries are `fully.qualified.Class#method` or a bare class name, in both `source`
+and `build` discovery modes. Excluded methods
+are listed in `dev/dev-not-run-by-build.csv` with the reason
+`excluded-by-configuration`, and the same list applies to developer regeneration
+pools. Use it for tests that cannot run inside the tool's shared test JVM, for
+example tests that leave runaway threads behind; it is not a project-specific
+switch and changes the prepare hash.
+
 The developer group name `dev-unmapped` (including case variants) is reserved for the shared baseline exclusion audit. Choose another group name to keep scope exclusions separate from that audit.
 
 With `dev.discovery: source`, `prepare` stops by default when a baseline test case cannot map unambiguously to a source method. Set `dev.unmapped: exclude` to continue with those cases excluded from every Dev denominator. The audit file `dev/dev-unmapped-excluded.csv` records each case, how many runs saw it, and the reason. Anchor metadata, generation funnels, and report notes disclose the excluded count. Mapped cases keep their existing stability rules.

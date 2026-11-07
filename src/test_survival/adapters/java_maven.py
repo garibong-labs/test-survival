@@ -263,12 +263,14 @@ class JavaMavenAdapter:
                 method['declaring_file'] = method['declaring_file'].replace(self.runner.path(frozen)+'/', 'dev/src-test-t/')
         write_json(self.exp/'results/source-inventory.json', inventory)
         tests = [r for r in inventory['test']['methods'] if r['kind']]
-        if self.config['dev'].get('discovery', 'source') == 'build':
-            from .build_discovery import discover
-            tests = discover(self, tests)
+        from .build_discovery import discover
+        candidates = discover(self, tests)
         byclass = collections.defaultdict(list)
+        # Map Maven evidence against the complete inventory so configured
+        # exclusions do not become unmapped errors in source mode.
         for row in tests:
             byclass[row['class']].append(row)
+        tests = candidates
         observations, unmapped = [], []
         build_discovery = self.config['dev'].get('discovery', 'source') == 'build'
         exclude_unmapped = build_discovery or self.config['dev'].get('unmapped', 'error') == 'exclude'

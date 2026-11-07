@@ -207,7 +207,7 @@ SCHEMA = {
               'target_methods': Field(list, [50, 80]), 'max_classes': integer(10),
               'classes': Field(list, []), 'min_classes': integer(1), 'max_dev_scope': integer(400)},
     'dev': {'discovery': enum('source', 'source', 'build'), 'denominator': enum('project', 'project', 'scope-targeted', 'coverage-scoped'), 'stable_runs': integer(3),
-            'groups': Field(list, []), 'unmapped': enum('error', 'error', 'exclude')},
+            'groups': Field(list, []), 'unmapped': enum('error', 'error', 'exclude'), 'exclude': Field(list, [])},
     'model': {'provider': enum('openrouter', 'openrouter'), 'name': Field(str, 'openai/gpt-oss-120b'),
               'env_file': Field(str, None, nullable=True),
               'env_key': Field(str, 'OPENROUTER_API_KEY')},
@@ -545,7 +545,7 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
         if index <= 3 or g.get('frozen', True):
             g.pop('frozen', None)
     data = {k: c[k] for k in ('project', 'anchor', 'range', 'runner') if k in c}
-    baseline = {k: c['dev'][k] for k in ('stable_runs', 'unmapped', 'discovery') if k in c.get('dev', {})}
+    baseline = {k: c['dev'][k] for k in ('stable_runs', 'unmapped', 'discovery', 'exclude') if k in c.get('dev', {})}
     if baseline:
         data['dev'] = baseline
     if index >= 1:

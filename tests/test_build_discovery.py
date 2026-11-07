@@ -219,3 +219,57 @@ def test_skipped_only_xml_is_valid_evidence_for_empty_candidates(tmp_path):
     assert discover(adapter, [method('disabled')])==[]
     record = read_json(tmp_path/'results/dev-build-discovery.json')
     assert record['complete'] and record['counts']['skipped']==1 and record['counts']['excluded']==1
+
+
+def test_configured_exclusions_leave_candidates_and_are_audited(tmp_path):
+    folder = tmp_path/'work/checkouts/0/module';folder.mkdir(parents=True)
+    (folder/'pom.xml').write_text('<project/>')
+    write_json(tmp_path/'results/anchor.json',dict(sha='anchor'))
+    def execute(command,cwd,log,timeout):
+        reports = folder/'target/surefire-reports';reports.mkdir(parents=True)
+        (reports/'TEST-p.Tests.xml').write_text('<testsuite><testcase name="x"/><testcase name="y"/><testcase name="z"/></testsuite>')
+        return dict(command=command,exit_code=0,seconds=1.0)
+    raw=dict(name='fixture',anchor='anchor',project=dict(repo=str(tmp_path),module='module'),
+             dev=dict(discovery='build',exclude=['p.Tests#y','q.Other']))
+    config=validate(raw)
+    adapter=SimpleNamespace(exp=tmp_path,config=config,folder=lambda _:folder,runner=SimpleNamespace(execute=execute))
+    candidates=[method('x'),method('y'),method('z'),dict(method('w'),**{'class':'q.Other'})]
+    assert [m['method'] for m in discover(adapter,candidates)] == ['x','z']
+    rows=read_csv(tmp_path/'dev/dev-not-run-by-build.csv')
+    assert [(r['class'],r['method'],r['reason']) for r in rows] == [('p.Tests','y','excluded-by-configuration'),('q.Other','w','excluded-by-configuration')]
+    assert read_json(tmp_path/'results/dev-build-discovery.json')['excluded_by_reason'] == {'excluded-by-configuration':2}
+    # the list is a result-affecting prepare input; an empty list is the old behaviour
+    assert stage_hash(config,'prepare') != stage_hash(validate({**raw,'dev':{'discovery':'build'}}),'prepare')
+    assert validate({**raw,'dev':{'discovery':'build'}})['dev']['exclude'] == []
+
+
+@pytest.mark.parametrize('discovery', [None, 'source'])
+@pytest.mark.parametrize('exclude', [[], ['p.Tests#runaway', 'q.Other'], ['p.Tests', 'q.Other']])
+def test_source_baseline_exclusions_preserve_mapping_and_audit(tmp_path, monkeypatch, discovery, exclude):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.rules.dev_denominator import denominator
+    dev = dict(exclude=exclude, stable_runs=1)
+    if discovery is not None:
+        dev['discovery'] = discovery
+    config = validate(dict(name='source', anchor='t', project=dict(repo=str(tmp_path)), dev=dev))
+    adapter = JavaMavenAdapter(tmp_path, config)
+    (adapter.folder(0)/'src/test/java').mkdir(parents=True)
+    methods = [method('safe'), method('runaway'), dict(method('other'), **{'class':'q.Other'})]
+    monkeypatch.setattr(adapter, 'list_production_methods', lambda _:dict(classes={}, methods=[]))
+    monkeypatch.setattr(adapter, 'list_test_methods', lambda _:dict(classes={}, methods=methods))
+    monkeypatch.setattr(adapter.runner, 'execute', lambda *a:pytest.fail('Saved baseline evidence must be reused'))
+    write_json(tmp_path/'results/baseline-run1.json', dict(index=1))
+    reports = tmp_path/'results/baseline-reports/run1'; reports.mkdir(parents=True)
+    (reports/'TEST-p.Tests.xml').write_text('<testsuite><testcase name="safe"/><testcase name="runaway[1]"/></testsuite>')
+    (reports/'TEST-q.Other.xml').write_text('<testsuite><testcase name="other"/></testsuite>')
+    expected = [] if 'p.Tests' in exclude else ['safe'] if exclude else ['safe', 'runaway', 'other']
+    rows = adapter.baseline()
+    assert [r['method'] for r in denominator(rows, 'project', [], set())] == expected
+    assert read_json(tmp_path/'results/baseline-unmapped.json') == []
+    audit = read_csv(tmp_path/'dev/dev-not-run-by-build.csv')
+    assert [r['method'] for r in audit] == [m['method'] for m in methods if m['method'] not in expected]
+    assert all(r['reason'] == 'excluded-by-configuration' for r in audit)
+    # Removing exclusions clears the audit and restores the original population.
+    config['dev']['exclude'] = []
+    assert len(adapter.baseline()) == 3
+    assert read_csv(tmp_path/'dev/dev-not-run-by-build.csv') == []

@@ -89,6 +89,46 @@ def test_per_policy_switch_preserves_pool_digest_and_plan_bytes(baseline):
     assert Steps(b,saved).digest==old.digest
 
 
+@pytest.mark.parametrize('discovery', [None, 'source'])
+@pytest.mark.parametrize('exclude,expected', [([], ['works', 'runaway']), (['ATest#runaway'], ['works']), (['ATest'], [])])
+def test_source_pool_exclusions_select_methods_and_audit(baseline, monkeypatch, discovery, exclude, expected):
+    exp, config, _ = baseline
+    b = Baseline(exp, config)
+    b.execution_config['dev']['exclude'] = exclude
+    if discovery is None:
+        b.execution_config['dev'].pop('discovery', None)
+    else:
+        b.execution_config['dev']['discovery'] = discovery
+    write_json(exp/'state/run.json', dict(status='running', run_id='fixture'))
+    def build(self, index, sha):
+        source = self.folder(index)/'src/test/java/ATest.java'
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text('class ATest {}')
+        write_json(self.exp/f'results/builds/{index}.json', dict(sha=sha, build='ok'))
+        return dict(build='ok')
+    monkeypatch.setattr(JavaMavenAdapter, 'build', build)
+    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda self:None)
+    monkeypatch.setattr(JavaMavenAdapter, 'list_production_methods', lambda *a:dict(classes={'A':{}}, methods=[]))
+    monkeypatch.setattr(JavaMavenAdapter, 'list_test_methods', lambda *a:dict(methods=[
+        dict(kind='plain', **{'class':'ATest'}, method=n, body_hash=n) for n in ('works','runaway')]))
+    jobs = []
+    def worker(self, job):
+        jobs.append(job)
+        assert [t['method'] for t in job['methods']] == expected
+        if job['action'] == 'policy-cover':
+            assert job['full_suite'] is (not bool(exclude))
+            assert job.get('candidate_suite', False) is bool(exclude)
+        return dict(methods=[dict(t, state='pass', lines=[['src/main/java/A.java',1]]) for t in job['methods']],
+                    universe=[['src/main/java/A.java',1]])
+    monkeypatch.setattr(JavaMavenAdapter, 'worker', worker)
+    pool = pools.build_pool(b, dict(group='dev-scope', index=2, sha=b.by_index[2]['sha']), 0)
+    assert [t['method'] for t in pool] == expected
+    audit = read_csv(exp/'results/policy/pools/dev-scope/2/dev/dev-not-run-by-build.csv')
+    assert [r['method'] for r in audit] == [n for n in ('works','runaway') if n not in expected]
+    assert all(r['reason'] == 'excluded-by-configuration' for r in audit)
+    assert any(j['action']=='policy-cover' for j in jobs) is bool(expected)
+
+
 def test_enabling_regeneration_requires_missing_points_to_be_planned(baseline):
     exp,config,_=baseline;config['policies']['regenerate_developer']=False
     plan(exp,config);config['policies']['set'][0]['developer']='regenerate'

@@ -1,4 +1,4 @@
-"""Map actual Surefire invocations to source methods without inventing tests."""
+"""Select developer candidates and map Surefire evidence to source methods."""
 from collections import Counter, defaultdict
 from pathlib import Path
 import re
@@ -102,6 +102,16 @@ def exclusion_reason(method, states, settings):
 
 
 def discover(adapter, methods):
+    configured = set(adapter.config.get('dev', {}).get('exclude') or [])
+    def is_excluded(method):
+        return method['class'] in configured or method['class']+'#'+method['method'] in configured
+
+    if adapter.config.get('dev', {}).get('discovery', 'source') == 'source':
+        excluded = [{**{k:m[k] for k in ('class','method','kind')}, 'reason':'excluded-by-configuration'}
+                    for m in methods if is_excluded(m)]
+        write_csv(adapter.exp/'dev/dev-not-run-by-build.csv', excluded, ['class','method','kind','reason'])
+        return [m for m in methods if not is_excluded(m)]
+
     exp, folder = adapter.exp, adapter.folder(0)
     anchor = read_json(exp/'results/anchor.json')
     # Mapping changes do not require executing the same project's test phase again.
@@ -132,7 +142,12 @@ def discover(adapter, methods):
     observed, unmapped, counts = report_methods(destination, methods)
     settings = surefire_config(folder/'pom.xml')
     candidates, excluded = [], []
+    # dev.exclude: Class#method or Class entries that must never run in the tool's shared JVM
+    # (for example tests that leave runaway threads behind). General setting; recorded with their reason.
     for method in methods:
+        if is_excluded(method):
+            excluded.append({**{k:method[k] for k in ('class','method','kind')}, 'reason':'excluded-by-configuration'})
+            continue
         states = observed.get((method['class'], method['method']), [])
         if any(s != 'skipped' for s in states): candidates.append(method)
         else:

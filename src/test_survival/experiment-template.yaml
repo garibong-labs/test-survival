@@ -29,6 +29,7 @@ scope:
 
 dev:
   discovery: build              # source | build; omitted settings retain source discovery
+  exclude: []                   # Class#method or Class entries kept out of every Dev candidate set (tests that cannot run in the shared JVM)
   unmapped: error                # error | exclude; exclude unmappable baseline cases from every Dev group
   groups:
     - {name: dev, denominator: project}
