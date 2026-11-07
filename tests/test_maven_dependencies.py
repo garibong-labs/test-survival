@@ -201,3 +201,34 @@ def test_submodule_build_compiles_from_the_reactor_root(tmp_path, monkeypatch):
     monkeypatch.setattr(adapter.runner, 'execute', execute)
     assert adapter.build(3, 'abc')['build'] == 'ok'
     assert commands == [(['mvn', '-q', '-o', '-pl', 'implementation', '-am', '-DskipTests', 'compile'], tmp_path/'work/checkouts/3')]
+
+
+@pytest.mark.parametrize('reports', [True, False])
+def test_submodule_baseline_runs_past_upstream_failures_and_requires_module_reports(tmp_path, monkeypatch, reports):
+    from test_survival.adapters import build_discovery
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    config = validate_config({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo', 'module': 'implementation'},
+                              'dev': {'discovery': 'source', 'stable_runs': 1}})
+    adapter = JavaMavenAdapter(tmp_path, config)
+    folder = adapter.folder(0); (folder/'src/test/java').mkdir(parents=True)
+    monkeypatch.setattr(adapter, 'list_production_methods', lambda index: {'classes': {}, 'methods': []})
+    monkeypatch.setattr(adapter, 'list_test_methods', lambda files: {'classes': {}, 'methods': []})
+    monkeypatch.setattr(build_discovery, 'discover', lambda adapter, tests: tests)
+    monkeypatch.setattr(adapter.cache, 'resolve', lambda folder, index, **kwargs: ('digest', None, []))
+    commands = []
+    def execute(command, cwd, log, timeout):
+        commands.append((command, Path(cwd)))
+        if reports:
+            (folder/'target/surefire-reports').mkdir(parents=True, exist_ok=True)
+            (folder/'target/surefire-reports/TEST-a.A.xml').write_text('<testsuite/>')
+        return {'exit_code': 1, 'log': str(log)}
+    monkeypatch.setattr(adapter.runner, 'execute', execute)
+    if reports:
+        adapter.baseline()
+        assert read_json(tmp_path/'results/baseline-run1.json')['index'] == 1
+    else:
+        with pytest.raises(RuntimeError, match='no Surefire reports for the selected module'):
+            adapter.baseline()
+        assert not (tmp_path/'results/baseline-run1.json').exists()
+    assert commands[0] == (['mvn', '-q', '-o', '-pl', 'implementation', '-am', '-Dmaven.test.failure.ignore=true', 'test'],
+                           tmp_path/'work/checkouts/0')

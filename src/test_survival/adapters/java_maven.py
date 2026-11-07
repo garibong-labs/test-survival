@@ -293,12 +293,18 @@ class JavaMavenAdapter:
                     shutil.rmtree(destination)
                 attempts = []
                 cwd, selector = reactor(folder, self.config['project']['module'])
+                # With -am, a failing upstream test must not stop the reactor before the selected module runs.
+                ignore = ['-Dmaven.test.failure.ignore=true'] if selector else []
                 for number, offline in enumerate((True, False), 1):
-                    result = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), *selector, 'test'], cwd,
+                    result = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), *selector, *ignore, 'test'], cwd,
                                                  self.exp/f'results/baseline-run{repeat}-{number}.txt', self.config['runner']['timeouts']['build'])
                     attempts.append(result)
                     if result['exit_code'] == 0 or reports.exists():
                         break
+                if selector and not has_reports(reports):
+                    # Missing selected-module evidence is a failed run, not instability of every method.
+                    raise RuntimeError('Baseline run produced no Surefire reports for the selected module; see '
+                                       + attempts[-1].get('log', str(self.exp/f'results/baseline-run{repeat}-{len(attempts)}.txt')))
                 if reports.exists():
                     shutil.copytree(reports, destination, dirs_exist_ok=True)
                 write_json(record_path, dict(index=repeat, attempts=attempts))
