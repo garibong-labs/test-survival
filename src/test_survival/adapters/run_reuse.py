@@ -21,7 +21,12 @@ PRE_MULTI_RELEASE = {
     'java_worker.py': '18050d4c02aae2db2df912ee8ee7e685abb27f511467a9e658855092635df103',
     'PerTestCoverage.java': '38f5b9f652d094df030322549fda9f40a3dad1f388086f3f24b1ac4676049c83',
 }
-HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE)
+# Before the explicit System.exit at the end of PerTestCoverage.main: the helper only
+# changed how the JVM terminates, never what it measured or wrote.
+PRE_EXPLICIT_EXIT = {
+    'PerTestCoverage.java': '77534f14a4fd91b9127470c258efe951be8de985d595bbb27d5b84e558fb636b',
+}
+HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE, PRE_EXPLICIT_EXIT)
 
 
 # Main 01ae5d0, before storage/lifecycle-only changes. The two new provenance

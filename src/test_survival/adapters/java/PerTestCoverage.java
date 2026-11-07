@@ -397,5 +397,8 @@ public final class PerTestCoverage implements TestExecutionListener {
                 } finally { Thread.currentThread().setContextClassLoader(prior); }
             }
         }
+        // Tests may leave non-daemon threads behind (schedulers, executors). Without an explicit
+        // exit the JVM waits for them forever after every result has been written.
+        System.exit(0);
     }
 }

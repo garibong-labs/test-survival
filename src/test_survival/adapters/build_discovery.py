@@ -132,7 +132,13 @@ def discover(adapter, methods):
     observed, unmapped, counts = report_methods(destination, methods)
     settings = surefire_config(folder/'pom.xml')
     candidates, excluded = [], []
+    # dev.exclude: Class#method or Class entries that must never run in the tool's shared JVM
+    # (for example tests that leave runaway threads behind). General setting; recorded with their reason.
+    configured = set(adapter.config.get('dev', {}).get('exclude') or [])
     for method in methods:
+        if method['class'] in configured or method['class']+'#'+method['method'] in configured:
+            excluded.append({**{k:method[k] for k in ('class','method','kind')}, 'reason':'excluded-by-configuration'})
+            continue
         states = observed.get((method['class'], method['method']), [])
         if any(s != 'skipped' for s in states): candidates.append(method)
         else:

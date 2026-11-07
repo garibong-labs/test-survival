@@ -219,3 +219,25 @@ def test_skipped_only_xml_is_valid_evidence_for_empty_candidates(tmp_path):
     assert discover(adapter, [method('disabled')])==[]
     record = read_json(tmp_path/'results/dev-build-discovery.json')
     assert record['complete'] and record['counts']['skipped']==1 and record['counts']['excluded']==1
+
+
+def test_configured_exclusions_leave_candidates_and_are_audited(tmp_path):
+    folder = tmp_path/'work/checkouts/0/module';folder.mkdir(parents=True)
+    (folder/'pom.xml').write_text('<project/>')
+    write_json(tmp_path/'results/anchor.json',dict(sha='anchor'))
+    def execute(command,cwd,log,timeout):
+        reports = folder/'target/surefire-reports';reports.mkdir(parents=True)
+        (reports/'TEST-p.Tests.xml').write_text('<testsuite><testcase name="x"/><testcase name="y"/><testcase name="z"/></testsuite>')
+        return dict(command=command,exit_code=0,seconds=1.0)
+    raw=dict(name='fixture',anchor='anchor',project=dict(repo=str(tmp_path),module='module'),
+             dev=dict(discovery='build',exclude=['p.Tests#y','q.Other']))
+    config=validate(raw)
+    adapter=SimpleNamespace(exp=tmp_path,config=config,folder=lambda _:folder,runner=SimpleNamespace(execute=execute))
+    candidates=[method('x'),method('y'),method('z'),dict(method('w'),**{'class':'q.Other'})]
+    assert [m['method'] for m in discover(adapter,candidates)] == ['x','z']
+    rows=read_csv(tmp_path/'dev/dev-not-run-by-build.csv')
+    assert [(r['class'],r['method'],r['reason']) for r in rows] == [('p.Tests','y','excluded-by-configuration'),('q.Other','w','excluded-by-configuration')]
+    assert read_json(tmp_path/'results/dev-build-discovery.json')['excluded_by_reason'] == {'excluded-by-configuration':2}
+    # the list is a result-affecting prepare input; an empty list is the old behaviour
+    assert stage_hash(config,'prepare') != stage_hash(validate({**raw,'dev':{'discovery':'build'}}),'prepare')
+    assert validate({**raw,'dev':{'discovery':'build'}})['dev']['exclude'] == []
