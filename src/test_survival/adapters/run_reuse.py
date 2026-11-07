@@ -26,7 +26,18 @@ PRE_MULTI_RELEASE = {
 PRE_EXPLICIT_EXIT = {
     'PerTestCoverage.java': '77534f14a4fd91b9127470c258efe951be8de985d595bbb27d5b84e558fb636b',
 }
-HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE, PRE_EXPLICIT_EXIT)
+# Main 846e056, before submodule commands moved to the reactor root. A root
+# module (project.module: .) runs the same Maven commands with the same cache keys.
+# Submodule provenances carry `reactor_module`, which no record from this era has,
+# so this era never matches them.
+PRE_REACTOR = {
+    'java_maven.py': '23cfe6cfe3c0cc135ef236ca8796fd9568a460718e9a4d90e2c8f46b894e1e55',
+    'java_worker.py': '3a8bef2cf3c2bccc09cf261f0bad7f963eab878725eb9cae213e59d82c79dbcd',
+    'maven_dependencies.py': '895d95439e2c27937e14c3d78aa954570f5d5ad515de3a5859b0f53c4a3fa8dd',
+    'cache.py': '9332cd7d9a8fcac8e8dd8df2572efe81c8784b3e45d5d9f0646912f498ed8147',
+    'selection_context.py': 'ad251e59aeb38b02918bba70c05e46ae9b40ef32fad04c84f9456de996b76774',
+}
+HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE, PRE_EXPLICIT_EXIT, PRE_REACTOR)
 
 
 # Main 01ae5d0, before storage/lifecycle-only changes. The two new provenance

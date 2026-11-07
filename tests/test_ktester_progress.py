@@ -70,3 +70,25 @@ def test_failed_marker_does_not_mask_author_exception(worker, tmp_path, monkeypa
     with pytest.raises(RuntimeError) as caught:
         Repairer().check_test_class({'id': 'one', 'test-class': 'p.One_Test'})
     assert caught.value is error
+
+
+def test_submodule_prepare_copies_only_the_selected_modules_dependencies(worker, tmp_path, monkeypatch):
+    root = tmp_path/'work/checkouts/0'; repo = root/'implementation'
+    (repo/'src/main/java').mkdir(parents=True); (repo/'pom.xml').write_text('<project/>')
+    stale = repo/'target/survival-ktester-libs/stale.jar'; stale.parent.mkdir(parents=True); stale.touch()
+    project = tmp_path/'ds/projects/p'
+    for name, value in dict(JOB={'module': 'implementation'}, REPO=repo, PROJECT=project, PROJECT_NAME='p',
+                            DS=tmp_path/'ds', RESULTS=tmp_path/'results').items():
+        monkeypatch.setattr(worker, name, value, raising=False)
+    calls = []
+    def execute(command, cwd, log):
+        calls.append((command, cwd))
+        output = next(c.split('=', 1)[1] for c in command if c.startswith('-DoutputDirectory='))
+        # With -am every reactor module writes its own dependencies under its own basedir.
+        for module, jar in (('common', 'upstream-test-only.jar'), ('implementation', 'common-1.1-SNAPSHOT.jar')):
+            (cwd/module/output).mkdir(parents=True, exist_ok=True); (cwd/module/output/jar).touch()
+        return {'exit_code': 0}
+    monkeypatch.setattr(worker, 'execute', execute)
+    worker.prepare()
+    assert calls[0][1] == root and calls[0][0][3:5] == ['-pl', 'implementation']
+    assert sorted(p.name for p in (project/'libs').iterdir()) == ['common-1.1-SNAPSHOT.jar']

@@ -12,7 +12,8 @@ def collect(w, job):
     context = dict(version=1, sha=job['sha'], known=False, entries=[])
     try:
         w.maven_dependencies.maven('dependency:list', folder, work/'resolve', w.TIMEOUTS['build'], w.execute,
-            options=('-DincludeScope=test', '-DoutputAbsoluteArtifactFilename=true', '-DoutputFile='+str(listing)))
+            options=('-DincludeScope=test', '-DoutputAbsoluteArtifactFilename=true', '-DoutputFile='+str(listing)),
+            module=getattr(w, 'MODULE', '.'))
         coordinates = {}
         for line in listing.read_text().splitlines():
             line = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', line)

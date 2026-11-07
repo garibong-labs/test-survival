@@ -212,6 +212,31 @@ source associations, and each retry uses a clean output directory. No frozen
 sources or completed experiment artifacts are removed.
 
 
+## Multi-module projects
+
+When `project.module` names a submodule, every Maven command that resolves or
+builds the module runs at the checkout root with `-pl <module> -am`: dependency
+prefetch, classpath resolution, the per-commit compile, baseline test runs, the
+affected-selection dependency listing, and KTester dependency copying. Sibling
+modules between releases carry SNAPSHOT versions that exist in no repository;
+Maven finds them only inside the reactor. Goals that list the module's
+dependencies (`dependency:build-classpath`, `dependency:list`,
+`dependency:copy-dependencies`) first run `-Dmaven.test.skip=true package` in the same
+invocation, so each sibling resolves to the jar built from that commit's own
+checkout, for example `common/target/<artifact>-<version>.jar`.
+Test compilation is skipped there too, so a commit whose own tests no longer
+compile still resolves. A dependency on a sibling's `test-jar` is not supported.
+
+Because such a classpath names files inside one index's checkout, a submodule
+classpath is resolved per index and never shared through `pom-sha256`. A
+root-module project (`project.module: .`) keeps its earlier commands, cache keys,
+and record fingerprints.
+
+`range.skip_untouched` and affected selection watch only the configured module's
+own paths and every `pom.xml`. A commit that changes only a sibling module's
+`src/main` is skipped as untouched, and affected selection does not rerun a test
+because a sibling's sources changed.
+
 ## Developer discovery and scope bounds
 
 These are experiment YAML settings, shared by every project:

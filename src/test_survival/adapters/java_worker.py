@@ -75,6 +75,7 @@ def execute(command,cwd,log,timeout=600):
     return dict(command=command,cwd=str(cwd),exit_code=code,timeout=timed_out,seconds=round(time.monotonic()-start,3),log=str(log.relative_to(EXP)))
 
 
+MODULE='.'  # main() sets the configured module; '.' when imported directly
 PROJECT_CLASSPATH_EXCLUDES=('/org/junit/','/junit/junit/','/org/opentest4j/','/org/apiguardian/')
 
 
@@ -94,7 +95,7 @@ def classpath(index):
     folder=EXP/f'work/checkouts/{index}'/MODULE
     build=json.loads((RESULTS/f'builds/{index}.json').read_text())
     cache=EXP/build['classpath']
-    maven_dependencies.resolve(folder,cache,RESULTS/'builds/logs'/f'classpath-{index}',TIMEOUTS['build'],execute)
+    maven_dependencies.resolve(folder,cache,RESULTS/'builds/logs'/f'classpath-{index}',TIMEOUTS['build'],execute,module=MODULE)
     return folder,':'.join([str(folder/'target/classes'),*testjars,*project_jars(cache.read_text())])
 
 
@@ -292,7 +293,7 @@ def setup(wait=time.sleep):
         (libs/stale).unlink(missing_ok=True)
     digest=hashlib.sha256((REPO/'pom.xml').read_bytes()).hexdigest()
     maven_dependencies.resolve(REPO,EXP/'work/classpaths'/f'{digest}.txt',RESULTS/'builds/logs/runner-setup',
-                               TIMEOUTS['build'],execute,prefetch=True,wait=wait)
+                               TIMEOUTS['build'],execute,prefetch=True,wait=wait,module=MODULE)
     runtime=EXP/'work/runtime';runtime.mkdir(parents=True,exist_ok=True)
     for name in ['resources','suite']:
         source=EXP/'dev/src-test-t'/name
@@ -426,7 +427,7 @@ def main():
     ENVIRONMENT_ERRORS=job.get('environment_errors',{'patterns':[],'max_reruns':3,'backoff_seconds':5})
     if job['action']=='classpath':
         attempts=maven_dependencies.resolve(Path(job['folder']),EXP/job['cache'],EXP/job.get('logs', 'results/builds/logs')/f'classpath-{job["index"]}',
-                                            TIMEOUTS['build'],execute,force=job['force'])
+                                            TIMEOUTS['build'],execute,force=job['force'],module=job.get('module','.'))
         write_json(EXP/job['output'],{'attempts':attempts})
     elif job['action']=='selection-context':
         try:
