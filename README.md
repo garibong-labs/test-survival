@@ -204,7 +204,8 @@ completed developer populations retain their saved selections.
 
 
 Use `dev.exclude` to keep individual developer tests out of every candidate set.
-Entries are `fully.qualified.Class#method` or a bare class name. Excluded methods
+Entries are `fully.qualified.Class#method` or a bare class name, in both `source`
+and `build` discovery modes. Excluded methods
 are listed in `dev/dev-not-run-by-build.csv` with the reason
 `excluded-by-configuration`, and the same list applies to developer regeneration
 pools. Use it for tests that cannot run inside the tool's shared test JVM, for

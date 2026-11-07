@@ -241,3 +241,35 @@ def test_configured_exclusions_leave_candidates_and_are_audited(tmp_path):
     # the list is a result-affecting prepare input; an empty list is the old behaviour
     assert stage_hash(config,'prepare') != stage_hash(validate({**raw,'dev':{'discovery':'build'}}),'prepare')
     assert validate({**raw,'dev':{'discovery':'build'}})['dev']['exclude'] == []
+
+
+@pytest.mark.parametrize('discovery', [None, 'source'])
+@pytest.mark.parametrize('exclude', [[], ['p.Tests#runaway', 'q.Other'], ['p.Tests', 'q.Other']])
+def test_source_baseline_exclusions_preserve_mapping_and_audit(tmp_path, monkeypatch, discovery, exclude):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.rules.dev_denominator import denominator
+    dev = dict(exclude=exclude, stable_runs=1)
+    if discovery is not None:
+        dev['discovery'] = discovery
+    config = validate(dict(name='source', anchor='t', project=dict(repo=str(tmp_path)), dev=dev))
+    adapter = JavaMavenAdapter(tmp_path, config)
+    (adapter.folder(0)/'src/test/java').mkdir(parents=True)
+    methods = [method('safe'), method('runaway'), dict(method('other'), **{'class':'q.Other'})]
+    monkeypatch.setattr(adapter, 'list_production_methods', lambda _:dict(classes={}, methods=[]))
+    monkeypatch.setattr(adapter, 'list_test_methods', lambda _:dict(classes={}, methods=methods))
+    monkeypatch.setattr(adapter.runner, 'execute', lambda *a:pytest.fail('Saved baseline evidence must be reused'))
+    write_json(tmp_path/'results/baseline-run1.json', dict(index=1))
+    reports = tmp_path/'results/baseline-reports/run1'; reports.mkdir(parents=True)
+    (reports/'TEST-p.Tests.xml').write_text('<testsuite><testcase name="safe"/><testcase name="runaway[1]"/></testsuite>')
+    (reports/'TEST-q.Other.xml').write_text('<testsuite><testcase name="other"/></testsuite>')
+    expected = [] if 'p.Tests' in exclude else ['safe'] if exclude else ['safe', 'runaway', 'other']
+    rows = adapter.baseline()
+    assert [r['method'] for r in denominator(rows, 'project', [], set())] == expected
+    assert read_json(tmp_path/'results/baseline-unmapped.json') == []
+    audit = read_csv(tmp_path/'dev/dev-not-run-by-build.csv')
+    assert [r['method'] for r in audit] == [m['method'] for m in methods if m['method'] not in expected]
+    assert all(r['reason'] == 'excluded-by-configuration' for r in audit)
+    # Removing exclusions clears the audit and restores the original population.
+    config['dev']['exclude'] = []
+    assert len(adapter.baseline()) == 3
+    assert read_csv(tmp_path/'dev/dev-not-run-by-build.csv') == []
