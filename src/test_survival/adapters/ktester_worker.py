@@ -37,9 +37,17 @@ def prepare():
         if (REPO/source).exists():shutil.copytree(REPO/source,PROJECT/dest,dirs_exist_ok=True)
     shutil.copy2(REPO/'pom.xml',PROJECT/'pom.xml')
     attempts=[]
+    submodule=java_worker.maven_dependencies.reactor(REPO,JOB.get('module','.'))[1]!=[]
     for attempt in (1,2):
         if attempt==2:time.sleep(60)
-        run=execute(['mvn','-q',*(['-o'] if attempt==1 else []),'dependency:copy-dependencies','-DoutputDirectory=libs','-DincludeScope=test'],PROJECT,RESULTS/f'ktester-prepare-{attempt}.txt')
+        offline=['-o'] if attempt==1 else []
+        if submodule:
+            # Sibling SNAPSHOTs resolve only in the checkout's own reactor; the copied pom alone cannot find them.
+            args,cwd=java_worker.maven_dependencies.command('dependency:copy-dependencies',REPO,JOB['module'],offline=attempt==1,
+                                                            options=('-DoutputDirectory='+str(PROJECT/'libs'),'-DincludeScope=test'))
+        else:
+            args,cwd=['mvn','-q',*offline,'dependency:copy-dependencies','-DoutputDirectory=libs','-DincludeScope=test'],PROJECT
+        run=execute(args,cwd,RESULTS/f'ktester-prepare-{attempt}.txt')
         attempts.append(run)
         if run['exit_code']==0:break
     assert attempts[-1]['exit_code']==0,attempts

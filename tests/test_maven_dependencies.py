@@ -5,6 +5,7 @@ import pytest
 
 from test_survival.adapters import java_worker as worker, maven_dependencies as dependencies
 from test_survival.io import read_json, write_json
+from test_survival.config import validate as validate_config
 
 
 @pytest.mark.parametrize('cached', [False, True])
@@ -134,3 +135,69 @@ def test_compile_tests_uses_the_worker_classpath_order(tmp_path, monkeypatch):
     expected = ':'.join([adapter.runner.path(adapter.folder(0)/'target/classes'), libs+'/mockito-core-5.24.0.jar',
                          libs+'/junit-platform-console-standalone-1.9.3.jar', '/root/.m2/repository/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar'])
     assert [c[c.index('-cp')+1] for c in commands] == [expected, expected]
+
+
+@pytest.mark.parametrize('module, depth, selector', [('.', 0, []), ('', 0, []), ('./', 0, []),
+                                                     ('implementation', 1, ['-pl', 'implementation', '-am']),
+                                                     ('sources/yaml', 2, ['-pl', 'sources/yaml', '-am'])])
+def test_reactor_runs_submodules_from_the_checkout_root(tmp_path, module, depth, selector):
+    root = tmp_path/'work/checkouts/3'
+    folder = root if depth == 0 else root/module
+    assert dependencies.reactor(folder, module) == (root, selector)
+
+
+def test_submodule_artifact_goals_package_the_reactor_first(tmp_path):
+    folder = tmp_path/'implementation'
+    args, cwd = dependencies.command('dependency:build-classpath', folder, 'implementation', offline=True, options=('-DincludeScope=test',))
+    assert cwd == tmp_path
+    assert args == ['mvn', '-q', '-o', '-pl', 'implementation', '-am', '-DskipTests', 'package', 'dependency:build-classpath', '-DincludeScope=test']
+    args, _ = dependencies.command('dependency:go-offline', folder, 'implementation', refresh=True)
+    assert args == ['mvn', '-q', '-U', '-pl', 'implementation', '-am', 'dependency:go-offline']
+    # A root module keeps the original command and working directory.
+    assert dependencies.command('dependency:build-classpath', tmp_path, '.', offline=True) == (['mvn', '-q', '-o', 'dependency:build-classpath'], tmp_path)
+
+
+def test_submodule_classpath_resolves_in_the_reactor_and_is_not_shared(tmp_path):
+    from test_survival.runner.cache import ClasspathCache
+    config = validate_config({'name': 'x', 'anchor': 't', 'project': {'repo': str(tmp_path), 'module': 'implementation'}})
+    calls = []
+    def execute(command, cwd, log, timeout):
+        calls.append((command, cwd))
+        if 'dependency:build-classpath' in command:
+            sibling = Path(cwd)/'common/target/common-1.1-SNAPSHOT.jar'
+            sibling.parent.mkdir(parents=True, exist_ok=True);sibling.touch()
+            Path(next(c.split('=', 1)[1] for c in command if c.startswith('-Dmdep.outputFile='))).write_text(str(sibling))
+        return {'exit_code': 0}
+    class Runner:
+        path = staticmethod(str)
+        def execute(self, command, cwd, log, timeout):
+            job = read_json(command[-1])
+            attempts = dependencies.resolve(Path(job['folder']), tmp_path/job['cache'], tmp_path/'logs', 10, execute,
+                                            force=job['force'], module=job['module'])
+            write_json(tmp_path/job['output'], {'attempts': attempts})
+            return {'exit_code': 0}
+    cache = ClasspathCache(tmp_path, config, Runner())
+    paths = []
+    for index in (1, 2):
+        root = tmp_path/f'work/checkouts/{index}'
+        (root/'implementation').mkdir(parents=True);(root/'implementation/pom.xml').write_text('<project/>')
+        paths.append(cache.resolve(root/'implementation', index)[1])
+    # Identical module poms still get their own classpath: each names its own checkout's sibling jar.
+    assert [p.name for p in paths] == ['1.txt', '2.txt']
+    assert paths[0].read_text().startswith(str(tmp_path/'work/checkouts/1/common'))
+    assert all(cwd.name in ('1', '2') and '-pl' in command for command, cwd in calls)
+
+
+def test_submodule_build_compiles_from_the_reactor_root(tmp_path, monkeypatch):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    adapter = JavaMavenAdapter(tmp_path, validate_config({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo', 'module': 'implementation'}}))
+    monkeypatch.setattr(adapter, 'checkout', lambda index, sha: None)
+    cache = tmp_path/'work/classpaths/3.txt';cache.parent.mkdir(parents=True);cache.write_text('')
+    monkeypatch.setattr(adapter.cache, 'resolve', lambda folder, index, **kwargs: ('digest', cache, []))
+    monkeypatch.setattr(adapter, 'dependency_identity', lambda *args: [])
+    commands = []
+    def execute(command, cwd, log, timeout):
+        commands.append((command, Path(cwd)));return {'exit_code': 0}
+    monkeypatch.setattr(adapter.runner, 'execute', execute)
+    assert adapter.build(3, 'abc')['build'] == 'ok'
+    assert commands == [(['mvn', '-q', '-o', '-pl', 'implementation', '-am', '-DskipTests', 'compile'], tmp_path/'work/checkouts/3')]

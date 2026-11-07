@@ -17,7 +17,7 @@ from ..io import read_json, write_json, write_csv, result_exists
 from ..runner.docker import DockerRunner
 from ..runner.cache import ClasspathCache
 from .java_worker import RUNNER_JAR_RETRIES, RUNNER_JAR_BACKOFF_SECONDS, project_jars, runner_test_jars
-from .maven_dependencies import resolution_timeout
+from .maven_dependencies import reactor, resolution_timeout
 from .run_reuse import survival_provenance_matches
 from ..rules.survival import dead_method
 
@@ -163,8 +163,9 @@ class JavaMavenAdapter:
                 restoration_state.unlink(missing_ok=True)
                 return result
             attempts = []
+            cwd, selector = reactor(folder, self.config['project']['module'])
             for number, offline in enumerate((True, False), 1):
-                attempt = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), '-DskipTests', 'compile'], folder,
+                attempt = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), *selector, '-DskipTests', 'compile'], cwd,
                                               directory/f'{index}-{number}.txt', self.config['runner']['timeouts']['build'])
                 attempts.append(attempt)
                 if attempt['exit_code'] == 0:
@@ -291,8 +292,9 @@ class JavaMavenAdapter:
                 if build_discovery and destination.exists():
                     shutil.rmtree(destination)
                 attempts = []
+                cwd, selector = reactor(folder, self.config['project']['module'])
                 for number, offline in enumerate((True, False), 1):
-                    result = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), 'test'], folder,
+                    result = self.runner.execute(['mvn', '-q', *(['-o'] if offline else []), *selector, 'test'], cwd,
                                                  self.exp/f'results/baseline-run{repeat}-{number}.txt', self.config['runner']['timeouts']['build'])
                     attempts.append(result)
                     if result['exit_code'] == 0 or reports.exists():
@@ -409,11 +411,12 @@ class JavaMavenAdapter:
                                'runner':self.provenance() if provenance is None else provenance})
 
     def screen_fingerprints(self, source, repeats, *, provenance=None):
-        from .run_reuse import pre_footprint_provenance, PRE_BATCH
+        from .run_reuse import pre_footprint_provenance, PRE_BATCH, PRE_REACTOR
         provenance = self.provenance() if provenance is None else provenance
         old = {**provenance, **PRE_BATCH}
         return tuple(self.screen_fingerprint(source, repeats, provenance=p) for p in
-                     (provenance, pre_footprint_provenance(provenance), old, pre_footprint_provenance(old)))
+                     (provenance, pre_footprint_provenance(provenance), old, pre_footprint_provenance(old),
+                      {**provenance, **PRE_REACTOR}))
 
     def screen_file(self, group, round_name, source, repeats, number):
         relative = str(source.relative_to(self.exp))
