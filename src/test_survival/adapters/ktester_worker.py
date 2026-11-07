@@ -38,19 +38,25 @@ def prepare():
     shutil.copy2(REPO/'pom.xml',PROJECT/'pom.xml')
     attempts=[]
     submodule=java_worker.maven_dependencies.reactor(REPO,JOB.get('module','.'))[1]!=[]
+    reactor_libs=REPO/'target/survival-ktester-libs'
     for attempt in (1,2):
         if attempt==2:time.sleep(60)
         offline=['-o'] if attempt==1 else []
         if submodule:
             # Sibling SNAPSHOTs resolve only in the checkout's own reactor; the copied pom alone cannot find them.
+            # A relative directory is per module, so upstream modules' own dependencies stay out of KTester's libs.
+            if reactor_libs.exists():shutil.rmtree(reactor_libs)
             args,cwd=java_worker.maven_dependencies.command('dependency:copy-dependencies',REPO,JOB['module'],offline=attempt==1,
-                                                            options=('-DoutputDirectory='+str(PROJECT/'libs'),'-DincludeScope=test'))
+                                                            options=('-DoutputDirectory='+str(reactor_libs.relative_to(REPO)),'-DincludeScope=test'))
         else:
             args,cwd=['mvn','-q',*offline,'dependency:copy-dependencies','-DoutputDirectory=libs','-DincludeScope=test'],PROJECT
         run=execute(args,cwd,RESULTS/f'ktester-prepare-{attempt}.txt')
         attempts.append(run)
         if run['exit_code']==0:break
     assert attempts[-1]['exit_code']==0,attempts
+    if submodule:
+        if (PROJECT/'libs').exists():shutil.rmtree(PROJECT/'libs')
+        shutil.copytree(reactor_libs,PROJECT/'libs')
     jars=sorted((PROJECT/'libs').glob('*.jar'))
     assert jars
     (PROJECT/'dependencies.txt').write_text('target/classes:'+':'.join('libs/'+p.name for p in jars))
