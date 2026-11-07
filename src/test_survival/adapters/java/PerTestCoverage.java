@@ -311,6 +311,10 @@ public final class PerTestCoverage implements TestExecutionListener {
     private static void resources(Path source) throws IOException {
         // Each isolated loader also gets its snapshot's filesystem resources.
         // Only scratch src/test/{resources,suite} beneath the worker cwd is touched.
+        // Files are hard-linked to the snapshot's copy when the filesystem allows it,
+        // so a snapshot switch costs directory entries rather than a full copy of the
+        // resource tree (hundreds of megabytes for some projects, once per snapshot
+        // group and chunk); a filesystem without link() gets a plain copy.
         for (String name : new String[]{"resources", "suite"}) {
             Path target = Paths.get("src/test", name);
             if (Files.exists(target)) {
@@ -324,10 +328,19 @@ public final class PerTestCoverage implements TestExecutionListener {
                     for (Path path : paths.toList()) {
                         Path destination = target.resolve(root.relativize(path));
                         if (Files.isDirectory(path)) Files.createDirectories(destination);
-                        else Files.copy(path, destination);
+                        else linkOrCopy(path, destination);
                     }
                 }
             }
+        }
+    }
+
+    private static void linkOrCopy(Path source, Path destination) throws IOException {
+        try {
+            Files.createLink(destination, source);
+        } catch (UnsupportedOperationException | IOException e) {
+            Files.deleteIfExists(destination);
+            Files.copy(source, destination);
         }
     }
 
