@@ -52,3 +52,56 @@ def test_records_before_the_test_data_change_stay_reusable(tmp_path, module):
     assert keys[0] == adapter.screen_fingerprint(source, 1)
     assert adapter.screen_fingerprint(source, 1, provenance={**current, **PRE_TEST_DATA}) in keys
     assert len(keys) == len(set(keys))
+
+
+def test_trees_with_other_data_folders_do_not_reuse_pre_change_records(tmp_path):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.adapters.run_reuse import PRE_TEST_DATA, survival_provenance_matches
+    from test_survival.config import validate
+    adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo'}}))
+    tree(tmp_path/'dev/src-test-t', ['java', 'resources', 'input'])
+    current = adapter.provenance()
+    assert current['test_data_dirs'] == 'input'
+    # A main fa45856 record never carried the key: its runtime lacked src/test/input.
+    earlier = {**{k: v for k, v in current.items() if k != 'test_data_dirs'}, **PRE_TEST_DATA}
+    assert not survival_provenance_matches(earlier, current)
+    source = tmp_path/'Generated.java'; source.write_text('class Generated {}')
+    assert adapter.screen_fingerprint(source, 1, provenance=earlier) not in adapter.screen_fingerprints(source, 1)
+
+
+def test_setup_restages_a_shared_runtime_from_an_earlier_layout(tmp_path, monkeypatch):
+    import hashlib
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.config import validate
+    from test_survival.io import read_json, write_json
+    adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo'}}))
+    folder = adapter.folder(0); folder.mkdir(parents=True); (folder/'pom.xml').write_text('<project/>')
+    helpers = tmp_path/'helpers'; helpers.mkdir()
+    payload = b'runner jar'
+    records = [dict(filename='test.jar', sha256=hashlib.sha256(payload).hexdigest(), role='test')]
+    write_json(helpers/'classpath-artifacts.json', records)
+    adapter.helpers = helpers
+    libs = tmp_path/'work/libs'; libs.mkdir(parents=True); (libs/'test.jar').write_bytes(payload)
+    write_json(tmp_path/'results/anchor.json', {'sha': 't'})
+    monkeypatch.setattr(adapter, 'ensure_anchor', lambda: None)
+    # Completed by main fa45856: dependencies current, runtime staged without input.
+    write_json(tmp_path/'results/runner-setup.json', {'status': 'completed', 'jars': records,
+                                                      'project_dependencies': hashlib.sha256(b'<project/>').hexdigest()})
+    frozen = tree(tmp_path/'dev/src-test-t', ['java', 'resources', 'input'])
+    runtime = tmp_path/'work/runtime/src/test'
+    tree(runtime, ['resources', 'stale'])
+    monkeypatch.setattr(adapter, 'worker', lambda job: pytest.fail('dependencies are current'))
+    adapter.setup_runner()
+    assert sorted(p.name for p in runtime.iterdir()) == ['input', 'resources']
+    assert (runtime/'input/value').read_text() == 'input'
+    assert read_json(tmp_path/'results/runner-setup.json')['test_data']
+    # A second gate pass finds the staging current and copies nothing.
+    import test_survival.adapters.test_data as test_data
+    monkeypatch.setattr(test_data, 'stage_test_data', lambda *a: pytest.fail('restaged a current runtime'))
+    adapter.setup_runner()
+    (frozen/'input/value').write_text('changed')
+    monkeypatch.undo()
+    monkeypatch.setattr(adapter, 'ensure_anchor', lambda: None)
+    monkeypatch.setattr(adapter, 'worker', lambda job: pytest.fail('dependencies are current'))
+    adapter.setup_runner()
+    assert (runtime/'input/value').read_text() == 'changed'

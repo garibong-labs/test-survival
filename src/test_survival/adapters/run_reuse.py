@@ -40,8 +40,10 @@ PRE_REACTOR = {
 HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE, PRE_EXPLICIT_EXIT, PRE_REACTOR)
 # Main fa45856, before every non-java folder of the frozen src/test tree went into
 # test runtimes. A tree whose only data folders are resources and suite stages and
-# switches exactly the same files, so its records stay valid. It combines with every
-# era above: those list their differences from this layout.
+# switches exactly the same files, so its records stay valid. A tree with other data
+# folders carries `test_data_dirs` in its provenance, which no record from this era
+# has, so this era never matches it. It combines with every era above: those list
+# their differences from this layout.
 PRE_TEST_DATA = {
     'java_maven.py': 'a8139c2f2e99a30f93071da240d5a07730016678599e37997d83ac6d37faa881',
     'java_worker.py': '4eb9e24ed984fd4dce0428cbaec32342163cefc5b2742a832e5c3a141e3d07dd',

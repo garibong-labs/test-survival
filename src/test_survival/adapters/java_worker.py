@@ -27,7 +27,7 @@ try:
     from . import maven_dependencies
     from .compilation import CompilationService
     from .compiler_session import CompilerSession
-    from .test_data import frozen_test_dirs
+    from .test_data import frozen_test_dirs, stage_test_data
 except ImportError:  # This worker is also invoked directly inside the container.
     import importlib.util
     spec = importlib.util.spec_from_file_location('survival_result_io', Path(__file__).resolve().parents[1]/'io.py')
@@ -38,7 +38,7 @@ except ImportError:  # This worker is also invoked directly inside the container
     from adapters import maven_dependencies
     from adapters.compilation import CompilationService
     from adapters.compiler_session import CompilerSession
-    from adapters.test_data import frozen_test_dirs
+    from adapters.test_data import frozen_test_dirs, stage_test_data
 
 RUNNER_JAR_TRANSIENT_PATTERNS = maven_dependencies.TRANSIENT_PATTERNS
 
@@ -296,10 +296,7 @@ def setup(wait=time.sleep):
     maven_dependencies.resolve(REPO,EXP/'work/classpaths'/f'{digest}.txt',RESULTS/'builds/logs/runner-setup',
                                TIMEOUTS['build'],execute,prefetch=True,wait=wait,module=MODULE)
     runtime=EXP/'work/runtime';runtime.mkdir(parents=True,exist_ok=True)
-    for name in frozen_test_dirs(EXP/'dev/src-test-t'):
-        source=EXP/'dev/src-test-t'/name
-        if source.exists():
-            shutil.copytree(source,runtime/'src/test'/name,dirs_exist_ok=True)
+    stage_test_data(EXP/'dev/src-test-t',runtime)
     write_json(RESULTS/'runner-setup.json',{'status':'completed','jars':records,'project_dependencies':digest})
 
 
