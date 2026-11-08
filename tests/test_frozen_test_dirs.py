@@ -72,6 +72,7 @@ def test_trees_with_other_data_folders_do_not_reuse_pre_change_records(tmp_path)
 def test_setup_restages_a_shared_runtime_from_an_earlier_layout(tmp_path, monkeypatch):
     import hashlib
     from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.adapters.test_data import stage_test_data
     from test_survival.config import validate
     from test_survival.io import read_json, write_json
     adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo'}}))
@@ -82,26 +83,28 @@ def test_setup_restages_a_shared_runtime_from_an_earlier_layout(tmp_path, monkey
     write_json(helpers/'classpath-artifacts.json', records)
     adapter.helpers = helpers
     libs = tmp_path/'work/libs'; libs.mkdir(parents=True); (libs/'test.jar').write_bytes(payload)
-    write_json(tmp_path/'results/anchor.json', {'sha': 't'})
     monkeypatch.setattr(adapter, 'ensure_anchor', lambda: None)
+    digest = hashlib.sha256(b'<project/>').hexdigest()
     # Completed by main fa45856: dependencies current, runtime staged without input.
-    write_json(tmp_path/'results/runner-setup.json', {'status': 'completed', 'jars': records,
-                                                      'project_dependencies': hashlib.sha256(b'<project/>').hexdigest()})
+    write_json(tmp_path/'results/runner-setup.json', {'status': 'completed', 'jars': records, 'project_dependencies': digest})
     frozen = tree(tmp_path/'dev/src-test-t', ['java', 'resources', 'input'])
     runtime = tmp_path/'work/runtime/src/test'
     tree(runtime, ['resources', 'stale'])
-    monkeypatch.setattr(adapter, 'worker', lambda job: pytest.fail('dependencies are current'))
+    calls = []
+    def setup(job):
+        # The runner-side setup worker owns the runtime; the host never deletes it.
+        assert job == {'action': 'setup'}
+        calls.append(job)
+        stage_test_data(frozen, tmp_path/'work/runtime')
+        write_json(tmp_path/'results/runner-setup.json', {'status': 'completed', 'jars': records, 'project_dependencies': digest})
+    monkeypatch.setattr(adapter, 'worker', setup)
     adapter.setup_runner()
+    assert len(calls) == 1
     assert sorted(p.name for p in runtime.iterdir()) == ['input', 'resources']
-    assert (runtime/'input/value').read_text() == 'input'
     assert read_json(tmp_path/'results/runner-setup.json')['test_data']
-    # A second gate pass finds the staging current and copies nothing.
-    import test_survival.adapters.test_data as test_data
-    monkeypatch.setattr(test_data, 'stage_test_data', lambda *a: pytest.fail('restaged a current runtime'))
+    # A second gate pass finds the staging current and runs nothing.
     adapter.setup_runner()
+    assert len(calls) == 1
     (frozen/'input/value').write_text('changed')
-    monkeypatch.undo()
-    monkeypatch.setattr(adapter, 'ensure_anchor', lambda: None)
-    monkeypatch.setattr(adapter, 'worker', lambda job: pytest.fail('dependencies are current'))
     adapter.setup_runner()
-    assert (runtime/'input/value').read_text() == 'changed'
+    assert len(calls) == 2 and (runtime/'input/value').read_text() == 'changed'

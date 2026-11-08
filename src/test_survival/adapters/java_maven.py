@@ -421,16 +421,16 @@ class JavaMavenAdapter:
         digest = hashlib.sha256((self.folder(0)/'pom.xml').read_bytes()).hexdigest()
         # Setup is the single-threaded gate before parallel workers; restore removed runner jars here, not in workers.
         present = all((self.exp/'work/libs'/r['filename']).is_file() for r in jars)
-        from .test_data import stage_test_data, staging_identity
+        from .test_data import staging_identity
         frozen = self.exp/'dev/src-test-t'
-        if record.get('status') != 'completed' or record.get('jars') != jars or record.get('project_dependencies') != digest or not present:
-            self.worker({'action':'setup'})
-        elif record.get('test_data') != staging_identity(frozen):
-            # Dependencies are current but the shared runtime was staged by an earlier
-            # rule or from another tree; restage it without resolving jars again.
-            stage_test_data(frozen, self.exp/'work/runtime')
-        else:
+        current = (record.get('status') == 'completed' and record.get('jars') == jars
+                   and record.get('project_dependencies') == digest and present)
+        if current and record.get('test_data') == staging_identity(frozen):
             return
+        # A shared runtime staged by an earlier rule (no or another identity) is
+        # restaged by the setup worker inside the runner: files the runner created
+        # there may not be writable by the host coordinator (root Docker on Linux).
+        self.worker({'action':'setup'})
         record = read_json(self.exp/'results/runner-setup.json', {})
         if record.get('status') == 'completed':
             write_json(self.exp/'results/runner-setup.json', {**record, 'test_data': staging_identity(frozen)})
