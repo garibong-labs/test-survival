@@ -33,7 +33,7 @@ def start_jvm():
 
 def prepare():
     PROJECT.mkdir(parents=True,exist_ok=True)
-    for source,dest in [('src/main','src/main'),('src/test/java','src/test-original/java'),('src/test/resources','src/test/resources'),('src/test/suite','src/test/suite'),('target/classes','target/classes')]:
+    for source,dest in [('src/main','src/main'),('src/test/java','src/test-original/java'),*[('src/test/'+n,'src/test/'+n) for n in java_worker.frozen_test_dirs(REPO/'src/test')],('target/classes','target/classes')]:
         if (REPO/source).exists():shutil.copytree(REPO/source,PROJECT/dest,dirs_exist_ok=True)
     shutil.copy2(REPO/'pom.xml',PROJECT/'pom.xml')
     attempts=[]

@@ -28,6 +28,7 @@ FIXTURES = {
     'test_inventory_skips_bad_type_without_partial_rows',
     'test_policy_coverage_does_not_assign_container_teardown_to_next_test[jupiter]',
     'test_policy_coverage_does_not_assign_container_teardown_to_next_test[vintage]',
+    'test_mixed_snapshot_batch_switches_every_test_data_folder',
     'test_policy_per_test_coverage_one_jvm_with_vintage_and_source_versions',
     'test_inherited_identity_survives_concrete_execution_and_batched_coverage[junit4]',
     'test_inherited_identity_survives_concrete_execution_and_batched_coverage[junit5]',

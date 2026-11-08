@@ -371,6 +371,12 @@ class JavaMavenAdapter:
         module = str(PurePosixPath(self.config['project']['module']))
         if module != '.':
             result['reactor_module'] = module
+        # Runtimes from main fa45856 lacked these folders. No earlier record (none
+        # carries this key) is equivalent for a tree that has them.
+        from .test_data import extra_test_dirs
+        extra = extra_test_dirs(self.exp/'dev/src-test-t')
+        if extra:
+            result['test_data_dirs'] = ','.join(extra)
         return result
 
     def worker(self, job):
@@ -415,20 +421,34 @@ class JavaMavenAdapter:
         digest = hashlib.sha256((self.folder(0)/'pom.xml').read_bytes()).hexdigest()
         # Setup is the single-threaded gate before parallel workers; restore removed runner jars here, not in workers.
         present = all((self.exp/'work/libs'/r['filename']).is_file() for r in jars)
-        if record.get('status') != 'completed' or record.get('jars') != jars or record.get('project_dependencies') != digest or not present:
-            self.worker({'action':'setup'})
+        from .test_data import staging_identity
+        frozen = self.exp/'dev/src-test-t'
+        current = (record.get('status') == 'completed' and record.get('jars') == jars
+                   and record.get('project_dependencies') == digest and present)
+        if current and record.get('test_data') == staging_identity(frozen):
+            return
+        # A shared runtime staged by an earlier rule (no or another identity) is
+        # restaged by the setup worker inside the runner: files the runner created
+        # there may not be writable by the host coordinator (root Docker on Linux).
+        self.worker({'action':'setup'})
+        record = read_json(self.exp/'results/runner-setup.json', {})
+        if record.get('status') == 'completed':
+            write_json(self.exp/'results/runner-setup.json', {**record, 'test_data': staging_identity(frozen)})
 
     def screen_fingerprint(self, source, repeats, *, provenance=None):
         return canonical_hash({'source':hashlib.sha256(source.read_bytes()).hexdigest(), 'repeats':repeats,
                                'runner':self.provenance() if provenance is None else provenance})
 
     def screen_fingerprints(self, source, repeats, *, provenance=None):
-        from .run_reuse import pre_footprint_provenance, PRE_BATCH, PRE_REACTOR
+        from .run_reuse import pre_footprint_provenance, test_data_layouts, PRE_BATCH, PRE_REACTOR
         provenance = self.provenance() if provenance is None else provenance
-        old = {**provenance, **PRE_BATCH}
-        return tuple(self.screen_fingerprint(source, repeats, provenance=p) for p in
-                     (provenance, pre_footprint_provenance(provenance), old, pre_footprint_provenance(old),
-                      {**provenance, **PRE_REACTOR}))
+        keys = []
+        for layout in test_data_layouts(provenance):
+            old = {**layout, **PRE_BATCH}
+            keys += [self.screen_fingerprint(source, repeats, provenance=p) for p in
+                     (layout, pre_footprint_provenance(layout), old, pre_footprint_provenance(old),
+                      {**layout, **PRE_REACTOR})]
+        return tuple(dict.fromkeys(keys))
 
     def screen_file(self, group, round_name, source, repeats, number):
         relative = str(source.relative_to(self.exp))

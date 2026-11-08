@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import shutil
 
+from ..adapters.test_data import frozen_test_dirs
 from ..config import canonical_hash
 from ..io import read_csv, read_json
 
@@ -33,6 +34,12 @@ def unit(exp, group, test, method, scope):
     return candidates[0]
 
 
+def resource_tree_hash(root):
+    """Content identity of the run-time test data folders of a frozen src/test tree."""
+    root = Path(root)
+    return canonical_hash({name: tree_hash(root/name) for name in frozen_test_dirs(root)})
+
+
 def tree_hash(root, pattern='*'):
     """Content and relative names, independent of the snapshot's storage path."""
     root = Path(root)
@@ -50,13 +57,13 @@ def snapshot(source_exp, destination, tests, *, group, method, scope, prefix):
         if source.resolve() != target.resolve():
             shutil.copytree(source, target, dirs_exist_ok=True)
     else:
-        for name in ('resources', 'suite'):
+        for name in frozen_test_dirs(source_exp/'dev/src-test-t'):
             source = source_exp/'dev/src-test-t'/name
             target = destination/prefix/'dev/src-test-t'/name
             if source.exists() and not target.exists():
                 shutil.copytree(source, target)
     resource_root = destination/prefix/'dev/src-test-t'
-    resources_hash = canonical_hash({name:tree_hash(resource_root/name) for name in ('resources','suite')})
+    resources_hash = resource_tree_hash(resource_root)
     roots = {}
     for t in tests:
         source = source_exp/t['file']

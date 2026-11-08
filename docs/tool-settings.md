@@ -237,6 +237,17 @@ own paths and every `pom.xml`. A commit that changes only a sibling module's
 `src/main` is skipped as untouched, and affected selection does not rerun a test
 because a sibling's sources changed.
 
+## Test data folders
+
+The developer test tree frozen at t keeps every folder of the module's `src/test`.
+Test runs use a working directory that holds every one of those folders except
+`java` (for example `resources`, `suite`, `input`, `witness`), so tests that open
+files with module-relative paths such as `src/test/input/a.xml` find them.
+`resources` and `suite` stay on the test classpath as before; other folders are
+reachable only through the file system. KTester's workspace receives the same
+folders. Trees whose only data folders are `resources` and `suite` keep their
+earlier resource hashes and record fingerprints.
+
 ## Developer discovery and scope bounds
 
 These are experiment YAML settings, shared by every project:

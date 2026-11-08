@@ -309,27 +309,36 @@ public final class PerTestCoverage implements TestExecutionListener {
     }
 
     private static void resources(Path source) throws IOException {
-        // Each isolated loader also gets its snapshot's filesystem resources.
-        // Only scratch src/test/{resources,suite} beneath the worker cwd is touched.
+        // Each manifest row may come from a different frozen snapshot. The scratch
+        // src/test beneath the worker cwd is replaced as a whole by that snapshot's
+        // run-time test data: every folder except the Java sources (resources, suite,
+        // input, ...), so no folder of the previous snapshot survives the switch.
         // Files are hard-linked to the snapshot's copy when the filesystem allows it,
         // so a snapshot switch costs directory entries rather than a full copy of the
         // resource tree (hundreds of megabytes for some projects, once per snapshot
         // group and chunk); a filesystem without link() gets a plain copy.
-        for (String name : new String[]{"resources", "suite"}) {
-            Path target = Paths.get("src/test", name);
-            if (Files.exists(target)) {
-                try (var paths = Files.walk(target)) {
-                    for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
+        Path scratch = Paths.get("src/test");
+        if (Files.exists(scratch)) {
+            try (var paths = Files.walk(scratch)) {
+                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
+                    if (!path.equals(scratch)) Files.delete(path);
                 }
             }
-            Path root = source.resolve(name);
-            if (Files.exists(root)) {
-                try (var paths = Files.walk(root)) {
-                    for (Path path : paths.toList()) {
-                        Path destination = target.resolve(root.relativize(path));
-                        if (Files.isDirectory(path)) Files.createDirectories(destination);
-                        else linkOrCopy(path, destination);
-                    }
+        }
+        if (!Files.isDirectory(source)) return;
+        List<Path> roots;
+        try (var entries = Files.list(source)) {
+            roots = entries.filter(Files::isDirectory)
+                           .filter(path -> !path.getFileName().toString().equals("java"))
+                           .sorted().toList();
+        }
+        for (Path root : roots) {
+            Path target = scratch.resolve(root.getFileName().toString());
+            try (var paths = Files.walk(root)) {
+                for (Path path : paths.toList()) {
+                    Path destination = target.resolve(root.relativize(path).toString());
+                    if (Files.isDirectory(path)) Files.createDirectories(destination);
+                    else linkOrCopy(path, destination);
                 }
             }
         }

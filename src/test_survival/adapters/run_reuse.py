@@ -38,6 +38,25 @@ PRE_REACTOR = {
     'selection_context.py': 'ad251e59aeb38b02918bba70c05e46ae9b40ef32fad04c84f9456de996b76774',
 }
 HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE, PRE_EXPLICIT_EXIT, PRE_REACTOR)
+# Main fa45856, before every non-java folder of the frozen src/test tree went into
+# test runtimes. A tree whose only data folders are resources and suite stages and
+# switches exactly the same files, so its records stay valid. A tree with other data
+# folders carries `test_data_dirs` in its provenance, which no record from this era
+# has, so this era never matches it. It combines with every era above: those list
+# their differences from this layout.
+PRE_TEST_DATA = {
+    'java_maven.py': 'a8139c2f2e99a30f93071da240d5a07730016678599e37997d83ac6d37faa881',
+    'java_worker.py': '4eb9e24ed984fd4dce0428cbaec32342163cefc5b2742a832e5c3a141e3d07dd',
+    'policy_coverage.py': 'c7f5c2d9eee38f0d8e91dafc6e98a393895a55c1aa022d88e7415b54f92aac31',
+    'PerTestCoverage.java': '5b659955ca802ce67026c091155df1f634ee8815cdb69a291cc40442e42fda2e',
+}
+
+
+def test_data_layouts(current):
+    """The current provenance, then the same components before the test-data change."""
+    if not isinstance(current, dict) or not PRE_TEST_DATA.keys() <= current.keys():
+        return (current,)
+    return (current, {**current, **PRE_TEST_DATA})
 
 
 # Main 01ae5d0, before storage/lifecycle-only changes. The two new provenance
@@ -57,6 +76,10 @@ def pre_footprint_provenance(current):
 
 
 def _matches(previous, current):
+    return any(_matches_layout(previous, layout) for layout in test_data_layouts(current))
+
+
+def _matches_layout(previous, current):
     if previous == current or any(previous == {**current, **era} for era in HISTORICAL):
         return True
     if not PRE_FOOTPRINT.keys() <= current.keys():
