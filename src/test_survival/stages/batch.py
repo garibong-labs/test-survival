@@ -11,7 +11,7 @@ from ..adapters.java_maven import JavaMavenAdapter
 from ..adapters.policy_coverage import COVERAGE_VERSION
 from ..config import canonical_hash, derived_source, execution_groups, group_names
 from ..io import read_csv, read_json, write_csv, write_json, resolve_path
-from ..policy.artifacts import tree_hash
+from ..policy.artifacts import resource_tree_hash, tree_hash
 from ..policy.execute import screening_exclusion_details, settle
 from ..rules.survival import FAILURES, dead_method
 from ..rules.coverage import usable_lines
@@ -32,7 +32,7 @@ def complete_lines(raw, dead):
 def catalog(exp, config, frozen):
     """The same content identity as policy snapshots, without copying sources."""
     developers = {g['name'] for g in config['dev']['groups']}
-    resources = canonical_hash({name: tree_hash(exp/'dev/src-test-t'/name) for name in ('resources', 'suite')})
+    resources = resource_tree_hash(exp/'dev/src-test-t')
     roots = {}; result = {}
     for group, members in frozen.items():
         result[group] = []

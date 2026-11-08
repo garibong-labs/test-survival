@@ -18,6 +18,22 @@ import time
 import xml.etree.ElementTree as ET
 
 
+def frozen_test_dirs(root):
+    """Folders of a frozen src/test tree that tests may read at run time.
+
+    Maven projects keep test data beside the Java sources under many names
+    (resources, suite, input, witness, data, ...). Tests usually open them with
+    module-relative paths such as src/test/input/a.xml, so every folder except the
+    Java sources goes into the runtime working directory. resources and suite are
+    always listed so trees without other folders keep their earlier hashes.
+    """
+    root = Path(root)
+    names = {'resources', 'suite'}
+    if root.is_dir():
+        names |= {p.name for p in root.iterdir() if p.is_dir() and p.name != 'java'}
+    return sorted(names)
+
+
 RUNNER_JAR_RETRIES = 3
 RUNNER_JAR_BACKOFF_SECONDS = 60
 
@@ -195,7 +211,7 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
     runtime_cwd=SHARED/'work/runtime'
     if members and members[0].get('resource_root'):
         runtime_cwd=part/'runtime';runtime_cwd.mkdir(exist_ok=True)
-        for name in ('resources','suite'):
+        for name in frozen_test_dirs(resources):
             if (resources/name).exists():
                 shutil.copytree(resources/name,runtime_cwd/'src/test'/name,dirs_exist_ok=True)
     selection=selectors(members,runtime,part)
@@ -295,7 +311,7 @@ def setup(wait=time.sleep):
     maven_dependencies.resolve(REPO,EXP/'work/classpaths'/f'{digest}.txt',RESULTS/'builds/logs/runner-setup',
                                TIMEOUTS['build'],execute,prefetch=True,wait=wait,module=MODULE)
     runtime=EXP/'work/runtime';runtime.mkdir(parents=True,exist_ok=True)
-    for name in ['resources','suite']:
+    for name in frozen_test_dirs(EXP/'dev/src-test-t'):
         source=EXP/'dev/src-test-t'/name
         if source.exists():
             shutil.copytree(source,runtime/'src/test'/name,dirs_exist_ok=True)

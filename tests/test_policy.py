@@ -306,7 +306,7 @@ def test_coverage_batches_by_resource_snapshot_not_test_method(tmp_path):
     assert len(result['methods'])==7 and result['universe']==[('A.java',1)]
 
 
-@pytest.mark.parametrize('resource_directory', ['resources', 'suite'])
+@pytest.mark.parametrize('resource_directory', ['resources', 'suite', 'input'])
 def test_generator_first_snapshot_preserves_complete_developer_tree(baseline, resource_directory):
     from test_survival.policy.artifacts import snapshot
     exp, config, root = baseline

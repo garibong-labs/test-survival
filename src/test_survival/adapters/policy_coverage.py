@@ -9,6 +9,7 @@ from zipfile import ZipFile
 
 from .snapshot_compile import compile_snapshot, filtered_roots
 from .dependencies import RECORD_VERSION
+from ..policy.artifacts import frozen_test_dirs
 
 
 COVERAGE_VERSION = 3  # Retry legacy missing records with bounded instrumentation.
@@ -125,7 +126,7 @@ def run(w, job):
     runtime_dir = work/'runtime'; runtime_dir.mkdir()
     if job['methods']:
         resource_root = w.EXP/job['methods'][0].get('resource_root', 'dev/src-test-t')
-        for name in ('resources', 'suite'):
+        for name in frozen_test_dirs(resource_root):
             if (resource_root/name).exists():
                 link_tree(resource_root/name, runtime_dir/'src/test'/name)
     scope_options = ['-Dsurvival.coverage.isolateMethods=true'] if job.get('candidate_suite') else []

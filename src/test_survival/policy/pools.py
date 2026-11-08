@@ -242,7 +242,7 @@ def run(b, plan, step):
 
 def verified_pool(parent, root, members):
     """Old pools remain loadable; prune only snapshots with complete identities."""
-    from .artifacts import tree_hash
+    from .artifacts import resource_tree_hash, tree_hash
     if not (root/'results/workspace-identities/0.json').is_file():
         return False
     for member in members:
@@ -250,7 +250,7 @@ def verified_pool(parent, root, members):
             return False
         source = parent/member['file']
         sources = tree_hash(parent/member['source_root'], '*.java')
-        resources = canonical_hash({name:tree_hash(parent/member['resource_root']/name) for name in ('resources', 'suite')})
+        resources = resource_tree_hash(parent/member['resource_root'])
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         execution = canonical_hash(dict(file=digest, sources=sources, resources=resources))
         if (digest, sources, resources, execution) != tuple(member[k] for k in ('file_hash','source_tree_hash','resource_tree_hash','execution_hash')):
