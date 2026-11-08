@@ -40,6 +40,9 @@ def test_records_before_the_test_data_change_stay_reusable(tmp_path, module):
     adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo', 'module': module}}))
     current = adapter.provenance()
     assert survival_provenance_matches({**current, **PRE_TEST_DATA}, current)
+    # Every component this change touched differs from its main fa45856 hash.
+    assert set(PRE_TEST_DATA) == {'java_maven.py', 'java_worker.py', 'policy_coverage.py', 'PerTestCoverage.java'}
+    assert all(current[name] != value for name, value in PRE_TEST_DATA.items())
     assert not survival_provenance_matches({**current, **PRE_TEST_DATA, 'PerTestCoverage.java': 'other'}, current)
     # Main 846e056 records combine both eras; they never carried the reactor key.
     earlier = {**{k: v for k, v in current.items() if k != 'reactor_module'}, **PRE_TEST_DATA, **PRE_REACTOR}

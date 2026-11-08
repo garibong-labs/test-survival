@@ -43,6 +43,7 @@ HISTORICAL = (PRE_BOUNDED_COVERAGE, PRE_MULTI_RELEASE, PRE_EXPLICIT_EXIT, PRE_RE
 # switches exactly the same files, so its records stay valid. It combines with every
 # era above: those list their differences from this layout.
 PRE_TEST_DATA = {
+    'java_maven.py': 'a8139c2f2e99a30f93071da240d5a07730016678599e37997d83ac6d37faa881',
     'java_worker.py': '4eb9e24ed984fd4dce0428cbaec32342163cefc5b2742a832e5c3a141e3d07dd',
     'policy_coverage.py': 'c7f5c2d9eee38f0d8e91dafc6e98a393895a55c1aa022d88e7415b54f92aac31',
     'PerTestCoverage.java': '5b659955ca802ce67026c091155df1f634ee8815cdb69a291cc40442e42fda2e',
