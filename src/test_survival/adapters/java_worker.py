@@ -17,23 +17,6 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-
-def frozen_test_dirs(root):
-    """Folders of a frozen src/test tree that tests may read at run time.
-
-    Maven projects keep test data beside the Java sources under many names
-    (resources, suite, input, witness, data, ...). Tests usually open them with
-    module-relative paths such as src/test/input/a.xml, so every folder except the
-    Java sources goes into the runtime working directory. resources and suite are
-    always listed so trees without other folders keep their earlier hashes.
-    """
-    root = Path(root)
-    names = {'resources', 'suite'}
-    if root.is_dir():
-        names |= {p.name for p in root.iterdir() if p.is_dir() and p.name != 'java'}
-    return sorted(names)
-
-
 RUNNER_JAR_RETRIES = 3
 RUNNER_JAR_BACKOFF_SECONDS = 60
 
@@ -44,6 +27,7 @@ try:
     from . import maven_dependencies
     from .compilation import CompilationService
     from .compiler_session import CompilerSession
+    from .test_data import frozen_test_dirs
 except ImportError:  # This worker is also invoked directly inside the container.
     import importlib.util
     spec = importlib.util.spec_from_file_location('survival_result_io', Path(__file__).resolve().parents[1]/'io.py')
@@ -54,6 +38,7 @@ except ImportError:  # This worker is also invoked directly inside the container
     from adapters import maven_dependencies
     from adapters.compilation import CompilationService
     from adapters.compiler_session import CompilerSession
+    from adapters.test_data import frozen_test_dirs
 
 RUNNER_JAR_TRANSIENT_PATTERNS = maven_dependencies.TRANSIENT_PATTERNS
 

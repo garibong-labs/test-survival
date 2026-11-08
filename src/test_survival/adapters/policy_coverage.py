@@ -9,7 +9,7 @@ from zipfile import ZipFile
 
 from .snapshot_compile import compile_snapshot, filtered_roots
 from .dependencies import RECORD_VERSION
-from ..policy.artifacts import frozen_test_dirs
+from .test_data import frozen_test_dirs
 
 
 COVERAGE_VERSION = 3  # Retry legacy missing records with bounded instrumentation.

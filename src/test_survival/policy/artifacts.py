@@ -3,6 +3,7 @@ import hashlib
 from pathlib import Path
 import shutil
 
+from ..adapters.test_data import frozen_test_dirs
 from ..config import canonical_hash
 from ..io import read_csv, read_json
 
@@ -31,22 +32,6 @@ def unit(exp, group, test, method, scope):
     if len(candidates) != 1:
         raise ValueError('Cannot map Ouedraogo test to target class: '+str(source))
     return candidates[0]
-
-
-def frozen_test_dirs(root):
-    """Folders of a frozen src/test tree that tests may read at run time.
-
-    Maven projects keep test data beside the Java sources under many names
-    (resources, suite, input, witness, data, ...). Tests usually open them with
-    module-relative paths such as src/test/input/a.xml, so every folder except the
-    Java sources goes into the runtime working directory. resources and suite are
-    always listed so trees without other folders keep their earlier hashes.
-    """
-    root = Path(root)
-    names = {'resources', 'suite'}
-    if root.is_dir():
-        names |= {p.name for p in root.iterdir() if p.is_dir() and p.name != 'java'}
-    return sorted(names)
 
 
 def resource_tree_hash(root):
