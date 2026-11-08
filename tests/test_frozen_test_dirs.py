@@ -1,3 +1,5 @@
+import pytest
+
 from test_survival.adapters import java_worker
 from test_survival.config import canonical_hash
 from test_survival.policy.artifacts import frozen_test_dirs, resource_tree_hash, tree_hash
@@ -28,3 +30,22 @@ def test_other_test_data_folders_change_the_hash(tmp_path):
     before = resource_tree_hash(root)
     tree(root, ['input'])
     assert resource_tree_hash(root) != before
+
+
+@pytest.mark.parametrize('module', ['.', 'logback-core'])
+def test_records_before_the_test_data_change_stay_reusable(tmp_path, module):
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.adapters.run_reuse import PRE_REACTOR, PRE_TEST_DATA, survival_provenance_matches
+    from test_survival.config import validate
+    adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo', 'module': module}}))
+    current = adapter.provenance()
+    assert survival_provenance_matches({**current, **PRE_TEST_DATA}, current)
+    assert not survival_provenance_matches({**current, **PRE_TEST_DATA, 'PerTestCoverage.java': 'other'}, current)
+    # Main 846e056 records combine both eras; they never carried the reactor key.
+    earlier = {**{k: v for k, v in current.items() if k != 'reactor_module'}, **PRE_TEST_DATA, **PRE_REACTOR}
+    assert survival_provenance_matches(earlier, current) == (module == '.')
+    source = tmp_path/'Generated.java'; source.write_text('class Generated {}')
+    keys = adapter.screen_fingerprints(source, 1)
+    assert keys[0] == adapter.screen_fingerprint(source, 1)
+    assert adapter.screen_fingerprint(source, 1, provenance={**current, **PRE_TEST_DATA}) in keys
+    assert len(keys) == len(set(keys))

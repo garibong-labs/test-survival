@@ -423,12 +423,15 @@ class JavaMavenAdapter:
                                'runner':self.provenance() if provenance is None else provenance})
 
     def screen_fingerprints(self, source, repeats, *, provenance=None):
-        from .run_reuse import pre_footprint_provenance, PRE_BATCH, PRE_REACTOR
+        from .run_reuse import pre_footprint_provenance, test_data_layouts, PRE_BATCH, PRE_REACTOR
         provenance = self.provenance() if provenance is None else provenance
-        old = {**provenance, **PRE_BATCH}
-        return tuple(self.screen_fingerprint(source, repeats, provenance=p) for p in
-                     (provenance, pre_footprint_provenance(provenance), old, pre_footprint_provenance(old),
-                      {**provenance, **PRE_REACTOR}))
+        keys = []
+        for layout in test_data_layouts(provenance):
+            old = {**layout, **PRE_BATCH}
+            keys += [self.screen_fingerprint(source, repeats, provenance=p) for p in
+                     (layout, pre_footprint_provenance(layout), old, pre_footprint_provenance(old),
+                      {**layout, **PRE_REACTOR})]
+        return tuple(dict.fromkeys(keys))
 
     def screen_file(self, group, round_name, source, repeats, number):
         relative = str(source.relative_to(self.exp))

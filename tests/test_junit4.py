@@ -214,6 +214,64 @@ call(['java','-javaagent:'+agent+'=output=none,dumponexit=false','-cp','/out/hel
 
 
 @pytest.mark.java_integration
+def test_mixed_snapshot_batch_switches_every_test_data_folder(tmp_path, java_environment):
+    """One JVM chunk runs tests from frozen snapshots whose test data folders differ."""
+    image, libs = java_environment
+    root = Path(__file__).parents[1]
+    (tmp_path/'Production.java').write_text('package fixture; public class Production { public static int a() { return 1; } }')
+    test_source = '\n'.join([
+        'package fixture;',
+        'import java.nio.file.*;',
+        'import org.junit.jupiter.api.Test;',
+        'import static org.junit.jupiter.api.Assertions.*;',
+        'public class DataTest {',
+        ' @Test void reads() throws Exception {',
+        '  assertEquals("VERSION", Files.readString(Path.of("src/test/input/value.txt")).trim());',
+        '  assertEquals("VERSION".equals("old"), Files.exists(Path.of("src/test/only-old")));',
+        '  assertEquals("VERSION", Files.readString(Path.of("src/test/resources/shared.txt")).trim());',
+        '  assertFalse(Files.exists(Path.of("src/test/java")));',
+        '  assertEquals(1, Production.a());',
+        ' }',
+        '}'])
+    for version in ('old', 'new'):
+        source = tmp_path/version; source.mkdir()
+        (source/'DataTest.java').write_text(test_source.replace('VERSION', version))
+        snapshot = tmp_path/('snapshot-'+version)
+        (snapshot/'input').mkdir(parents=True); (snapshot/'input/value.txt').write_text(version)
+        (snapshot/'resources').mkdir(); (snapshot/'resources/shared.txt').write_text(version)
+        (snapshot/'java').mkdir(); (snapshot/'java/Ignored.java').write_text('class Ignored {}')
+        if version == 'old':
+            (snapshot/'only-old').mkdir(); (snapshot/'only-old/marker').write_text('old')
+    script = r'''
+from pathlib import Path
+import json,subprocess,sys
+jars=json.loads(sys.argv[1]); cp=':'.join('/libs/'+p for p in jars)
+Path('/out/production').mkdir()
+subprocess.run(['javac','-d','/out/production','/out/Production.java'],check=True)
+sys.path.insert(0,'/survival-package')
+from adapters import java_worker as worker, policy_coverage
+worker.EXP=Path('/out');worker.SHARED=worker.EXP;worker.HELPERS=Path('/helpers')
+worker.JVM={'jacoco':'512m','javac':'256m','launcher':'512m'};worker.TIMEOUTS={'compile':60,'test_class':60}
+Path('/out/work').mkdir();Path('/out/work/libs').symlink_to('/libs')
+worker.classpath=lambda index:(Path('/out'),'/out/production:'+cp)
+worker.jacoco_version=lambda classes:'0.8.14'
+Path('/out/target').mkdir();Path('/out/target/classes').symlink_to('/out/production')
+# old -> new -> old in one chunk: every switch must replace each non-java folder.
+methods=[dict(id=i,file_hash=v,execution_hash=i,file=v+'/DataTest.java',source_root=v,resource_root='snapshot-'+v,
+              **{'class':'fixture.DataTest'},method='reads') for i,v in (('old','old'),('new','new'),('old-again','old'))]
+policy_coverage.run(worker,dict(index=0,sha='fixture',methods=methods,survival=True,
+    scope_files=['src/main/java/fixture/Production.java'],scope_classes=['fixture.Production'],work='mixed',output='mixed-result.json'))
+'''
+    jars = runner_test_jars(json.loads((root/'src/test_survival/adapters/java/classpath-artifacts.json').read_text()))
+    result = subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro',
+                             '-v',str(Path(libs).resolve())+':/libs:ro','-v',str(root/'src/test_survival')+':/survival-package:ro',
+                             '-v',str(tmp_path)+':/out',image,'python3','-c',script,json.dumps(jars)],capture_output=True,text=True,timeout=180)
+    assert result.returncode == 0, result.stdout+result.stderr
+    record = json.loads((tmp_path/'mixed-result.json').read_text())
+    assert {t['id']: t['state'] for t in record['methods']} == {'old': 'pass', 'new': 'pass', 'old-again': 'pass'}, record
+
+
+@pytest.mark.java_integration
 def test_policy_per_test_coverage_one_jvm_with_vintage_and_source_versions(tmp_path, java_environment):
     """Real listener/agent: parameterized cases, resets, and conflicting test versions."""
     image, libs = java_environment
