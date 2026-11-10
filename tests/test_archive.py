@@ -750,3 +750,49 @@ def test_nonregular_owner_is_rejected_without_blocking(experiment):
     with pytest.raises(module.ArchiveError, match='expected a regular file'):
         module.archive(pool, destination=dest, prune=True, yes=True)
     assert (pool/'generated/output.txt').exists()
+
+
+def test_prune_reuses_identical_existing_archive(experiment, capsys):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    capsys.readouterr()
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final == first
+    assert 'Reusing existing archive' in capsys.readouterr().out
+    assert sorted(p.name for p in first.parent.glob('*.zip')) == [first.name]
+    with open(dest/'archive-index.csv', newline='') as stream:
+        assert len(list(csv.DictReader(stream))) == 1
+    assert not (exp/'results/evidence.json').exists()
+    assert json.loads((exp/'ARCHIVED.json').read_text())['destination'] == str(first)
+
+
+def test_prune_writes_new_archive_after_change(experiment):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    put(exp, 'results/evidence.json', '{"answer": 43}')
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    with zipfile.ZipFile(final) as bundle:
+        assert bundle.read('experiments/finished/results/evidence.json') == b'{"answer": 43}'
+
+
+def test_prune_does_not_reuse_damaged_or_forced(experiment, capsys):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    with first.open('ab') as stream:
+        stream.write(b'x')
+    second = module.archive(exp, destination=dest)
+    third = module.archive(exp, destination=dest, prune=True, yes=True, new_zip=True)
+    assert len({first, second, third}) == 3
+    assert 'Reusing' not in capsys.readouterr().out
+
+
+def test_damaged_archive_falls_back_to_new_zip(experiment, capsys):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    with first.open('ab') as stream:
+        stream.write(b'x')
+    capsys.readouterr()
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    assert 'Reusing' not in capsys.readouterr().out

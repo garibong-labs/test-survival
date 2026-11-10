@@ -609,6 +609,14 @@ Archive creation prunes excluded directories without traversing them;
 `--dry-run` scans them for exact per-entry file counts and bytes and writes nothing.
 
 `--prune` asks you to type the experiment folder name; `--yes` skips that prompt.
+With `--prune`, an archive already listed in `archive-index.csv` for the same
+experiment is reused instead of writing a second ZIP when its contents are
+identical: same exclusion rules, same member names, sizes and CRC-32 values, and a
+destination SHA-256 matching the index and sidecar. The current files are read
+once for the comparison; nothing is compressed or copied. Any difference, or a
+damaged or missing earlier archive, writes a new ZIP as before. `--new-zip`
+always writes a new one. The usual flow is a plain `survival archive` when the
+run finishes and `--prune` after reporting.
 Pruning removes untracked and ignored files, including excluded scratch, and
 preserves every Git-tracked path and acquired run lock (with its parent directories).
 Lock files remain permanently so another run cannot lock a replacement inode

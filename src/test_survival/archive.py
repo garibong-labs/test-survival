@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unicodedata
 import zipfile
+import zlib
 from uuid import uuid4
 
 from .io import read_json
@@ -332,6 +333,72 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def content_index(exp, repo, include_work):
+    """Member name -> (kind, size, CRC-32) of what write_zip would store now."""
+    entries, snapshots = {}, {}
+    for path, info in walk(exp, include_work, {}):
+        snapshots[path] = fingerprint(info)
+        name = path.relative_to(repo).as_posix()
+        if stat.S_ISDIR(info.st_mode):
+            entries[name+'/'] = ('dir', 0, 0)
+        elif stat.S_ISLNK(info.st_mode):
+            target = os.fsencode(os.readlink(path))
+            entries[name] = ('file', len(target), zlib.crc32(target))
+        else:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            crc = size = 0
+            with os.fdopen(fd, 'rb') as source:
+                while chunk := source.read(CHUNK_SIZE):
+                    crc = zlib.crc32(chunk, crc)
+                    size += len(chunk)
+            entries[name] = ('file', size, crc)
+        if fingerprint(path.lstat()) != snapshots[path]:
+            raise ArchiveError(f'File changed while comparing with the existing archive: {path}')
+    return entries, snapshots
+
+
+def reusable_archive(dest, repo, exp, include_work, exclusion_rules):
+    """Latest indexed archive of EXP_DIR whose stored content equals the current tree.
+
+    Pruning after an earlier plain archive would otherwise write a second,
+    identical ZIP. Reuse requires the indexed SHA-256 to match both the sidecar
+    and the destination file, the same exclusion rules, and identical member
+    names, sizes and CRC-32 values (the archive manifest member aside).
+    Returns (final, sha256, snapshots) or None.
+    """
+    index = dest/'archive-index.csv'
+    if not index.exists():
+        return None
+    with index.open(newline='', encoding='utf-8') as stream:
+        rows = [r for r in csv.DictReader(stream) if r.get('exp_dir') == str(exp)]
+    current = None
+    for row in reversed(rows):
+        final = (dest/row['zip_relative_path'])
+        sidecar = final.with_suffix('.manifest.json')
+        if not final.is_file() or final.is_symlink() or not sidecar.is_file():
+            continue
+        try:
+            recorded = json.loads(sidecar.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if recorded.get('sha256') != row['sha256'] or recorded.get('exclusion_rules') != exclusion_rules:
+            continue
+        try:
+            with zipfile.ZipFile(final) as bundle:
+                stored = {m.filename: ('dir' if m.is_dir() else 'file', m.file_size, m.CRC)
+                          for m in bundle.infolist() if m.filename != 'ARCHIVE-MANIFEST.json'}
+        except (OSError, zipfile.BadZipFile):
+            continue
+        if current is None:
+            current = content_index(exp, repo, include_work)
+        if stored != current[0]:
+            continue
+        if sha256(final) != row['sha256']:
+            continue
+        return final, row['sha256'], current[1]
+    return None
+
+
 @contextmanager
 def destination_slot(dest, fork, exp_name, date):
     folder = dest/fork
@@ -499,7 +566,7 @@ def write_marker(root_fd, record):
             pass
 
 
-def archive(exp_dir, *, destination=None, include_work=False, prune=False, yes=False, dry_run=False):
+def archive(exp_dir, *, destination=None, include_work=False, prune=False, yes=False, dry_run=False, new_zip=False):
     if destination is None:
         raise ArchiveError('No archive destination configured; use --dest DIR or archive.destination in user tool settings')
     exp = Path(exp_dir).expanduser().resolve()
@@ -526,22 +593,31 @@ def archive(exp_dir, *, destination=None, include_work=False, prune=False, yes=F
                 print_plan(exp, totals, prune=prune, tracked=tracked, locks=locks)
                 return None
             manifest = manifest_for(exp, repo, include_work)
-            # A sibling of the fork avoids both EXP_DIR and streamed Drive storage.
-            with tempfile.NamedTemporaryFile(prefix=f'.{repo.name}-archive-', suffix='.zip', dir=repo.parent) as temp:
-                local = Path(temp.name)
-                snapshots = write_zip(local, exp, repo, manifest, include_work)
-                with destination_slot(dest, repo.name, exp.name, manifest['archived_utc'][:10]) as slot:
-                    final, partial, sidecar, stream = slot
-                    digest = copy_verified(local, partial, final, stream)
-                    with sidecar.open('x', encoding='utf-8') as output:
-                        json.dump(dict(manifest, sha256=digest), output, indent=2, ensure_ascii=True)
-                        output.write('\n')
-                        output.flush()
-                        os.fsync(output.fileno())
-                    append_index(dest, manifest, final, digest)
-                print(f'Archived to {final}\nFiles: {manifest["included_files"]}; '
-                      f'bytes before compression: {manifest["included_bytes"]}; zip bytes: {local.stat().st_size}\n'
-                      f'SHA-256: {digest}')
+            reused = None
+            if prune and not new_zip:
+                reused = reusable_archive(dest, repo, exp, include_work, manifest['exclusion_rules'])
+            with ExitStack() as scope:
+                if reused:
+                    final, digest, snapshots = reused
+                    print(f'Reusing existing archive with identical contents: {final}\nSHA-256: {digest}')
+                else:
+                    # A sibling of the fork avoids both EXP_DIR and streamed Drive storage.
+                    temp = scope.enter_context(tempfile.NamedTemporaryFile(
+                        prefix=f'.{repo.name}-archive-', suffix='.zip', dir=repo.parent))
+                    local = Path(temp.name)
+                    snapshots = write_zip(local, exp, repo, manifest, include_work)
+                    with destination_slot(dest, repo.name, exp.name, manifest['archived_utc'][:10]) as slot:
+                        final, partial, sidecar, stream = slot
+                        digest = copy_verified(local, partial, final, stream)
+                        with sidecar.open('x', encoding='utf-8') as output:
+                            json.dump(dict(manifest, sha256=digest), output, indent=2, ensure_ascii=True)
+                            output.write('\n')
+                            output.flush()
+                            os.fsync(output.fileno())
+                        append_index(dest, manifest, final, digest)
+                    print(f'Archived to {final}\nFiles: {manifest["included_files"]}; '
+                          f'bytes before compression: {manifest["included_bytes"]}; zip bytes: {local.stat().st_size}\n'
+                          f'SHA-256: {digest}')
                 if prune:
                     if not yes:
                         try:
