@@ -796,3 +796,48 @@ def test_damaged_archive_falls_back_to_new_zip(experiment, capsys):
     final = module.archive(exp, destination=dest, prune=True, yes=True)
     assert final != first
     assert 'Reusing' not in capsys.readouterr().out
+
+
+def test_reuse_rejects_index_path_inside_experiment(experiment):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    moved = exp/'work'/first.name
+    moved.parent.mkdir(parents=True, exist_ok=True)
+    first.rename(moved)
+    first.with_suffix('.manifest.json').rename(moved.with_suffix('.manifest.json'))
+    index = dest/'archive-index.csv'
+    rows = list(csv.DictReader(index.open(newline='')))
+    for path in (str(moved), os.path.relpath(moved, dest)):
+        rows[-1]['zip_relative_path'] = path
+        with index.open('w', newline='') as stream:
+            writer = csv.DictWriter(stream, fieldnames=module.INDEX_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        e, d = exp.resolve(), dest.resolve()
+        rules = module.manifest_for(e, e.parents[1], False)['exclusion_rules']
+        assert module.reusable_archive(d, e.parents[1], e, False, rules) is None
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final.is_relative_to(dest) and final.exists()
+
+
+def test_reuse_distinguishes_symlink_from_regular_file(experiment):
+    _, exp, dest = experiment
+    put(exp, 'results/other.txt', 'x')
+    put(exp, 'results/entry', 'other.txt')
+    first = module.archive(exp, destination=dest)
+    (exp/'results/entry').unlink()
+    (exp/'results/entry').symlink_to('other.txt')
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    with zipfile.ZipFile(final) as bundle:
+        assert stat.S_ISLNK(bundle.getinfo('experiments/finished/results/entry').external_attr >> 16)
+
+
+@pytest.mark.parametrize('content', ['null', '[]', '"text"', '\xff'])
+def test_reuse_skips_non_object_sidecar(experiment, content):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    sidecar = first.with_suffix('.manifest.json')
+    sidecar.write_bytes(content.encode('latin-1'))
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first and final.exists()

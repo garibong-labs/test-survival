@@ -343,7 +343,7 @@ def content_index(exp, repo, include_work):
             entries[name+'/'] = ('dir', 0, 0)
         elif stat.S_ISLNK(info.st_mode):
             target = os.fsencode(os.readlink(path))
-            entries[name] = ('file', len(target), zlib.crc32(target))
+            entries[name] = ('link', len(target), zlib.crc32(target))
         else:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
             crc = size = 0
@@ -373,19 +373,34 @@ def reusable_archive(dest, repo, exp, include_work, exclusion_rules):
         rows = [r for r in csv.DictReader(stream) if r.get('exp_dir') == str(exp)]
     current = None
     for row in reversed(rows):
-        final = (dest/row['zip_relative_path'])
+        relative = row.get('zip_relative_path') or ''
+        if not relative or Path(relative).is_absolute() or '..' in Path(relative).parts:
+            continue
+        final = dest/relative
         sidecar = final.with_suffix('.manifest.json')
-        if not final.is_file() or final.is_symlink() or not sidecar.is_file():
+        if final.is_symlink() or sidecar.is_symlink() or not final.is_file() or not sidecar.is_file():
+            continue
+        # Only an archive that stays in the destination and outside EXP_DIR is
+        # a backup; reusing one inside the experiment would prune it too.
+        resolved = final.resolve()
+        if (not resolved.is_relative_to(dest) or resolved.is_relative_to(exp)
+                or not sidecar.resolve().is_relative_to(dest) or sidecar.resolve().is_relative_to(exp)):
             continue
         try:
             recorded = json.loads(sidecar.read_text(encoding='utf-8'))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(recorded, dict) or not row.get('sha256'):
             continue
         if recorded.get('sha256') != row['sha256'] or recorded.get('exclusion_rules') != exclusion_rules:
             continue
+        def kind(member):
+            if stat.S_ISLNK(member.external_attr >> 16):
+                return 'link'
+            return 'dir' if member.is_dir() else 'file'
         try:
-            with zipfile.ZipFile(final) as bundle:
-                stored = {m.filename: ('dir' if m.is_dir() else 'file', m.file_size, m.CRC)
+            with zipfile.ZipFile(resolved) as bundle:
+                stored = {m.filename: (kind(m), m.file_size, m.CRC)
                           for m in bundle.infolist() if m.filename != 'ARCHIVE-MANIFEST.json'}
         except (OSError, zipfile.BadZipFile):
             continue
@@ -393,9 +408,9 @@ def reusable_archive(dest, repo, exp, include_work, exclusion_rules):
             current = content_index(exp, repo, include_work)
         if stored != current[0]:
             continue
-        if sha256(final) != row['sha256']:
+        if sha256(resolved) != row['sha256']:
             continue
-        return final, row['sha256'], current[1]
+        return resolved, row['sha256'], current[1]
     return None
 
 
