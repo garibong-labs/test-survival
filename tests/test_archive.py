@@ -866,3 +866,20 @@ def test_reuse_skips_zip_with_undecodable_member_name(experiment):
     first.write_bytes(bytes(data))
     final = module.archive(exp, destination=dest, prune=True, yes=True)
     assert final != first and final.exists()
+
+
+def test_reuse_compares_bytes_not_only_crc(experiment, monkeypatch):
+    """Same size and CRC-32 but different bytes must not authorize pruning."""
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    root = exp.resolve()
+    entries, _ = module.content_index(root, root.parents[1], False)
+    # Same length as '{"answer": 42}'; the metadata index below still reports the
+    # old size and CRC, which is what a real CRC-32 collision looks like.
+    put(exp, 'results/evidence.json', '{"answer": 43}')
+    snapshots = {p: module.fingerprint(p.lstat()) for p, _ in module.walk(root, False, {})}
+    monkeypatch.setattr(module, 'content_index', lambda *args, **kwargs: (entries, snapshots))
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    with zipfile.ZipFile(final) as bundle:
+        assert bundle.read('experiments/finished/results/evidence.json') == b'{"answer": 43}'

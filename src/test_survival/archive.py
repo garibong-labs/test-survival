@@ -411,8 +411,40 @@ def reusable_archive(dest, repo, exp, include_work, exclusion_rules):
             continue
         if sha256(resolved) != row['sha256']:
             continue
+        # Size and CRC-32 only pre-filter; equal CRCs do not prove equal bytes.
+        # Pruning deletes the local copy, so compare every member's bytes.
+        if not same_bytes(resolved, repo, current[0], current[1]):
+            continue
         return resolved, row['sha256'], current[1]
     return None
+
+
+def same_bytes(final, repo, entries, snapshots):
+    try:
+        with zipfile.ZipFile(final) as bundle:
+            for name, (kind, _, size, _) in entries.items():
+                if kind == 'dir':
+                    continue
+                path = repo/name
+                if kind == 'link':
+                    if bundle.read(name) != os.fsencode(os.readlink(path)):
+                        return False
+                    continue
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+                with os.fdopen(fd, 'rb') as local, bundle.open(name) as stored:
+                    while True:
+                        mine = local.read(CHUNK_SIZE)
+                        theirs = stored.read(len(mine) if mine else 1)
+                        if mine != theirs:
+                            return False
+                        if not mine:
+                            break
+    except (OSError, zipfile.BadZipFile, UnicodeDecodeError, ValueError, KeyError):
+        return False
+    for path, recorded in snapshots.items():
+        if fingerprint(path.lstat()) != recorded:
+            raise ArchiveError(f'File changed while comparing with the existing archive: {path}')
+    return True
 
 
 @contextmanager
