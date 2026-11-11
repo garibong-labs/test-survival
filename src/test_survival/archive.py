@@ -334,16 +334,16 @@ def sha256(path):
 
 
 def content_index(exp, repo, include_work):
-    """Member name -> (kind, size, CRC-32) of what write_zip would store now."""
+    """Member name -> (kind, permission bits, size, CRC-32) of what write_zip would store now."""
     entries, snapshots = {}, {}
     for path, info in walk(exp, include_work, {}):
         snapshots[path] = fingerprint(info)
         name = path.relative_to(repo).as_posix()
         if stat.S_ISDIR(info.st_mode):
-            entries[name+'/'] = ('dir', 0, 0)
+            entries[name+'/'] = ('dir', stat.S_IMODE(info.st_mode), 0, 0)
         elif stat.S_ISLNK(info.st_mode):
             target = os.fsencode(os.readlink(path))
-            entries[name] = ('link', len(target), zlib.crc32(target))
+            entries[name] = ('link', stat.S_IMODE(info.st_mode), len(target), zlib.crc32(target))
         else:
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
             crc = size = 0
@@ -351,7 +351,7 @@ def content_index(exp, repo, include_work):
                 while chunk := source.read(CHUNK_SIZE):
                     crc = zlib.crc32(chunk, crc)
                     size += len(chunk)
-            entries[name] = ('file', size, crc)
+            entries[name] = ('file', stat.S_IMODE(info.st_mode), size, crc)
         if fingerprint(path.lstat()) != snapshots[path]:
             raise ArchiveError(f'File changed while comparing with the existing archive: {path}')
     return entries, snapshots
@@ -400,9 +400,10 @@ def reusable_archive(dest, repo, exp, include_work, exclusion_rules):
             return 'dir' if member.is_dir() else 'file'
         try:
             with zipfile.ZipFile(resolved) as bundle:
-                stored = {m.filename: (kind(m), m.file_size, m.CRC)
+                stored = {m.filename: (kind(m), stat.S_IMODE(m.external_attr >> 16), m.file_size, m.CRC)
                           for m in bundle.infolist() if m.filename != 'ARCHIVE-MANIFEST.json'}
-        except (OSError, zipfile.BadZipFile):
+        except (OSError, zipfile.BadZipFile, UnicodeDecodeError, ValueError):
+            # A damaged central directory (including undecodable names) is not reusable.
             continue
         if current is None:
             current = content_index(exp, repo, include_work)

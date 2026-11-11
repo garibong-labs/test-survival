@@ -841,3 +841,28 @@ def test_reuse_skips_non_object_sidecar(experiment, content):
     sidecar.write_bytes(content.encode('latin-1'))
     final = module.archive(exp, destination=dest, prune=True, yes=True)
     assert final != first and final.exists()
+
+
+def test_reuse_detects_permission_only_change(experiment):
+    _, exp, dest = experiment
+    script = put(exp, 'results/run.sh', 'echo hi')
+    script.chmod(0o644)
+    first = module.archive(exp, destination=dest)
+    script.chmod(0o755)
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    with zipfile.ZipFile(final) as bundle:
+        assert stat.S_IMODE(bundle.getinfo('experiments/finished/results/run.sh').external_attr >> 16) == 0o755
+
+
+def test_reuse_skips_zip_with_undecodable_member_name(experiment):
+    _, exp, dest = experiment
+    put(exp, 'results/caf\u00e9.txt', 'x')
+    first = module.archive(exp, destination=dest)
+    data = bytearray(first.read_bytes())
+    name = 'caf\u00e9.txt'.encode()
+    at = data.rfind(name)
+    data[at+3] = 0xff
+    first.write_bytes(bytes(data))
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first and final.exists()
