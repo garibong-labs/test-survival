@@ -37,6 +37,8 @@ def parser():
     pack.add_argument('--include-work', action='store_true')
     pack.add_argument('--prune', action='store_true')
     pack.add_argument('--yes', action='store_true', help='Skip the prune confirmation')
+    pack.add_argument('--new-zip', action='store_true',
+                      help='With --prune, write a new ZIP even if an identical indexed archive exists')
     pack.add_argument('--dry-run', action='store_true', help='Show file counts and sizes without writing')
     for name in ('show', 'status', 'stop', 'rehash'):
         command = sub.add_parser(name)
@@ -87,7 +89,8 @@ def main(argv=None):
             print(path)
         elif args.command == 'archive':
             archive(args.exp_dir, destination=args.dest or display.archive_destination,
-                    include_work=args.include_work, prune=args.prune, yes=args.yes, dry_run=args.dry_run)
+                    include_work=args.include_work, prune=args.prune, yes=args.yes, dry_run=args.dry_run,
+                    new_zip=args.new_zip)
         elif args.command == 'status' and (message := archived_status(args.exp_dir)):
             print(message)
         elif args.command == 'policy':

@@ -750,3 +750,136 @@ def test_nonregular_owner_is_rejected_without_blocking(experiment):
     with pytest.raises(module.ArchiveError, match='expected a regular file'):
         module.archive(pool, destination=dest, prune=True, yes=True)
     assert (pool/'generated/output.txt').exists()
+
+
+def test_prune_reuses_identical_existing_archive(experiment, capsys):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    capsys.readouterr()
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final == first
+    assert 'Reusing existing archive' in capsys.readouterr().out
+    assert sorted(p.name for p in first.parent.glob('*.zip')) == [first.name]
+    with open(dest/'archive-index.csv', newline='') as stream:
+        assert len(list(csv.DictReader(stream))) == 1
+    assert not (exp/'results/evidence.json').exists()
+    assert json.loads((exp/'ARCHIVED.json').read_text())['destination'] == str(first)
+
+
+def test_prune_writes_new_archive_after_change(experiment):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    put(exp, 'results/evidence.json', '{"answer": 43}')
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    with zipfile.ZipFile(final) as bundle:
+        assert bundle.read('experiments/finished/results/evidence.json') == b'{"answer": 43}'
+
+
+def test_prune_does_not_reuse_damaged_or_forced(experiment, capsys):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    with first.open('ab') as stream:
+        stream.write(b'x')
+    second = module.archive(exp, destination=dest)
+    third = module.archive(exp, destination=dest, prune=True, yes=True, new_zip=True)
+    assert len({first, second, third}) == 3
+    assert 'Reusing' not in capsys.readouterr().out
+
+
+def test_damaged_archive_falls_back_to_new_zip(experiment, capsys):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    with first.open('ab') as stream:
+        stream.write(b'x')
+    capsys.readouterr()
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    assert 'Reusing' not in capsys.readouterr().out
+
+
+def test_reuse_rejects_index_path_inside_experiment(experiment):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    moved = exp/'work'/first.name
+    moved.parent.mkdir(parents=True, exist_ok=True)
+    first.rename(moved)
+    first.with_suffix('.manifest.json').rename(moved.with_suffix('.manifest.json'))
+    index = dest/'archive-index.csv'
+    rows = list(csv.DictReader(index.open(newline='')))
+    for path in (str(moved), os.path.relpath(moved, dest)):
+        rows[-1]['zip_relative_path'] = path
+        with index.open('w', newline='') as stream:
+            writer = csv.DictWriter(stream, fieldnames=module.INDEX_FIELDS)
+            writer.writeheader()
+            writer.writerows(rows)
+        e, d = exp.resolve(), dest.resolve()
+        rules = module.manifest_for(e, e.parents[1], False)['exclusion_rules']
+        assert module.reusable_archive(d, e.parents[1], e, False, rules) is None
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final.is_relative_to(dest) and final.exists()
+
+
+def test_reuse_distinguishes_symlink_from_regular_file(experiment):
+    _, exp, dest = experiment
+    put(exp, 'results/other.txt', 'x')
+    put(exp, 'results/entry', 'other.txt')
+    first = module.archive(exp, destination=dest)
+    (exp/'results/entry').unlink()
+    (exp/'results/entry').symlink_to('other.txt')
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    with zipfile.ZipFile(final) as bundle:
+        assert stat.S_ISLNK(bundle.getinfo('experiments/finished/results/entry').external_attr >> 16)
+
+
+@pytest.mark.parametrize('content', ['null', '[]', '"text"', '\xff'])
+def test_reuse_skips_non_object_sidecar(experiment, content):
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    sidecar = first.with_suffix('.manifest.json')
+    sidecar.write_bytes(content.encode('latin-1'))
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first and final.exists()
+
+
+def test_reuse_detects_permission_only_change(experiment):
+    _, exp, dest = experiment
+    script = put(exp, 'results/run.sh', 'echo hi')
+    script.chmod(0o644)
+    first = module.archive(exp, destination=dest)
+    script.chmod(0o755)
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    with zipfile.ZipFile(final) as bundle:
+        assert stat.S_IMODE(bundle.getinfo('experiments/finished/results/run.sh').external_attr >> 16) == 0o755
+
+
+def test_reuse_skips_zip_with_undecodable_member_name(experiment):
+    _, exp, dest = experiment
+    put(exp, 'results/caf\u00e9.txt', 'x')
+    first = module.archive(exp, destination=dest)
+    data = bytearray(first.read_bytes())
+    name = 'caf\u00e9.txt'.encode()
+    at = data.rfind(name)
+    data[at+3] = 0xff
+    first.write_bytes(bytes(data))
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first and final.exists()
+
+
+def test_reuse_compares_bytes_not_only_crc(experiment, monkeypatch):
+    """Same size and CRC-32 but different bytes must not authorize pruning."""
+    _, exp, dest = experiment
+    first = module.archive(exp, destination=dest)
+    root = exp.resolve()
+    entries, _ = module.content_index(root, root.parents[1], False)
+    # Same length as '{"answer": 42}'; the metadata index below still reports the
+    # old size and CRC, which is what a real CRC-32 collision looks like.
+    put(exp, 'results/evidence.json', '{"answer": 43}')
+    snapshots = {p: module.fingerprint(p.lstat()) for p, _ in module.walk(root, False, {})}
+    monkeypatch.setattr(module, 'content_index', lambda *args, **kwargs: (entries, snapshots))
+    final = module.archive(exp, destination=dest, prune=True, yes=True)
+    assert final != first
+    with zipfile.ZipFile(final) as bundle:
+        assert bundle.read('experiments/finished/results/evidence.json') == b'{"answer": 43}'
