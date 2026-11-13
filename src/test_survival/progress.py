@@ -292,12 +292,16 @@ def generation_progress(exp, config, state):
                         repair_unknown = True
                     repairs.update(active)
         else:
-            classes = {row['class'].rsplit('.', 1)[-1]: row.get('m', 0) for row in scope.get('classes', [])}
+            from .rules.naming import folder_keys
+            rows = scope.get('classes', [])
+            keys = folder_keys([row['class'] for row in rows])
+            classes = {keys[row['class']]: row.get('m', 0) for row in rows}
             if not classes or not all(classes.values()):
                 # Full method inventory is available even with a minimal scope record.
                 inventory = csv_rows(exp/'population/methods.csv')
+                inventory_keys = folder_keys(list(dict.fromkeys(r['class'] for r in inventory)))
                 for row in inventory:
-                    key = row['class'].rsplit('.', 1)[-1]
+                    key = inventory_keys[row['class']]
                     if not classes.get(key):
                         classes[key] = sum(r['class'] == row['class'] for r in inventory)
             if not classes or not all(classes.values()):
