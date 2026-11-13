@@ -82,7 +82,8 @@ class OuedraogoNative:
             from ..panel import notify
             notify(self.exp)
             return result
-        with ThreadPoolExecutor(max_workers=2) as pool:records=list(pool.map(call,jobs))
+        # Concurrent model calls; each call is recorded independently, so this only changes speed.
+        with ThreadPoolExecutor(max_workers=self.group['params'].get('workers',2)) as pool:records=list(pool.map(call,jobs))
         write_json(directory/'generation.json',records)
         return self.finish(directory,records)
 

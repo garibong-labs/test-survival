@@ -345,3 +345,22 @@ def test_generator_docker_override_ignores_only_host_wiring(minimal):
     assert stage_hash(config, 'generate', 'k') == stage_hash(changed, 'generate', 'k')
     changed['generators'][0]['docker']['image'] = 'jdk:25'
     assert stage_hash(config, 'generate', 'k') != stage_hash(changed, 'generate', 'k')
+
+
+def ouedraogo(params):
+    return {'name': 'o', 'method': 'ouedraogo', 'impl': 'native', 'params': params}
+
+
+def test_ouedraogo_workers_is_kept_out_of_config_unless_written(minimal):
+    absent = validate({**minimal, 'generators': [ouedraogo({})]})
+    assert 'workers' not in absent['generators'][0]['params']
+    written = validate({**minimal, 'generators': [ouedraogo({'workers': 8})]})
+    assert written['generators'][0]['params']['workers'] == 8
+    for stage in STAGES[:2]:
+        assert stage_hash(absent, stage) == stage_hash(written, stage)
+
+
+@pytest.mark.parametrize('value', [0, 'eight'])
+def test_ouedraogo_workers_must_be_positive_integer(minimal, value):
+    with pytest.raises(ConfigError, match='params.workers'):
+        validate({**minimal, 'generators': [ouedraogo({'workers': value})]})
