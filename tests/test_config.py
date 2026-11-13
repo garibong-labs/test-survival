@@ -80,6 +80,25 @@ def test_hash_boundaries_and_key_order(minimal):
     assert stage_hash(c, 'report') == stage_hash(dict(reversed(list(as_written(c).items()))), 'report')
 
 
+def test_generated_exclusions_are_optional_and_hash_only_screen_onward(minimal):
+    minimal['generators'] = [dict(name='o', method='ouedraogo', impl='native')]
+    original = validate(minimal)
+    assert 'exclude' not in original['screen']
+    for exclude in ({}, {'o':['com.example.Test#method', 'generated/o/round1/sources/Test.java']}):
+        changed = validate({**minimal, 'screen':{'exclude':exclude}})
+        assert [stage_hash(original, s) != stage_hash(changed, s) for s in STAGES] == [False]*3+[True]*5
+
+
+@pytest.mark.parametrize('exclude', [[], {'missing':['p.Test']}, {'o':'p.Test'}, {'o':None},
+    {'o':[1]}, {'o':['']}, {'o':['p.Test', 'p.Test']}, {'o':['../Test.java']},
+    {'o':['/tmp/Test.java']}, {'o':['generated//Test.java']}, {'o':['p.Test#']},
+    {'o':['p.Test#method()']}, {'o':['*.java']}, {'o':['p.Test#one#two']}])
+def test_invalid_generated_exclusions(minimal, exclude):
+    minimal.update(generators=[dict(name='o', method='ouedraogo', impl='native')], screen={'exclude':exclude})
+    with pytest.raises(ConfigError, match='screen.exclude'):
+        validate(minimal)
+
+
 def test_unmapped_policy_invalidates_prepare_and_later_stages(minimal):
     config = validate(minimal)
     changed = validate({**minimal, 'dev': {'unmapped': 'exclude'}})

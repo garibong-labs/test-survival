@@ -36,15 +36,23 @@ def classification(text):
     return 'other'
 
 
-def screen_round(exp,config,g,directory,prior=()):
+def screen_round(exp,config,g,directory,prior=(), *, cached_only=False):
     adapter=JavaMavenAdapter(exp,config)
     if g['method']=='ktester':
         trees=sorted(directory.glob('*/test_classes'))
         sources=sorted(trees[0].glob('*.java')) if trees else sorted((directory/'sources').rglob('*.java'))
     else:sources=sorted((directory/'sources').rglob('*.java'))
+    provenance = adapter.provenance() if cached_only else None
     def validate(pair):
         number,path=pair
-        record = adapter.screen_file(g['name'],directory.name,path,config['screen']['stable_runs'],number)
+        if cached_only:
+            record = read_json(directory/f'validation/{number}.json', {})
+            keys = adapter.screen_fingerprints(path, config['screen']['stable_runs'], provenance=provenance)
+            if record.get('file') != str(path.relative_to(exp)) or record.get('input_sha256') not in keys:
+                raise RuntimeError('screen.exclude requires compatible cached screening evidence for '
+                                   +str(path.relative_to(exp))+'; no tests were re-executed')
+        else:
+            record = adapter.screen_file(g['name'],directory.name,path,config['screen']['stable_runs'],number)
         stage = 'screen' if read_json(exp/'state/screen.json', {}).get('status') == 'running' else 'generate'
         log(exp, f'{stage}: {g["name"]} {directory.name} screened {path.name}', config)
         return record
@@ -77,7 +85,9 @@ def screen_round(exp,config,g,directory,prior=()):
 
 
 def run(exp,config):
-    adapter=JavaMavenAdapter(exp,config);adapter.setup_runner()
+    cached_only = 'exclude' in config['screen']
+    if not cached_only:
+        JavaMavenAdapter(exp,config).setup_runner()
     frozen={g['name']:[frozen_method(r) for r in read_csv(exp/denominator_file(g,i))] for i,g in enumerate(config['dev']['groups'])}
     from ..dev_results import imported_groups
     frozen.update({name: item['frozen'] for name, item in imported_groups(exp, config).items()})
@@ -86,7 +96,9 @@ def run(exp,config):
     for g in config['generators']:
         kept=[]
         for directory in rounds(exp/'generated'/g['name']):
-            kept,_=screen_round(exp,config,g,directory,kept)
+            kept,_=screen_round(exp,config,g,directory,kept, **({'cached_only':True} if cached_only else {}))
+        from .generated_exclusions import apply_exclusions
+        kept = apply_exclusions(exp, config, g, kept)
         if config['screen']['matching']=='subsample-to-dev':
             kept=subsample(kept,len(frozen[first_dev]),g['name'])
         write_csv(exp/f'results/llm-{g["name"]}-denominator.csv',[{k:r[k] for k in FIELDS} for r in kept],FIELDS)

@@ -18,7 +18,13 @@ def build(exp,config):
     text='# Consistency checks\n\n```json\n'+json.dumps(survival,indent=2)+'\n```\n'
     excluded=read_json(exp/'results/anchor.json',{}).get('dev_unmapped_excluded',0)
     notes=[unmapped_note(excluded)] if excluded else []
-    if notes:text+='\n'+notes[0]+'\n'
+    from ..stages.generated_exclusions import exclusion_notes
+    generated_exclusions = read_json(exp/'results/generated-exclusions.json', {})
+    notes.extend(exclusion_notes(generated_exclusions))
+    for group, row in generated_exclusions.items():
+        if row['unmatched']:
+            notes.append(f'{group}: unmatched screen.exclude selectors: '+', '.join(row['unmatched']))
+    if notes:text+='\n'+'\n'.join(notes)+'\n'
     text+=f'\nCoverage: identical executable line sets across all {len(groups)} groups at {len(coverage["identical_executable_line_sets"])} indices. Required indices: {coverage["coverage_indices"]}. Missing measurements: {len(coverage["missing"])} (enumerated in coverage-consistency.json).\n'
     number={3:'Three',4:'Four',5:'Five'}.get(len(groups),str(len(groups)))
     text+='\n## '+number+'-group checks\n\n| Check | '+' | '.join(labels[g] for g in groups)+' |\n|---|'+'---:|'*len(groups)+'\n'
@@ -44,6 +50,8 @@ def build(exp,config):
         summary['selection_control'] = {g:selection_counts(read_json(exp/f'results/control/0-{g}.json', {}).get('methods', [])) for g in groups}
         summary.update(execution='batch', coverage_scope='scope', ignored_settings=['survival.flaky_rerun','survival.environment_errors'])
     summary.update(dev_unmapped_excluded=excluded,notes=notes)
+    if generated_exclusions:
+        summary['generated_exclusions'] = generated_exclusions
     discovery = read_json(exp/'results/dev-build-discovery.json')
     if discovery is not None and config['dev'].get('discovery', 'source') == 'build':
         summary['dev_build_discovery'] = discovery

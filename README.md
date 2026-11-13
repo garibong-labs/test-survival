@@ -214,6 +214,39 @@ switch and changes the prepare hash.
 
 The developer group name `dev-unmapped` (including case variants) is reserved for the shared baseline exclusion audit. Choose another group name to keep scope exclusions separate from that audit.
 
+Use `screen.exclude` for generated tests that should not enter the frozen
+denominator. Lists are keyed by generator group name and accept fully qualified
+classes, `Class#method`, or exact experiment-relative Java file paths:
+
+```yaml
+screen:
+  exclude:
+    ktester:
+      - com.example.Cache_shutdown_Test
+    ouedraogo:
+      - com.example.CacheTest#testShutdown
+      - generated/ouedraogo/round1/sources/Cache/ZSL/CacheTest.java
+```
+
+KTester file selectors may also use the corresponding `roundN/sources/` copy
+instead of the author tool's `roundN/<project>/test_classes/` path. Filtering
+happens after stability screening and body deduplication, before denominator
+matching. Excluding a retained body does not promote a discarded duplicate.
+Exclude the whole class when its lifecycle hooks change shared state.
+
+Writing this key changes the screen and later stage hashes, leaving prepare,
+scope and generate hashes unchanged. The screen stage then requires compatible
+saved per-file validation records and rebuilds denominators without re-executing
+tests; missing or incompatible evidence stops the stage. New generation still
+performs its normal screening to produce those records. Regeneration pools use
+the same exclusion filter.
+
+`results/generated-exclusions.csv` records matched methods, selectors, screening
+states and whether each method would otherwise have been admitted. The companion
+JSON records counts before denominator matching and unmatched selectors. Round
+funnels retain their original screening counts and add `configured_excluded`,
+`configured_excluded_total` and `final_kept`; reports disclose the exclusions.
+
 With `dev.discovery: source`, `prepare` stops by default when a baseline test case cannot map unambiguously to a source method. Set `dev.unmapped: exclude` to continue with those cases excluded from every Dev denominator. The audit file `dev/dev-unmapped-excluded.csv` records each case, how many runs saw it, and the reason. Anchor metadata, generation funnels, and report notes disclose the excluded count. Mapped cases keep their existing stability rules.
 
 Use `range.skip_untouched` to skip irrelevant commits for every group while retaining commit indices. Use `survival.environment_errors` to retry failures whose messages match configured patterns.

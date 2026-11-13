@@ -213,7 +213,7 @@ SCHEMA = {
               'env_key': Field(str, 'OPENROUTER_API_KEY')},
     'generators': Field(list, []),
     'screen': {'stable_runs': integer(3), 'dedup': enum('exact-body', 'exact-body'),
-               'matching': enum('none', 'none', 'subsample-to-dev')},
+               'matching': enum('none', 'none', 'subsample-to-dev'), 'exclude': Field(dict, {})},
     'survival': {'selection': enum('all', 'all', 'affected'), 'execution': enum('legacy', 'legacy', 'batch'), 'definition': enum('cumulative-fixed-denominator', 'cumulative-fixed-denominator'),
                  'flaky_rerun': integer(1, 0), 'build_fail': enum('carry-over', 'carry-over'),
                  'environment_errors': {'patterns': Field(list, []), 'max_reruns': integer(3, 0),
@@ -434,6 +434,18 @@ def validate(data):
                 raise ConfigError(prefix + 'params.prompts: allowed values: ZSL, FSL, CoT, ToT, GToT; list must be nonempty')
         generators.append(g)
     c['generators'] = generators
+    if 'exclude' not in data.get('screen', {}):
+        c['screen'].pop('exclude')
+    else:
+        from .rules.generated_exclusions import valid_selector
+        for group, selectors in c['screen']['exclude'].items():
+            if group not in {g['name'] for g in generators}:
+                raise ConfigError('screen.exclude: keys must name configured generator groups')
+            if type(selectors) is not list:
+                raise ConfigError(f'screen.exclude.{group}: expected a list of nonempty strings')
+            _strings(selectors, f'screen.exclude.{group}')
+            if any(not valid_selector(s) for s in selectors):
+                raise ConfigError(f'screen.exclude.{group}: expected a class, Class#method, or relative Java file path')
     c['runner']['docker']=_docker(c['runner']['docker'],'runner.docker')
     for key, value in c['runner']['jvm'].items():
         if not re.fullmatch(r'[1-9][0-9]*[kKmMgG]?', value):
