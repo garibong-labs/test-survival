@@ -234,8 +234,11 @@ SCHEMA = {
 PARAMS = {
     'ktester': {'fix_tries': integer(5, 0), 'temperature': Field(float, 0.5, minimum=0), 'workers': integer(8)},
     'ouedraogo': {'temperature': Field(float, 0.7, minimum=0), 'max_tokens': integer(16384),
-                  'prompts': Field(list, ['ZSL', 'FSL', 'CoT', 'ToT', 'GToT'])},
+                  'prompts': Field(list, ['ZSL', 'FSL', 'CoT', 'ToT', 'GToT']), 'workers': integer(2)},
 }
+# Execution-only parameters kept out of the validated config unless written,
+# so adding them does not change stage hashes of existing experiments.
+OPTIONAL_PARAMS = {'ouedraogo': ('workers',)}
 
 
 def _validate(data, schema, prefix=''):
@@ -417,7 +420,11 @@ def validate(data):
         if g['impl'] == 'author-tool' and g['tool_path'] is None:
             raise ConfigError(prefix + 'tool_path: required for author-tool')
         g['display'] = g['display'] or g['name']
+        given = set(g['params']) if isinstance(g['params'], dict) else set()
         g['params'] = _validate(g['params'], PARAMS[g['method']], prefix + 'params.')
+        for key in OPTIONAL_PARAMS.get(g['method'], ()):
+            if key not in given:
+                g['params'].pop(key)
         if g['params']['temperature'] > 2:
             raise ConfigError(prefix + 'params.temperature: must be <= 2')
         if g['method'] == 'ouedraogo':
