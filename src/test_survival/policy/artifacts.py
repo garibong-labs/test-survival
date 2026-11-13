@@ -24,11 +24,15 @@ def unit(exp, group, test, method, scope):
         if ledger.exists():
             matches = [r for r in read_json(ledger) if r.get('file') == test['file']]
             if len(matches) == 1:
+                target = matches[0].get('target_class')
+                if target and any(c['class'] == target for c in scope):
+                    return target
                 simple = matches[0].get('class_name', matches[0].get('class'))
                 candidates = [c['class'] for c in scope if c['class'].rsplit('.', 1)[-1] == simple]
                 if len(candidates) == 1:
                     return candidates[0]
-    candidates = [c['class'] for c in scope if c['class'].rsplit('.', 1)[-1] in source.parts]
+    # Folders use the full class name when two target classes share a simple name.
+    candidates = [c['class'] for c in scope if c['class'] in source.parts or c['class'].rsplit('.', 1)[-1] in source.parts]
     if len(candidates) != 1:
         raise ValueError('Cannot map Ouedraogo test to target class: '+str(source))
     return candidates[0]
