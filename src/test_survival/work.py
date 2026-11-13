@@ -130,6 +130,13 @@ def failed(value):
     return isinstance(value, list) and any(failed(v) for v in value)
 
 
+def _deduplicate_retained(paths):
+    """Keep paths without a retained ancestor at a literal '/' boundary."""
+    keys = set(paths)
+    return {key: paths[key] for key in sorted(paths)
+            if not any(key[:i] in keys for i, char in enumerate(key) if char == '/')}
+
+
 def record_cleanup(exp, removed, retained):
     from .io import write_json
     path = Path(exp)/'results/work-cleanup.json'
@@ -137,9 +144,7 @@ def record_cleanup(exp, removed, retained):
     prior['removed_files'] += removed['files']; prior['removed_bytes'] += removed['bytes']
     prior['retained_failures'].update(retained)
     # A retained parent supersedes children to avoid counting their bytes twice.
-    paths = prior['retained_failures']
-    prior['retained_failures'] = {k:v for k,v in paths.items()
-                                  if not any(k.startswith(other+'/') for other in paths if other != k)}
+    prior['retained_failures'] = _deduplicate_retained(prior['retained_failures'])
     write_json(path, prior)
 
 

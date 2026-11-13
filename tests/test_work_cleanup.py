@@ -1,10 +1,81 @@
 from copy import deepcopy
+import random
+from time import perf_counter
 
 import pytest
 
 from test_survival.config import validate, stage_hash, generator_config
 from test_survival.io import read_json, write_json
-from test_survival.work import cleanup_stage, finish_work, retain_previous_work
+from test_survival.work import (
+    _deduplicate_retained, cleanup_stage, finish_work, record_cleanup, retain_previous_work,
+)
+
+
+def pairwise_retained(paths):
+    return {k: v for k, v in paths.items()
+            if not any(k.startswith(other + '/') for other in paths if other != k)}
+
+
+@pytest.mark.parametrize('keys', [
+    [], ['a/b', 'a/bc', 'a/b/d', 'a/bc/d', 'a/c'],
+    ['a/b/c/d/e/f', 'a/b/c', 'a/b'],
+    ['', '/a', 'a', 'a/', 'a//b', 'ab', 'ab/c'],
+    ['a/', 'a//b', 'a/b', './a', './a/b', '../a', '../a/b'],
+])
+def test_retained_path_boundaries(keys):
+    paths = {key: dict(files=i, bytes=i * 10) for i, key in enumerate(keys)}
+    result = _deduplicate_retained(paths)
+    assert result == pairwise_retained(paths)
+    assert list(result) == sorted(result)
+    assert all(result[key] is paths[key] for key in result)
+
+
+@pytest.mark.parametrize('seed', range(10))
+def test_retained_paths_match_pairwise_for_randomized_sets(seed):
+    rng = random.Random(seed)
+    for _ in range(30):
+        paths = {
+            '/'.join(rng.choices(['a', 'b', 'bc', 'c', 'classes', 'reports', '0', '1'],
+                                k=rng.randint(1, 16))): dict(files=i, bytes=i * 10)
+            for i in range(rng.randrange(150))
+        }
+        assert _deduplicate_retained(paths) == pairwise_retained(paths)
+
+
+def test_retained_paths_performance():
+    paths = {}
+    expected = {}
+    for i in range(10_000):
+        root = f'work/validation/llm/round1/{i // 100}/job-{i}'
+        value = dict(files=4, bytes=1024)
+        expected[root] = value
+        for suffix in ('', '/classes', '/classes/pkg/T.class', '/reports', '/reports/tests.xml'):
+            paths[root + suffix] = value
+    assert len(paths) == 50_000
+    started = perf_counter()
+    result = _deduplicate_retained(paths)
+    elapsed = perf_counter() - started
+    assert result == expected
+    assert elapsed < 1.0, f'Deduplicating 50,000 retained paths took {elapsed:.3f}s'
+
+
+def test_record_cleanup_accumulates_counts_and_matches_pairwise_across_calls(tmp_path):
+    rng = random.Random(42)
+    keys = ['a/b', 'a/bc', 'a/b/c/d/e/f', 'a/c', 'a/b/child', 'a/bc/child']
+    keys += [f'work/validation/g/{i}/classes/pkg/T.class' for i in range(50)]
+    keys += [f'work/validation/g/{i}' for i in range(25)]
+    expected = dict(removed_files=0, removed_bytes=0, retained_failures={})
+    for call in range(30):
+        # Include empty calls and repeated keys with updated footprint values.
+        retained = {key: dict(files=call + 1, bytes=(call + 1) * 100)
+                    for key in rng.sample(keys, 0 if call % 5 == 0 else 20)}
+        removed = dict(files=call, bytes=call * 123)
+        expected['removed_files'] += removed['files']
+        expected['removed_bytes'] += removed['bytes']
+        expected['retained_failures'].update(retained)
+        expected['retained_failures'] = pairwise_retained(expected['retained_failures'])
+        record_cleanup(tmp_path, removed, retained)
+        assert read_json(tmp_path/'results/work-cleanup.json') == expected
 
 
 def fixture(tmp_path, *, failure=False):
