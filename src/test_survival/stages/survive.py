@@ -1,3 +1,4 @@
+from ..denominators import frozen_after_control
 from ..work import release_checkout
 from ..adapters.java_maven import JavaMavenAdapter
 from ..adapters.run_reuse import cached_survival_record
@@ -34,7 +35,7 @@ def aggregate(exp,config):
     provenance = load_provenance(exp)
     commits=read_csv(exp/'results/commits.csv');anchor=read_json(exp/'results/anchor.json')
     groups=group_names(config);skipped=skipped_commits(exp,config,commits)
-    frozen=read_json(exp/'results/frozen-denominators.json')
+    frozen=frozen_after_control(exp, config)
     alive={g:{r['id'] for r in frozen[g]} for g in groups}
     zero=dict(index='0',sha=anchor['sha'],date=anchor['date'],subject='t = '+config['anchor'])
     curves=[];failures=[];entering={};missing=[];failed=[]
@@ -82,8 +83,11 @@ def run(exp,config):
     from ..dev_results import imported_for, imported_record
     provenance, imported = imported_for(exp, config, 'survive')
     adapter=JavaMavenAdapter(exp,config)
-    frozen=read_json(exp/'results/frozen-denominators.json');groups=group_names(config)
-    validate_derived_subsets(config['dev']['groups'],frozen)
+    frozen=frozen_after_control(exp, config);groups=group_names(config)
+    independent = {g for g in groups if config['survival'].get('control_failures') == 'exclude'
+                   and (source := derived_source(config, g))
+                   and not {t['id'] for t in frozen[g]} <= {t['id'] for t in frozen[source]}}
+    validate_derived_subsets([g for g in config['dev']['groups'] if g['name'] not in independent], frozen)
     commits=read_csv(exp/'results/commits.csv');skipped=skipped_commits(exp,config,commits)
     write_csv(exp/'results/skipped-commits.csv',[dict(index=r['index'],sha=r['sha'],reason=skipped[int(r['index'])]) for r in commits if int(r['index']) in skipped],['index','sha','reason'])
     for row in commits:
@@ -97,7 +101,7 @@ def run(exp,config):
     for row in evaluated:
         for g in imported:
             imported_record(exp, f'results/{raw_folder(g,config,provenance)}/{row["index"]}-{g}.json', sha=row['sha'], method_ids=[m['id'] for m in frozen[g]], provenance=provenance)
-    measured=[g for g in groups if raw_folder(g,config,provenance)=='raw' and g not in imported]
+    measured=[g for g in groups if (raw_folder(g,config,provenance)=='raw' or g in independent) and g not in imported]
     known={g:{} for g in measured}
     def prepare(item,pending):
         row,g=item; i=int(row['index']); dead_at=dict(known[g])
@@ -121,13 +125,17 @@ def run(exp,config):
             raise RuntimeError('Worker killed; quarantined raw record')
         if {m['id'] for m in record['methods']} != {m['id'] for m in frozen[g]}:
             raise RuntimeError('Raw methods differ from the frozen denominator')
+        if g in independent:
+            # Keep the established child result path even when its reduced
+            # population can no longer be projected from the parent's rows.
+            write_json(exp/f'results/raw-derived/{i}-{g}.json', record, compress=True)
         for m in record['methods']:
             if m['state'] in FAILURES:
                 known[g][m['id']]=min(i,known[g].get(m['id'],i))
         log(exp,f'survive: {i} {g} recorded',config)
     with measurement_session(adapter, 'survive', bool(measured and evaluated)):
         dispatch([(row,g) for row in evaluated for g in measured],config['runner']['workers']['survive'],prepare,job,completed)
-    pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g['name'] in groups and derived_source(config, g['name']) and g['name'] not in imported}
+    pending={g['name']:g['derive_from'] for g in config['dev']['groups'] if g['name'] in groups and derived_source(config, g['name']) and g['name'] not in imported and g['name'] not in independent}
     while pending:
         ready=[g for g,source in pending.items() if source not in pending]
         if not ready:raise RuntimeError('Derived group cycle')

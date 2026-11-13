@@ -1,3 +1,4 @@
+from ..denominators import denominator_counts, control_excluded
 from ..config import group_names,group_labels
 """Report tables retain the reference's ordering, punctuation, and rounding."""
 from collections import Counter
@@ -12,7 +13,7 @@ def pct(n,d):return f'{n} ({100*n/d:.1f}%)' if d else f'{n} (n/a)'
 def build(exp,config):
     groups=group_names(config)
     labels=group_labels(config)
-    counts=read_json(exp/'results/denominators.json')
+    counts=denominator_counts(exp, config)
     curves=read_csv(exp/'results/survival.csv');losses=read_csv(exp/'results/first-failures.csv')
     last=curves[-1]
     events=[r for r in curves if r['index']=='0' or any(int(r[g+'_lost']) for g in groups) or r['index']==last['index']]

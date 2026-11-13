@@ -9,7 +9,7 @@ from test_survival.io import read_json
 
 def test_legacy_retry_and_round_manifest_synthesis(tmp_path):
     src=tmp_path/'reference';exp=tmp_path/'replay';exp.mkdir()
-    config={'name':'test','project':{'repo':'/project'},'anchor':'v1','generators':[{'name':'o','method':'ouedraogo','impl':'native'}]}
+    config={'name':'test','project':{'repo':'/project'},'anchor':'v1','generators':[{'name':'o','method':'ouedraogo','impl':'native','rounds':{'max':2}}]}
     (exp/'experiment.yaml').write_text(yaml.safe_dump(config))
     for name in ['round2','round1-retry','round1']:
         p=src/'generated/o'/name;p.mkdir(parents=True)

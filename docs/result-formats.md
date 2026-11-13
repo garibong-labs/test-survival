@@ -43,7 +43,7 @@ compatibility records and layouts remain unchanged.
 
 `results/llm-<group>-denominator.csv`: `file,class,method,kind,body_hash,round,technique`. `file` is relative to the experiment folder. `technique` is the prompt type for Ouédraogo groups (`ZSL`, `FSL`, `CoT`, `ToT`, `GToT`) and `KTester` for the KTester group.
 
-`results/frozen-denominators.json`: object keyed by group; each value a list of `{class, method, kind, file, id}` with `id` = `<file>|<class>|<method>`. `results/denominators.json`: object keyed by group with integer counts.
+`results/frozen-denominators.json`: object keyed by group; each value a list of `{class, method, kind, file, id}` with `id` = `<file>|<class>|<method>`. `results/denominators.json`: object keyed by group with integer counts used after control (screen counts until control runs).
 
 `results/raw/<index>-<group>.json`: `index`, `sha`, `group`, `phase` (`A`), `status`, `input_sha256`, `runner_sha256` (object of file name to sha of the runner components used), `files` (list of `{file, compile: {command, cwd, exit_code, timeout, seconds, log}, runs: [same shape], methods: [...]}`), `methods` (flat list of `{class, method, kind, file, id, state, message, flaky, initial_state, selector, baseline_states}`), `requested_ids`, `whole_frozen_suite_compile` (Dev only; `{command, cwd, exit_code, timeout, seconds, log, source_count, diagnostics}`), `seconds`. A skipped commit's record is `{index, sha, group, phase: "A", status: "skipped-untouched"}` only.
 
@@ -657,3 +657,12 @@ Existing records without declaring-source fields remain valid.
 New `dev-results` imports retain `scope_selection` (scope settings, population,
 and selection record) in `state/import.json`. An unchanged scope configuration
 reuses that validated selection without remeasuring imported candidates.
+
+With `survival.control_failures: exclude`, `results/control-excluded.json` maps every
+frozen group to its non-passing control method IDs (empty lists included).
+`results/control-excluded.csv` has columns `group,class,method,file,state,message`;
+`message` is the first line only. Full failure observations stay in
+`results/control-at-t.json`, and `control-at-t.md` adds the excluded count and used
+denominator per execution group. Frozen screen rows are never rewritten by control.
+The same counts appear as `control_excluded` in `results/final-summary.json` and
+in the experiment README and consistency report.

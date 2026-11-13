@@ -1,4 +1,7 @@
 """Read saved stage outputs for the CLI without running experiment work."""
+import yaml
+
+from .denominators import denominator_counts
 from .io import read_csv, read_json
 
 
@@ -31,7 +34,10 @@ def show(exp, stage):
             record = read_json(path)
             rows.append((path.parent.name, len(record.get('rounds', [])), record.get('stopped', '')))
     elif stage in ['screen', 'control', 'survive', 'report']:
-        counts = read_json(exp/'results/denominators.json', saved.get('denominators', {}))
+        config_path = exp/'experiment.yaml'
+        config = yaml.safe_load(config_path.read_text()) if config_path.exists() else None
+        counts = (denominator_counts(exp, {'survival':config.get('survival', {})}) if config
+                  else read_json(exp/'results/denominators.json', saved.get('denominators', {})))
         headers = ['Group', 'Denominator']
         extra = {}
         if stage == 'control':

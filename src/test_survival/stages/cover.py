@@ -1,3 +1,4 @@
+from ..denominators import frozen_after_control
 from collections import defaultdict, Counter
 import re
 
@@ -112,7 +113,7 @@ def run(exp,config):
             write_json(exp/f'results/changes/{i}.json',dict(index=i,sha=sha,parent=parent,pre_image=pre,post_image=post,diff=diff))
     write_json(exp/'results/coverage-index-aliases.json',aliases)
     write_csv(exp/'results/coverage-commits.csv',[dict(index=i) for i in sorted(indices)],['index'])
-    alive=read_json(exp/'results/alive-entering.json');frozen=execution_groups(config, read_json(exp/'results/frozen-denominators.json'))
+    alive=read_json(exp/'results/alive-entering.json');frozen=execution_groups(config, frozen_after_control(exp, config))
     def job(i,g):
         selected=set(alive[str(i)][g]);methods=[r for r in frozen[g] if r['id'] in selected]
         raw=adapter.coverage(i,[],methods,group=g)

@@ -7,6 +7,7 @@ from collections import defaultdict, OrderedDict
 import hashlib
 from pathlib import Path
 
+from ..denominators import finish_control, frozen_after_control
 from ..adapters.java_maven import JavaMavenAdapter
 from ..adapters.policy_coverage import COVERAGE_VERSION
 from ..config import canonical_hash, derived_source, execution_groups, group_names
@@ -56,16 +57,26 @@ class Measurements:
         self.history = {}
         self.origins = OrderedDict()
         self.provenance, self.imported = imported_for(exp, config, phase)
-        self.frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json'))
+        self.frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json') if phase == 'control'
+                                       else frozen_after_control(exp, config))
         self.tests = catalog(exp, config, self.frozen)
         self.scope = read_json(exp/'population/scope.json')['classes']
         methods = {g['name']: g['method'] for g in config['generators']}
         self.excluded, self.exclusion_summary = screening_exclusion_details(exp, {}, self.tests, exp,
-                                            {g: methods.get(g, 'dev') for g in self.tests}, baseline_prefix='')
+                                            {g: methods.get(g, 'dev') for g in self.tests}, baseline_prefix='',
+                                            round_limits={g['name']:g['rounds']['max'] for g in config['generators']})
         self.runner = self.adapter.provenance()
-        self.digest = canonical_hash(dict(version=1, implementation=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), coverage=COVERAGE_VERSION, tests=self.tests,
-                                         scope=self.scope, excluded=sorted(self.excluded), runner=self.runner,
-                                         inputs={g:self.adapter.run_fingerprint(ts) for g,ts in self.tests.items()}))
+        inputs = dict(version=1, implementation=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), coverage=COVERAGE_VERSION, tests=self.tests,
+                      scope=self.scope, excluded=sorted(self.excluded), runner=self.runner,
+                      inputs={g:self.adapter.run_fingerprint(ts) for g,ts in self.tests.items()})
+        self.digest = canonical_hash(inputs)
+        self.control_digests = {self.digest}
+        if phase == 'control':
+            # 66ac379 used the whole module as its implementation fingerprint.
+            # Admit that exact implementation at the anchor only, while still
+            # requiring identical tests, scope, exclusions, runner and inputs.
+            self.control_digests.add(canonical_hash(dict(inputs, implementation=
+                '38007c6b03cd27c081f193b7af9b266b687c5ac2adfa5ee38522a781bd1c3531')))
         self.derived = {g:source for g in self.tests if g not in self.imported
                         if (source := derived_source(config, g))}
         self.unique = {identity(t):t for g,ts in self.tests.items()
@@ -96,7 +107,7 @@ class Measurements:
 
     def cached(self, index, sha, dead, *, require_lines=True, historical=False):
         raw = read_json(self.exp/f'results/baseline-batches/{index}.json', {})
-        if ((not historical and raw.get('input_sha256') != self.digest) or raw.get('sha') != sha
+        if ((not historical and raw.get('input_sha256') not in (self.control_digests if self.phase == 'control' else {self.digest})) or raw.get('sha') != sha
                 or raw.get('coverage_version') != COVERAGE_VERSION or 'universe' not in raw):
             return None
         rows = {identity(t):t for t in raw.get('methods', [])}
@@ -203,23 +214,21 @@ class Measurements:
 
 
 def control(exp, config):
-    from ..io import atomic_text
     m = Measurements(exp, config, 'control')
     write_json(exp/'results/policy/excluded-sources.json', m.exclusion_summary)
     sha = read_json(exp/'results/anchor.json')['sha']
     with measurement_session(m.adapter, 'control', bool(m.unique or not m.imported)):
-        raw = m.cached(0, sha, {}) or m.measure(0, sha, {})
+        raw = m.cached(0, sha, {}, require_lines=config['survival'].get('control_failures') != 'exclude') or m.measure(0, sha, {})
         m.project(0, sha, raw)
     records = {}
     for g in m.tests:
         rows = read_json(exp/f'results/control/0-{g}.json')['methods']
         records[g] = dict(requested=len(rows), passed=sum(t['state']=='pass' for t in rows), failures=[t for t in rows if t['state']!='pass'])
-    write_json(exp/'results/control-at-t.json', records)
-    atomic_text(exp/'results/control-at-t.md', '# Control at t\n\n'+'\n'.join(f'- {g}: {r["passed"]}/{r["requested"]} passed.' for g,r in records.items())+'\n')
-    if any(r['failures'] for r in records.values()):
-        raise RuntimeError('Frozen methods failed the control at t')
-    project_coverage(exp, config, 0, {g:[t['id'] for t in ts] for g,ts in m.frozen.items()})
-    return 'All frozen methods passed at the anchor (batch; scope coverage recorded)'
+    excluded = finish_control(exp, config, records)
+    frozen = frozen_after_control(exp, config)
+    project_coverage(exp, config, 0, {g:[t['id'] for t in frozen[g]] for g in m.frozen})
+    return (f'Excluded {excluded} frozen methods after control at t (batch)' if excluded else
+            'All frozen methods passed at the anchor (batch; scope coverage recorded)')
 
 
 def survive(exp, config):
@@ -278,7 +287,7 @@ def project_coverage(exp, config, index, entering):
     from .survive import raw_folder
     provenance, imported = imported_for(exp,config,'cover')
     adapter = JavaMavenAdapter(exp, config)
-    frozen = read_json(exp/'results/frozen-denominators.json')
+    frozen = frozen_after_control(exp, config)
     for g in group_names(config):
         output = exp/f'results/coverage/{index}-{g}-lines.csv'
         if g in imported:
@@ -311,7 +320,8 @@ def completed_items(exp, config, stage, *, historical=False):
     from .survive import skipped_commits, raw_folder
     # Status visits every stage, including those whose inputs have not been
     # produced yet. Missing inputs are pending, not an empty completed batch.
-    frozen = read_json(exp/'results/frozen-denominators.json')
+    frozen = (read_json(exp/'results/frozen-denominators.json') if stage == 'control'
+              else frozen_after_control(exp, config))
     scope = read_json(exp/'population/scope.json')
     anchor = read_json(exp/'results/anchor.json')
     if (not isinstance(frozen, dict) or not isinstance(scope, dict)
@@ -348,7 +358,7 @@ def completed_items(exp, config, stage, *, historical=False):
         record = m.cached(i,r['sha'],known,require_lines=False,historical=historical)
         if record is None:
             continue
-        valid = complete_lines(record, known)
+        valid = (stage == 'control' and config['survival'].get('control_failures') == 'exclude') or complete_lines(record, known)
         for g, tests in m.frozen.items():
             if g in m.imported:
                 continue

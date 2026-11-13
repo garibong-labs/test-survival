@@ -1,4 +1,5 @@
 """Read-only stage progress from existing state and evidence records."""
+from .denominators import frozen_after_control
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,7 +87,7 @@ def items(exp, stage, config, state):
             if stage == 'generate' and state.get('group') not in (None, group['name']):
                 continue
             root = exp/'generated'/group['name']
-            directories = rounds(root)
+            directories = rounds(root, group['rounds']['max'])
             if stage == 'screen':
                 for directory in directories:
                     trees = sorted(directory.glob('*/test_classes')) if group['method'] == 'ktester' else []
@@ -114,7 +115,7 @@ def items(exp, stage, config, state):
                 # KTester writes live calls under work/, then archives them.
                 # Deduplicate the live/archive copies by round and call number.
                 for base in (exp/'work/ktester'/group['name']/'rounds', root):
-                    for directory in rounds(base):
+                    for directory in rounds(base, group['rounds']['max']):
                         for path in directory.glob('raw-responses/*/call.json'):
                             if read_json(path, {}).get('status'):
                                 paths[str(path.relative_to(base))] = path
@@ -136,7 +137,7 @@ def items(exp, stage, config, state):
         provenance = adapter.provenance()
         filename = 'commits.csv' if stage == 'survive' else 'coverage-commits.csv'
         rows = csv_rows(exp/'results'/filename)
-        frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json', {}))
+        frozen = execution_groups(config, frozen_after_control(exp, config, {}))
         groups = list(frozen)
         alive = read_json(exp/'results/alive-entering.json', {})
         changes = read_json(exp/'results/commit-paths.json', {})
@@ -256,7 +257,7 @@ def generation_progress(exp, config, state):
         bases = (exp/'work/ktester'/name/'rounds', root) if group['method'] == 'ktester' else (root,)
         directories = {}
         for base in bases:
-            for directory in rounds(base):
+            for directory in rounds(base, group['rounds']['max']):
                 directories.setdefault(directory.name, []).append(directory)
         count = len(directories) if manifest.get('stopped') else max(group['rounds']['max'], len(directories))
         if group['method'] == 'ktester':

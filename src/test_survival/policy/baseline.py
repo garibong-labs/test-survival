@@ -1,4 +1,5 @@
 """Read-only baseline access, including pre-framework evidence."""
+from ..denominators import frozen_after_control
 from pathlib import Path
 import subprocess
 
@@ -30,9 +31,14 @@ class Baseline:
         self.config = load(source)
         self.repo = Path(self.config['project']['repo']).expanduser().resolve()
         self.groups = self.options['groups']
-        self.frozen = read_json(self.path/'results/frozen-denominators.json')
+        self.frozen = frozen_after_control(self.path, self.config)
         if self.frozen is None or set(self.groups) - self.frozen.keys():
             raise ConfigError('policies.groups must be frozen-denominators.json keys')
+        screened = read_json(self.path/'results/frozen-denominators.json')
+        retained = {g: {t['id'] for t in rows} for g, rows in self.frozen.items()}
+        self.control_exclusions = {g: {(t['class'], t['method']) for t in rows
+                                      if t['id'] not in retained[g]}
+                                   for g, rows in screened.items()}
         self.commits = read_csv(self.path/'results/commits.csv')
         self.curves = read_csv(self.path/'results/survival.csv')
         self.anchor = read_json(self.path/'results/anchor.json')

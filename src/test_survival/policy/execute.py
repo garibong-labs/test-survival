@@ -340,7 +340,8 @@ def survive(b, plan, pools, step):
     pools = {k:v for k,v in pools.items() if any(p['group'] == k[0] and p['index'] == k[1] for p in plan['pools'])}
     frozen = baseline_tests(b)
     runs = Runs(b, step)
-    runs.excluded = screening_exclusions(b.exp, pools, frozen, b.path, generator_methods(b))
+    runs.excluded = screening_exclusions(b.exp, pools, frozen, b.path, generator_methods(b),
+                                         round_limits={g['name']:g['rounds']['max'] for g in b.execution_config['generators']})
     for tests in [*frozen.values(), *pools.values()]:
         runs.register(tests)
     policies = {p['name']:p for p in b.options['set']}
@@ -459,14 +460,14 @@ def survive(b, plan, pools, step):
 GENERATOR_SCRATCH_DIRS = ('temp',)
 
 
-def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources"):
+def screening_exclusions(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources", *, round_limits=None):
     """Calculate exclusions and publish their summary at a measuring site."""
-    excluded, summary = screening_exclusion_details(exp, pools, frozen, baseline, methods, baseline_prefix)
+    excluded, summary = screening_exclusion_details(exp, pools, frozen, baseline, methods, baseline_prefix, round_limits=round_limits)
     write_json(exp/'results/policy/excluded-sources.json', summary)
     return excluded
 
 
-def screening_exclusion_details(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources"):
+def screening_exclusion_details(exp, pools, frozen=None, baseline=None, methods=None, baseline_prefix="results/policy/baseline-sources", *, round_limits=None):
     """Exclude rejected test candidates and generator scratch files from policy jobs.
 
     `pools` maps (group, index) to the pool's tests; `frozen` maps a group to its
@@ -494,7 +495,10 @@ def screening_exclusion_details(exp, pools, frozen=None, baseline=None, methods=
     def collect(label, group, records_root, snapshot_root, tests):
         kept = {(exp/t['file']).resolve() for t in tests}
         rejected = set()
-        for path in (records_root/'generated'/group).glob('round*/validation/*.json'):
+        from ..importer import rounds
+        paths = (path for directory in rounds(records_root/'generated'/group, (round_limits or {}).get(group))
+                 for path in (directory/'validation').glob('*.json'))
+        for path in paths:
             record = read_json(path)
             candidate = record.get('file')
             # Every screening record is a generated test candidate. One without a

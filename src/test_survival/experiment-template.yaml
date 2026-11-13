@@ -66,6 +66,7 @@ screen:
   matching: none                # none | subsample-to-dev
 
 survival:
+  # control_failures: stop       # optional: exclude records failed control methods and continues
   execution: legacy             # legacy | batch; batch ignores measurement retries and records scope lines only
   definition: cumulative-fixed-denominator   # only value
   flaky_rerun: 1

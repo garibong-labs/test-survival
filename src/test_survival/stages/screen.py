@@ -80,12 +80,12 @@ def run(exp,config):
     JavaMavenAdapter(exp,config).setup_runner()
     frozen={g['name']:[frozen_method(r) for r in read_csv(exp/denominator_file(g,i))] for i,g in enumerate(config['dev']['groups'])}
     from ..dev_results import imported_groups
-    frozen.update({name: item['frozen'] for name, item in imported_groups(exp, config).items()})
+    frozen.update({name: item.get('screened', item['frozen']) for name, item in imported_groups(exp, config).items()})
     validate_derived_subsets(config['dev']['groups'],frozen)
     first_dev=config['dev']['groups'][0]['name']
     for g in config['generators']:
         kept=[]
-        for directory in rounds(exp/'generated'/g['name']):
+        for directory in rounds(exp/'generated'/g['name'], g['rounds']['max']):
             kept,_=screen_round(exp,config,g,directory,kept)
         from .generated_exclusions import apply_exclusions
         kept = apply_exclusions(exp, config, g, kept)

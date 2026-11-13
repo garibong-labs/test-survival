@@ -251,6 +251,30 @@ With `dev.discovery: source`, `prepare` stops by default when a baseline test ca
 
 Use `range.skip_untouched` to skip irrelevant commits for every group while retaining commit indices. Use `survival.environment_errors` to retry failures whose messages match configured patterns.
 
+Use `survival.control_failures: exclude` to drop methods that fail the control
+at the anchor instead of stopping the experiment:
+
+```yaml
+survival:
+  control_failures: exclude     # stop (default) | exclude
+```
+
+Control still measures every frozen method and preserves its full observations
+in `results/control-at-t.json`. Exclusion writes `results/control-excluded.json`
+(group to method IDs, including empty groups) and `results/control-excluded.csv`
+(group, class, method, file, state, first message line). `control-at-t.md` and the
+report disclose each group's excluded count and denominator used. The screen
+artifact `results/frozen-denominators.json` stays unchanged; subsequent survival,
+coverage, reports, progress, Dev result imports and policy baseline snapshots use
+the filtered population. Policy runs reuse baseline control rather than running
+another control; regeneration pools also omit its excluded class/method pairs.
+
+Omitting this key keeps the validated configuration and every stage hash unchanged.
+Writing it changes survive, cover and report hashes, leaving control and all earlier
+hashes unchanged. With `exclude`, a failed batch control resumes from its compatible
+saved anchor measurement without re-executing methods, including failures without
+coverage lines. The default `stop` still raises when any frozen method fails.
+
 For a baseline measured through the policy execution path, set:
 
 ```yaml
@@ -703,6 +727,12 @@ failed subtrees retained; see [scratch cleanup](docs/result-formats.md#successfu
 After KTester cleanup, increasing `rounds.max` reuses completed archived rounds
 without repeating model calls. Report regeneration refreshes the retained
 completion record, including when an older cleanup removed dataset metadata.
+
+Lowering `rounds.max` uses only archived rounds numbered at or below the new
+maximum. Completed retained rounds are reused without model calls or credential
+access; `rounds.json` is rebuilt with the active rounds and stopping reason.
+Higher round archives stay untouched on disk as evidence and are left out of
+screening, funnels, frozen denominators, policy pools, progress and reports.
 
 Compiler history uses one append-only gzip journal per index instead of one
 folder per javac call. Start/finish records preserve interrupted calls, failed

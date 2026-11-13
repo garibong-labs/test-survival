@@ -5,6 +5,7 @@ import yaml
 
 from ..io import read_csv,read_json,atomic_text
 from ..config import expand_path
+from ..denominators import denominator_counts
 
 
 def coverage(path,groups):
@@ -22,10 +23,11 @@ def coverage(path,groups):
 
 
 def unified(path):
-    rows=read_csv(path/'results/survival.csv');denoms=read_json(path/'results/denominators.json')
+    config=yaml.safe_load((path/'experiment.yaml').read_text()) if (path/'experiment.yaml').exists() else {}
+    rows=read_csv(path/'results/survival.csv')
+    denoms=denominator_counts(path, {'survival':config.get('survival', {})}) if config else read_json(path/'results/denominators.json')
     denoms={g:n for g,n in denoms.items() if rows and g+'_alive' in rows[0]}
     groups={g:[{'x':int(r['index']),'alive':int(r[g+'_alive'])} for r in rows] for g in denoms}
-    config=yaml.safe_load((path/'experiment.yaml').read_text()) if (path/'experiment.yaml').exists() else {}
     anchor=read_json(path/'results/anchor.json',{})
     commits=read_csv(path/'results/commits.csv') if (path/'results/commits.csv').exists() else rows[1:]
     return dict(project=Path(config.get('project',{}).get('repo',path.parents[1])).name,language=config.get('project',{}).get('language','java'),anchor=config.get('anchor',anchor.get('tag',rows[0]['sha'])),commit_count=len(commits),denominators=denoms,groups=groups,coverage=coverage(path,groups))

@@ -10,7 +10,7 @@ from test_survival.stages.generated_exclusions import apply_exclusions
 
 
 def fixture(exp, *, ktester=False, selectors=()):
-    group = dict(name='g', method='ktester' if ktester else 'ouedraogo',
+    group = dict(name='g', rounds={'max':4}, method='ktester' if ktester else 'ouedraogo',
                  impl='author-tool' if ktester else 'native', **({'tool_path':'/unused'} if ktester else {}))
     config = validate(dict(name='test', project={'repo':'/unused'}, anchor='t', generators=[group],
                            screen={'exclude':{'g':list(selectors)}}))
@@ -104,8 +104,9 @@ def test_audit_discloses_failed_candidates_without_counting_them_as_removed(tmp_
     assert read_json(tmp_path/'results/generated-exclusions.json')['g']['excluded'] == 0
 
 
+@pytest.mark.parametrize('control_excluded', [False, True])
 @pytest.mark.parametrize('cached', [True, False])
-def test_generated_policy_pool_screens_then_filters(tmp_path, monkeypatch, cached):
+def test_generated_policy_pool_screens_then_filters(tmp_path, monkeypatch, cached, control_excluded):
     from test_survival.policy import pools
     pool_exp = tmp_path/'results/policy/pools/g/2'
     config, _, rows = fixture(pool_exp, selectors=['p.A'])
@@ -116,6 +117,7 @@ def test_generated_policy_pool_screens_then_filters(tmp_path, monkeypatch, cache
         write_json(pool_exp/'generated/g'/row['round']/'generation.json',
                    [dict(file=row['file'], target_class='p.Production')])
     b = SimpleNamespace(exp=tmp_path, execution_config=config, scope={'classes':scope},
+                        control_exclusions={'g':{('p.C', 'works')}} if control_excluded else {},
                         by_index={2:{'date':'2026-01-01'}})
     write_json(tmp_path/'state/run.json', dict(status='running', run_id='fixture'))
     monkeypatch.setattr(JavaMavenAdapter, 'build', lambda *a: {'build':'ok'})
@@ -131,7 +133,7 @@ def test_generated_policy_pool_screens_then_filters(tmp_path, monkeypatch, cache
     monkeypatch.setattr(JavaMavenAdapter, 'worker', worker)
     monkeypatch.setattr(pools, 'generate', lambda *a, **kw:pytest.fail('No model calls'))
     pool = pools.build_pool(b, dict(group='g', index=2, sha='sha'), 0)
-    assert [t['class'] for t in pool] == ['p.C']
+    assert [t['class'] for t in pool] == ([] if control_excluded else ['p.C'])
     assert read_csv(pool_exp/'results/generated-exclusions.csv')[0]['class'] == 'p.A'
     assert read_json(pool_exp/'funnel.json')[-1]['final_kept'] == 1
     assert calls == ([] if cached else [rows[0]['file']])

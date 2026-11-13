@@ -89,12 +89,16 @@ def test_per_policy_switch_preserves_pool_digest_and_plan_bytes(baseline):
     assert Steps(b,saved).digest==old.digest
 
 
+@pytest.mark.parametrize('control_excluded', [False, True])
 @pytest.mark.parametrize('discovery', [None, 'source'])
 @pytest.mark.parametrize('exclude,expected', [([], ['works', 'runaway']), (['ATest#runaway'], ['works']), (['ATest'], [])])
-def test_source_pool_exclusions_select_methods_and_audit(baseline, monkeypatch, discovery, exclude, expected):
+def test_source_pool_exclusions_select_methods_and_audit(baseline, monkeypatch, discovery, exclude, expected, control_excluded):
     exp, config, _ = baseline
     b = Baseline(exp, config)
     b.execution_config['dev']['exclude'] = exclude
+    if control_excluded:
+        b.control_exclusions = {'dev-scope':{('ATest','runaway')}}
+        expected = [n for n in expected if n != 'runaway']
     if discovery is None:
         b.execution_config['dev'].pop('discovery', None)
     else:
@@ -116,15 +120,15 @@ def test_source_pool_exclusions_select_methods_and_audit(baseline, monkeypatch, 
         jobs.append(job)
         assert [t['method'] for t in job['methods']] == expected
         if job['action'] == 'policy-cover':
-            assert job['full_suite'] is (not bool(exclude))
-            assert job.get('candidate_suite', False) is bool(exclude)
+            assert job['full_suite'] is (not bool(exclude or control_excluded))
+            assert job.get('candidate_suite', False) is bool(exclude or control_excluded)
         return dict(methods=[dict(t, state='pass', lines=[['src/main/java/A.java',1]]) for t in job['methods']],
                     universe=[['src/main/java/A.java',1]])
     monkeypatch.setattr(JavaMavenAdapter, 'worker', worker)
     pool = pools.build_pool(b, dict(group='dev-scope', index=2, sha=b.by_index[2]['sha']), 0)
     assert [t['method'] for t in pool] == expected
     audit = read_csv(exp/'results/policy/pools/dev-scope/2/dev/dev-not-run-by-build.csv')
-    assert [r['method'] for r in audit] == [n for n in ('works','runaway') if n not in expected]
+    assert [r['method'] for r in audit] == [n for n in ('works','runaway') if n not in expected and not (control_excluded and n == 'runaway')]
     assert all(r['reason'] == 'excluded-by-configuration' for r in audit)
     assert any(j['action']=='policy-cover' for j in jobs) is bool(expected)
 
