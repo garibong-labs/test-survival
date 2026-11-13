@@ -21,7 +21,7 @@ def apply_exclusions(exp, config, group, kept):
     denied = {identity(t) for t in removed}
     retained = [t for t in kept if identity(t) not in denied]
     audit = []; matched = set(); recorded = set()
-    directories = rounds(exp/'generated'/name)
+    directories = rounds(exp/'generated'/name, group['rounds']['max'])
     for directory in directories:
         for path in sorted((directory/'validation').glob('*.json')) if selectors else []:
             record = read_json(path)

@@ -10,7 +10,7 @@ from test_survival.stages.generated_exclusions import apply_exclusions
 
 
 def fixture(exp, *, ktester=False, selectors=()):
-    group = dict(name='g', method='ktester' if ktester else 'ouedraogo',
+    group = dict(name='g', rounds={'max':4}, method='ktester' if ktester else 'ouedraogo',
                  impl='author-tool' if ktester else 'native', **({'tool_path':'/unused'} if ktester else {}))
     config = validate(dict(name='test', project={'repo':'/unused'}, anchor='t', generators=[group],
                            screen={'exclude':{'g':list(selectors)}}))

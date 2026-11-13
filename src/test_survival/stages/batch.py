@@ -63,7 +63,8 @@ class Measurements:
         self.scope = read_json(exp/'population/scope.json')['classes']
         methods = {g['name']: g['method'] for g in config['generators']}
         self.excluded, self.exclusion_summary = screening_exclusion_details(exp, {}, self.tests, exp,
-                                            {g: methods.get(g, 'dev') for g in self.tests}, baseline_prefix='')
+                                            {g: methods.get(g, 'dev') for g in self.tests}, baseline_prefix='',
+                                            round_limits={g['name']:g['rounds']['max'] for g in config['generators']})
         self.runner = self.adapter.provenance()
         inputs = dict(version=1, implementation=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), coverage=COVERAGE_VERSION, tests=self.tests,
                       scope=self.scope, excluded=sorted(self.excluded), runner=self.runner,

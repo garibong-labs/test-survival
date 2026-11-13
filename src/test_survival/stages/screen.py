@@ -85,7 +85,7 @@ def run(exp,config):
     first_dev=config['dev']['groups'][0]['name']
     for g in config['generators']:
         kept=[]
-        for directory in rounds(exp/'generated'/g['name']):
+        for directory in rounds(exp/'generated'/g['name'], g['rounds']['max']):
             kept,_=screen_round(exp,config,g,directory,kept)
         from .generated_exclusions import apply_exclusions
         kept = apply_exclusions(exp, config, g, kept)

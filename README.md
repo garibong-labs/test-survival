@@ -728,6 +728,12 @@ After KTester cleanup, increasing `rounds.max` reuses completed archived rounds
 without repeating model calls. Report regeneration refreshes the retained
 completion record, including when an older cleanup removed dataset metadata.
 
+Lowering `rounds.max` uses only archived rounds numbered at or below the new
+maximum. Completed retained rounds are reused without model calls or credential
+access; `rounds.json` is rebuilt with the active rounds and stopping reason.
+Higher round archives stay untouched on disk as evidence and are left out of
+screening, funnels, frozen denominators, policy pools, progress and reports.
+
 Compiler history uses one append-only gzip journal per index instead of one
 folder per javac call. Start/finish records preserve interrupted calls, failed
 compiler output stays complete, and legacy event folders remain readable. See

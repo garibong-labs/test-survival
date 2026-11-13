@@ -16,8 +16,10 @@ def round_key(path):
     return (int(match[1]),int(match[2] or (1 if '-retry' in path.name else 0))) if match else (10**9,0)
 
 
-def rounds(group_dir):
-    return sorted((p for p in group_dir.glob('round*') if p.is_dir() and re.fullmatch(r'round\d+(?:-retry\d*)?',p.name)),key=round_key)
+def rounds(group_dir, maximum=None):
+    """List active archives without deleting evidence above the configured cap."""
+    return sorted((p for p in group_dir.glob('round*') if p.is_dir() and re.fullmatch(r'round\d+(?:-retry\d*)?',p.name)
+                   and (maximum is None or round_key(p)[0] <= maximum)),key=round_key)
 
 
 def import_experiment(exp, source, what, *, display=None):
@@ -60,7 +62,7 @@ def import_experiment(exp, source, what, *, display=None):
                         if f.is_file():
                             copy(f,dest/f.relative_to(src))
                     entries=[]
-                    for ordinal,directory in enumerate(rounds(dest),1):
+                    for ordinal,directory in enumerate(rounds(dest, g['rounds']['max']),1):
                         from .stages.screen import normalize_funnel
                         funnel=normalize_funnel(read_json(directory/'funnel.json'))
                         if funnel is None:
