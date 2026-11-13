@@ -87,6 +87,8 @@ def build_pool(b, point, dev_target):
         kept = []
         for directory in rounds(exp/'generated'/group):
             kept, _ = screen_round(exp, config, g, directory, kept)
+        from ..stages.generated_exclusions import apply_exclusions
+        kept = apply_exclusions(exp, config, g, kept)
         method = g['method']
         write_json(exp/'funnel.json', [normalize_funnel(read_json(d/'funnel.json')) for d in rounds(exp/'generated'/group)])
     else:

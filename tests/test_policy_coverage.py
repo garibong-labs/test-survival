@@ -25,7 +25,7 @@ def test_includes_pattern(classes, expected):
 
 
 @pytest.mark.parametrize('failure', [None, 'exit', 'timeout'])
-@pytest.mark.parametrize('override', [None, '3g'])
+@pytest.mark.parametrize('override', [None, '2g', '3g'])
 def test_chunks_preserve_successful_coverage_and_limit_fallback(tmp_path, monkeypatch, failure, override):
     if override:
         monkeypatch.setenv('SURVIVAL_JVM_JACOCO', override)
@@ -76,7 +76,7 @@ def test_chunks_preserve_successful_coverage_and_limit_fallback(tmp_path, monkey
             assert t['lines'] == [['src/main/java/p/Production.java', 1], ['src/main/java/p/Production.java', 2]]
     assert result['universe'] == [['src/main/java/p/Production.java', 1], ['src/main/java/p/Production.java', 2]]
     assert result['jvm'] == dict(configured='1g', effective=override or '1g',
-                                 environment={'SURVIVAL_JVM_JACOCO':'3g'} if override else {})
+                                 environment={'SURVIVAL_JVM_JACOCO':override} if override else {})
     assert read_json(tmp_path/'work/job/coverage-jvm.json')['jvm'] == result['jvm']
     assert w.JVM == {'jacoco':'1g'}
     assert [r['groups'] for r in result['runs']] == [8, 8, 2]
@@ -100,14 +100,14 @@ def test_heap_override_is_forwarded_and_recorded_without_hash_changes(baseline, 
         return dict(exit_code=0)
     monkeypatch.setattr(adapter.runner, 'execute', execute)
     monkeypatch.setattr(adapter, 'build', lambda *args: {'build':'ok'})
-    for override in (None, '3g'):
+    for override in (None, '2g', '3g'):
         if override:
             monkeypatch.setenv('SURVIVAL_JVM_JACOCO', override)
         adapter.worker(dict(action='policy-survive', index=1, sha='sha1', methods=[], work='work/heap'))
         evidence = read_json(exp/'work/heap-job.json')
         assert evidence['jvm'] == before['runner']['jvm']
-        assert evidence.get('coverage_environment', {}) == ({'SURVIVAL_JVM_JACOCO':'3g'} if override else {})
-        assert calls[-1][:2] == (['env', 'SURVIVAL_JVM_JACOCO=3g'] if override else ['python3', str(Path(policy_coverage.__file__).with_name('java_worker.py'))])
+        assert evidence.get('coverage_environment', {}) == ({'SURVIVAL_JVM_JACOCO':override} if override else {})
+        assert calls[-1][:2] == (['env', 'SURVIVAL_JVM_JACOCO='+override] if override else ['python3', str(Path(policy_coverage.__file__).with_name('java_worker.py'))])
         assert hashes() == original_hashes
         assert b.execution_config == before
 

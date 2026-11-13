@@ -77,7 +77,7 @@ def screen_round(exp,config,g,directory,prior=()):
 
 
 def run(exp,config):
-    adapter=JavaMavenAdapter(exp,config);adapter.setup_runner()
+    JavaMavenAdapter(exp,config).setup_runner()
     frozen={g['name']:[frozen_method(r) for r in read_csv(exp/denominator_file(g,i))] for i,g in enumerate(config['dev']['groups'])}
     from ..dev_results import imported_groups
     frozen.update({name: item['frozen'] for name, item in imported_groups(exp, config).items()})
@@ -87,6 +87,8 @@ def run(exp,config):
         kept=[]
         for directory in rounds(exp/'generated'/g['name']):
             kept,_=screen_round(exp,config,g,directory,kept)
+        from .generated_exclusions import apply_exclusions
+        kept = apply_exclusions(exp, config, g, kept)
         if config['screen']['matching']=='subsample-to-dev':
             kept=subsample(kept,len(frozen[first_dev]),g['name'])
         write_csv(exp/f'results/llm-{g["name"]}-denominator.csv',[{k:r[k] for k in FIELDS} for r in kept],FIELDS)
