@@ -223,6 +223,9 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
             if config['survival'].get('execution') == 'batch' and previous.get('status') == 'completed' and previous.get('config_hash') == digest and handlers is None:
                 from .stages.batch import stage_complete
                 batch_current = stage_complete(exp, config, current)
+            if current == 'control' and handlers is None:
+                from .denominators import control_policy_current
+                batch_current = batch_current and control_policy_current(exp, config)
             if batch_current and not force and previous.get('status') == 'completed' and previous.get('config_hash') == digest:
                 log(exp, f'{current}: already completed; skipped', config)
                 if handlers is None:
@@ -334,7 +337,8 @@ def status(exp, config, *, display=None):
         rows.append(f'Process {active.get("pid")}: {"alive" if process_alive(active.get("pid")) else "stopped"}')
     elif bg and process_alive(bg.get('pid')):
         rows.append(f'Process {bg["pid"]}: alive')
-    denominators = read_json(exp / 'results/denominators.json')
+    from .denominators import denominator_counts
+    denominators = denominator_counts(exp, config)
     if denominators is not None:
         from .config import execution_groups
         denominators = execution_groups(config, denominators)

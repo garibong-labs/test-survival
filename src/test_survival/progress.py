@@ -1,4 +1,5 @@
 """Read-only stage progress from existing state and evidence records."""
+from .denominators import frozen_after_control
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
@@ -136,7 +137,7 @@ def items(exp, stage, config, state):
         provenance = adapter.provenance()
         filename = 'commits.csv' if stage == 'survive' else 'coverage-commits.csv'
         rows = csv_rows(exp/'results'/filename)
-        frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json', {}))
+        frozen = execution_groups(config, frozen_after_control(exp, config, {}))
         groups = list(frozen)
         alive = read_json(exp/'results/alive-entering.json', {})
         changes = read_json(exp/'results/commit-paths.json', {})

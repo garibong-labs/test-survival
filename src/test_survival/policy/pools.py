@@ -61,6 +61,7 @@ def build_pool(b, point, dev_target):
     write_json(exp/'state/run-owner.json', dict(experiment=str(b.exp), run_id=owner['run_id']))
     config = pool_config(b, point)
     g = next((g for g in config['generators'] if g['name'] == group), None)
+    control_exclusions = getattr(b, 'control_exclusions', {}).get(group, set())
     adapter = JavaMavenAdapter(exp, config)
     write_json(exp/'results/anchor.json', dict(sha=point['sha'], date=b.by_index[index]['date']))
     if adapter.build(0, point['sha'])['build'] != 'ok':
@@ -89,12 +90,14 @@ def build_pool(b, point, dev_target):
             kept, _ = screen_round(exp, config, g, directory, kept)
         from ..stages.generated_exclusions import apply_exclusions
         kept = apply_exclusions(exp, config, g, kept)
+        kept = [t for t in kept if (t['class'], t['method']) not in control_exclusions]
         method = g['method']
         write_json(exp/'funnel.json', [normalize_funnel(read_json(d/'funnel.json')) for d in rounds(exp/'generated'/group)])
     else:
         method = 'dev'
         members = []
-        candidates = [r for r in tests['methods'] if r['kind']]
+        candidates = [r for r in tests['methods'] if r['kind']
+                      and (r['class'], r['method']) not in control_exclusions]
         from ..adapters.build_discovery import discover
         candidates = discover(adapter, candidates)
         for row in candidates:
@@ -106,7 +109,7 @@ def build_pool(b, point, dev_target):
                      file_hash=hashlib.sha256((exp/t['file']).read_bytes()).hexdigest())
             members.append(t)
         # Class selectors would execute excluded siblings of retained methods.
-        candidate_suite = config['dev'].get('discovery', 'source') == 'build' or bool(config['dev'].get('exclude'))
+        candidate_suite = config['dev'].get('discovery', 'source') == 'build' or bool(config['dev'].get('exclude')) or bool(control_exclusions)
         full = coverage(adapter, 0, members, 'dev-full', full_suite=not candidate_suite, candidate_suite=candidate_suite)
         scope_files = {c['file'] for c in scope}
         observed = {(m['class'],m['method']):m for m in full['methods']}

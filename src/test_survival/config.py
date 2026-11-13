@@ -214,7 +214,7 @@ SCHEMA = {
     'generators': Field(list, []),
     'screen': {'stable_runs': integer(3), 'dedup': enum('exact-body', 'exact-body'),
                'matching': enum('none', 'none', 'subsample-to-dev'), 'exclude': Field(dict, {})},
-    'survival': {'selection': enum('all', 'all', 'affected'), 'execution': enum('legacy', 'legacy', 'batch'), 'definition': enum('cumulative-fixed-denominator', 'cumulative-fixed-denominator'),
+    'survival': {'control_failures': enum('stop', 'stop', 'exclude'), 'selection': enum('all', 'all', 'affected'), 'execution': enum('legacy', 'legacy', 'batch'), 'definition': enum('cumulative-fixed-denominator', 'cumulative-fixed-denominator'),
                  'flaky_rerun': integer(1, 0), 'build_fail': enum('carry-over', 'carry-over'),
                  'environment_errors': {'patterns': Field(list, []), 'max_reruns': integer(3, 0),
                                         'backoff_seconds': Field(float, 5, minimum=0)}},
@@ -434,6 +434,8 @@ def validate(data):
                 raise ConfigError(prefix + 'params.prompts: allowed values: ZSL, FSL, CoT, ToT, GToT; list must be nonempty')
         generators.append(g)
     c['generators'] = generators
+    if 'control_failures' not in data.get('survival', {}):
+        c['survival'].pop('control_failures', None)
     if 'exclude' not in data.get('screen', {}):
         c['screen'].pop('exclude')
     else:
@@ -523,6 +525,8 @@ def record_runner_inputs(runner):
 def survival_inputs(config):
     """Resolved measurement settings with the historical legacy shape."""
     result = dict(config['survival'])
+    # Admission after control does not change a method's measurement.
+    result.pop('control_failures', None)
     if result.get('selection') == 'all': result.pop('selection', None)
     if result.get('execution', 'legacy') == 'legacy':
         result.pop('execution', None)

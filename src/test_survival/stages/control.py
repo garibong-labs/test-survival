@@ -1,3 +1,4 @@
+from ..denominators import finish_control
 from ..config import execution_groups
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json, write_json, atomic_text
@@ -25,8 +26,5 @@ def run(exp,config):
         records[group]=dict(requested=len(rows),passed=sum(r['state']=='pass' for r in raw['methods']),failures=[r for r in raw['methods'] if r['state']!='pass'])
         from ..panel import notify
         notify(exp)
-    write_json(exp/'results/control-at-t.json',records)
-    atomic_text(exp/'results/control-at-t.md','# Control at t\n\n'+'\n'.join(f'- {g}: {r["passed"]}/{r["requested"]} passed.' for g,r in records.items())+'\n')
-    if any(r['failures'] for r in records.values()):
-        raise RuntimeError('Frozen methods failed the control at t')
-    return 'All frozen methods passed at the anchor'
+    excluded = finish_control(exp, config, records)
+    return f'Excluded {excluded} frozen methods after control at t' if excluded else 'All frozen methods passed at the anchor'

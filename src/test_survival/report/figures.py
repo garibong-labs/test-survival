@@ -1,10 +1,11 @@
+from ..denominators import denominator_counts, control_excluded
 from ..config import group_names,group_labels
 from html import escape
 from ..io import read_csv,read_json,atomic_text
 
 
 def build(exp,config):
-    rows=read_csv(exp/'results/survival.csv');counts={g:n for g,n in read_json(exp/'results/denominators.json').items() if g in group_names(config)}
+    rows=read_csv(exp/'results/survival.csv');counts={g:n for g,n in denominator_counts(exp, config).items() if g in group_names(config)}
     labels=group_labels(config)
     colors=['#2563eb','#dc2626','#059669','#9333ea','#d97706','#0891b2']
     width,height=1000,550;left,top,right,bottom=75,60,960,430

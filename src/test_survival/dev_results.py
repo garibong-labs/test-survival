@@ -7,6 +7,7 @@ import shutil
 
 import yaml
 
+from .denominators import frozen_after_control
 from .config import survival_inputs, MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate, execution_groups
 from .io import compressed_result, logical_glob, resolve_path, result_exists, result_hash, now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
@@ -110,6 +111,7 @@ def identity(exp, config):
                 dev_tree_sha256=tree_hash(exp/'dev/src-test-t'),
                 measurement_settings=dict(project={k: v for k, v in config['project'].items() if k != 'repo'},
                                           runner=runner_inputs(config['runner']), survival=survival_inputs(config),
+                                          control_failures=config['survival'].get('control_failures', 'stop'),
                                           stable_runs=config['dev']['stable_runs'], unmapped=config['dev']['unmapped'], discovery=config['dev'].get('discovery', 'source'),
                                           coverage=config['coverage']))
     if config['survival'].get('execution') == 'batch':
@@ -131,8 +133,8 @@ def _divergence(actual, expected, prefix=''):
 
 def check_identity(actual, expected, *, advice=''):
     # Manifests written before dev.unmapped used the default error policy.
-    actual = {**actual, 'measurement_settings': {'unmapped': 'error', 'discovery': 'source', **actual.get('measurement_settings', {})}}
-    expected = {**expected, 'measurement_settings': {'unmapped': 'error', 'discovery': 'source', **expected.get('measurement_settings', {})}}
+    actual = {**actual, 'measurement_settings': {'unmapped': 'error', 'discovery': 'source', 'control_failures': 'stop', **actual.get('measurement_settings', {})}}
+    expected = {**expected, 'measurement_settings': {'unmapped': 'error', 'discovery': 'source', 'control_failures': 'stop', **expected.get('measurement_settings', {})}}
     labels = dict(project_repo='project repo', anchor_sha='anchor sha', commit_shas='commit sha sequence',
                   skip_untouched='skip_untouched', dev_tree_sha256='dev/src-test-t tree hash',
                   measurement_settings='result-affecting measurement settings', resolved_scope='resolved coverage scope')
@@ -158,7 +160,8 @@ def import_results(exp, source, config):
                and g['denominator'] == source_groups[g['name']][1]['denominator']]
     if not matched:
         raise PipelineError('dev-results: no Dev groups have matching names and denominator rules')
-    frozen = read_json(source/'results/frozen-denominators.json', {})
+    frozen = frozen_after_control(source, source_config, {})
+    screened = read_json(source/'results/frozen-denominators.json', {})
     plan, groups = {}, {}
     if config['dev'].get('discovery', 'source') == 'build':
         discovery = 'results/dev-build-discovery.json'
@@ -203,6 +206,8 @@ def import_results(exp, source, config):
         if control not in plan:
             raise PipelineError(f'dev-results: missing control result for {name} in {source}')
         groups[name] = dict(denominator=group['denominator'], frozen=frozen[name], files=group_paths, raw_folder=target_folder)
+        if screened[name] != frozen[name]:
+            groups[name]['screened'] = screened[name]
     for target, path in plan.items():
         if not result_exists(path):
             raise PipelineError(f'dev-results: missing source file {path}')
@@ -223,7 +228,7 @@ def import_results(exp, source, config):
         (exp/UNMAPPED_AUDIT).unlink(missing_ok=True)
     refresh_unmapped_metadata(exp)
     destination_frozen = read_json(exp/'results/frozen-denominators.json', {})
-    destination_frozen.update({name: record['frozen'] for name, record in groups.items()})
+    destination_frozen.update({name: record.get('screened', record['frozen']) for name, record in groups.items()})
     write_json(exp/'results/frozen-denominators.json', destination_frozen)
     counts = read_json(exp/'results/denominators.json', {})
     counts.update({name: len(record['frozen']) for name, record in groups.items()})
@@ -254,11 +259,13 @@ def imported_groups(exp, config, stage=None, *, provenance=None):
         return {}
     check_identity(identity(exp, config), record['compatibility'], advice=DETACH)
     check_unmapped_audit(exp, record)
-    frozen = read_json(exp/'results/frozen-denominators.json', {})
+    frozen = (read_json(exp/'results/frozen-denominators.json', {}) if stage == 'control'
+              else frozen_after_control(exp, config, {}))
     for name, item in groups.items():
         if current[name]['denominator'] != item['denominator']:
             raise PipelineError(f'dev-results refused: denominator rule changed for {name}')
-        if stage and frozen.get(name) != item['frozen']:
+        expected = item.get('screened', item['frozen']) if stage == 'control' else item['frozen']
+        if stage and frozen.get(name) != expected:
             raise PipelineError(f'dev-results refused: frozen denominator changed for {name}; rerun screen')
         if stage:
             folders = {'control': ('control',), 'survive': ('raw', 'raw-derived'),

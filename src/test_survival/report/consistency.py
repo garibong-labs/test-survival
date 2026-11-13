@@ -1,3 +1,4 @@
+from ..denominators import denominator_counts, control_excluded
 from ..config import group_names,group_labels
 from ..rules.dev_denominator import unmapped_note
 from ..stages.survive import raw_folder
@@ -12,12 +13,15 @@ def build(exp,config):
     groups=group_names(config)
     labels=group_labels(config)
     survival=read_json(exp/'results/survival-consistency.json');coverage=read_json(exp/'results/coverage-consistency.json')
-    counts={g:n for g,n in read_json(exp/'results/denominators.json').items() if g in groups};curves=read_csv(exp/'results/survival.csv')
+    counts={g:n for g,n in denominator_counts(exp, config).items() if g in groups};curves=read_csv(exp/'results/survival.csv')
     final={g:int(curves[-1][g+'_alive']) for g in groups}
     raw_paths={g:[p for row in curves[1:] if int(row['index']) not in survival.get('build_fail_indices', []) if result_exists(p:=exp/f'results/{raw_folder(g,config,imported)}/{row["index"]}-{g}.json')] for g in groups}
     text='# Consistency checks\n\n```json\n'+json.dumps(survival,indent=2)+'\n```\n'
     excluded=read_json(exp/'results/anchor.json',{}).get('dev_unmapped_excluded',0)
     notes=[unmapped_note(excluded)] if excluded else []
+    control_counts = {g: len(ids) for g, ids in control_excluded(exp, config).items()}
+    notes.extend(f'{g}: excluded after control at t: {n}; denominator used: {counts[g]}'
+                 for g, n in control_counts.items() if g in counts)
     from ..stages.generated_exclusions import exclusion_notes
     generated_exclusions = read_json(exp/'results/generated-exclusions.json', {})
     notes.extend(exclusion_notes(generated_exclusions))
@@ -50,6 +54,8 @@ def build(exp,config):
         summary['selection_control'] = {g:selection_counts(read_json(exp/f'results/control/0-{g}.json', {}).get('methods', [])) for g in groups}
         summary.update(execution='batch', coverage_scope='scope', ignored_settings=['survival.flaky_rerun','survival.environment_errors'])
     summary.update(dev_unmapped_excluded=excluded,notes=notes)
+    if control_counts:
+        summary['control_excluded'] = control_counts
     if generated_exclusions:
         summary['generated_exclusions'] = generated_exclusions
     discovery = read_json(exp/'results/dev-build-discovery.json')
