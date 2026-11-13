@@ -39,9 +39,9 @@ def test_cached_screen_filters_after_cross_round_dedup_and_audits(tmp_path, monk
     records = list((tmp_path/'generated').glob('*/round*/validation/*.json'))
     before = {p:p.read_bytes() for p in records}
     def unexpected(*args, **kwargs):
-        pytest.fail('Exclusion aggregation must not set up Docker or execute tests')
-    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', unexpected)
-    monkeypatch.setattr(JavaMavenAdapter, 'screen_file', unexpected)
+        pytest.fail('Fingerprint-matching screening records must not execute tests')
+    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda *a: None)
+    monkeypatch.setattr(JavaMavenAdapter, 'worker', unexpected)
     screen.run(tmp_path, config)
     frozen = read_json(tmp_path/'results/frozen-denominators.json')['g']
     assert [t['class'] for t in frozen] == ['p.C']  # B is not promoted after excluding A.
@@ -73,19 +73,27 @@ def test_ktester_alias_and_method_selector_keep_sibling(tmp_path):
     assert apply_exclusions(tmp_path, config, group, rows[:1]) == rows[:1]
 
 
-@pytest.mark.parametrize('damage', ['missing', 'source', 'repeats', 'wrong-file'])
-def test_cached_screen_stops_instead_of_reexecuting(tmp_path, monkeypatch, damage):
-    config, _, _ = fixture(tmp_path, selectors=['p.A'])
+@pytest.mark.parametrize('damage', ['fresh', 'missing', 'source', 'repeats'])
+def test_uncached_or_changed_file_is_screened_with_exclusions(tmp_path, monkeypatch, damage):
+    config, _, rows = fixture(tmp_path, selectors=['p.A'])
     record = tmp_path/'generated/g/round1/validation/0.json'
-    if damage == 'missing': record.unlink()
+    if damage == 'fresh':
+        for path in (tmp_path/'generated').glob('*/round*/validation/*.json'):
+            path.unlink()
+    elif damage == 'missing': record.unlink()
     elif damage == 'source': (tmp_path/'generated/g/round1/sources/A.java').write_text('changed')
     elif damage == 'repeats': config['screen']['stable_runs'] += 1
-    else:
-        raw = read_json(record); raw['file'] = 'other.java'; write_json(record, raw)
-    monkeypatch.setattr(JavaMavenAdapter, 'screen_file', lambda *a:pytest.fail('No test re-execution'))
-    with pytest.raises(RuntimeError, match='compatible cached screening evidence'):
-        screen.run(tmp_path, config)
-    assert not (tmp_path/'results/frozen-denominators.json').exists()
+    calls = []
+    def worker(self, job):
+        calls.append(job['file'])
+        return dict(file=job['file'], methods=[next(r for r in rows if r['file'] == job['file'])],
+                    compile={'exit_code':0})
+    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda *a: None)
+    monkeypatch.setattr(JavaMavenAdapter, 'worker', worker)
+    screen.run(tmp_path, config)
+    assert set(calls) == {r['file'] for r in (rows if damage in ('fresh', 'repeats') else rows[:1])}
+    assert [t['class'] for t in read_json(tmp_path/'results/frozen-denominators.json')['g']] == ['p.C']
+    assert read_csv(tmp_path/'results/generated-exclusions.csv')[0]['class'] == 'p.A'
 
 
 def test_audit_discloses_failed_candidates_without_counting_them_as_removed(tmp_path):
@@ -96,10 +104,13 @@ def test_audit_discloses_failed_candidates_without_counting_them_as_removed(tmp_
     assert read_json(tmp_path/'results/generated-exclusions.json')['g']['excluded'] == 0
 
 
-def test_generated_policy_pool_uses_cached_exclusion_filter(tmp_path, monkeypatch):
+@pytest.mark.parametrize('cached', [True, False])
+def test_generated_policy_pool_screens_then_filters(tmp_path, monkeypatch, cached):
     from test_survival.policy import pools
     pool_exp = tmp_path/'results/policy/pools/g/2'
     config, _, rows = fixture(pool_exp, selectors=['p.A'])
+    if not cached:
+        (pool_exp/'generated/g/round1/validation/0.json').unlink()
     scope = [dict(file='src/main/java/Production.java', **{'class':'p.Production'})]
     for row in rows:
         write_json(pool_exp/'generated/g'/row['round']/'generation.json',
@@ -112,17 +123,24 @@ def test_generated_policy_pool_uses_cached_exclusion_filter(tmp_path, monkeypatc
     monkeypatch.setattr(JavaMavenAdapter, 'list_production_methods',
                         lambda *a: dict(classes={'p.Production':{}}, methods=[]))
     monkeypatch.setattr(JavaMavenAdapter, 'list_test_methods', lambda *a: {'methods':[]})
-    monkeypatch.setattr(JavaMavenAdapter, 'screen_file', lambda *a:pytest.fail('No test re-execution'))
+    calls = []
+    def worker(self, job):
+        calls.append(job['file'])
+        assert not cached and job['file'] == rows[0]['file']
+        return dict(file=job['file'], methods=rows[:1], compile={'exit_code':0})
+    monkeypatch.setattr(JavaMavenAdapter, 'worker', worker)
     monkeypatch.setattr(pools, 'generate', lambda *a, **kw:pytest.fail('No model calls'))
     pool = pools.build_pool(b, dict(group='g', index=2, sha='sha'), 0)
     assert [t['class'] for t in pool] == ['p.C']
     assert read_csv(pool_exp/'results/generated-exclusions.csv')[0]['class'] == 'p.A'
     assert read_json(pool_exp/'funnel.json')[-1]['final_kept'] == 1
+    assert calls == ([] if cached else [rows[0]['file']])
 
 
 def test_report_discloses_exclusions_and_unmatched_selectors(tmp_path, monkeypatch):
     from test_survival.stages import report
     config, _, _ = fixture(tmp_path, selectors=['p.A', 'p.Missing'])
+    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda *a: None)
     screen.run(tmp_path, config)
     write_csv(tmp_path/'results/survival.csv', [dict(index=0, dev_alive=0, g_alive=1)],
               ['index', 'dev_alive', 'g_alive'])

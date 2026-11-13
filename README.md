@@ -235,11 +235,11 @@ matching. Excluding a retained body does not promote a discarded duplicate.
 Exclude the whole class when its lifecycle hooks change shared state.
 
 Writing this key changes the screen and later stage hashes, leaving prepare,
-scope and generate hashes unchanged. The screen stage then requires compatible
-saved per-file validation records and rebuilds denominators without re-executing
-tests; missing or incompatible evidence stops the stage. New generation still
-performs its normal screening to produce those records. Regeneration pools use
-the same exclusion filter.
+scope and generate hashes unchanged. Screening reuses fingerprint-matching saved
+per-file validation records without re-executing tests, and screens files normally
+when compatible evidence is missing. This also supports new experiments and
+regeneration pools configured with exclusions from the start. Regeneration pools
+use the same exclusion filter.
 
 `results/generated-exclusions.csv` records matched methods, selectors, screening
 states and whether each method would otherwise have been admitted. The companion

@@ -86,8 +86,7 @@ def build_pool(b, point, dev_target):
             generate(exp, config, group=group)
         kept = []
         for directory in rounds(exp/'generated'/group):
-            kept, _ = screen_round(exp, config, g, directory, kept,
-                                   **({'cached_only':True} if 'exclude' in config['screen'] else {}))
+            kept, _ = screen_round(exp, config, g, directory, kept)
         from ..stages.generated_exclusions import apply_exclusions
         kept = apply_exclusions(exp, config, g, kept)
         method = g['method']
