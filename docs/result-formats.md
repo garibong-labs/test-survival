@@ -39,6 +39,8 @@ compatibility records and layouts remain unchanged.
 
 `population/ktester-population.csv`: `id,class,method-name,test-class,test-path`. `method-name` is the signature with parameter types, for example `from(ValidationContext, String, URI, JsonNode, JsonSchema, boolean)`.
 
+`population/ktester-lookup-spellings.csv` records each focal method that needed a different parameter spelling for DatasetPrepare. Its columns are `class,original,lookup`. A header-only file means every original spelling resolved. The raw DatasetPrepare output retains the lookup spelling. The final dataset metadata, dataset info, and population CSV use the original index spelling.
+
 `results/scope-selection.json`: `classes`, `m`, `developer_denominator`, `eligible_classes`, `mandatory_stop`, `stop_reason`, `model_calls`, `max_dev_scope`, `skipped_classes`, `per_test_coverage_seconds`. Each skipped class retains its survey fields, `would_be_dev_scope`, and `reason: max-dev-scope`; `population/scope.md` lists the same skips.
 
 `results/llm-<group>-denominator.csv`: `file,class,method,kind,body_hash,round,technique`. `file` is relative to the experiment folder. `technique` is the prompt type for Ouédraogo groups (`ZSL`, `FSL`, `CoT`, `ToT`, `GToT`) and `KTester` for the KTester group.
