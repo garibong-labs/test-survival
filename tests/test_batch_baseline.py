@@ -461,6 +461,7 @@ for name, code in sources.items():
 classes = exp/'target/classes'
 classes.mkdir(parents=True)
 subprocess.run(['javac','-g','-d',str(classes),*[str(exp/n) for n in sources]], check=True)
+subprocess.run(['javac','-g:lines','-d',str(classes),str(exp/'src/main/java/newpkg/Unused.java')], check=True)
 records = json.loads((w.HELPERS/'classpath-artifacts.json').read_text())
 cp = ':'.join([str(classes), *['/libs/'+n for n in w.runner_test_jars(records)]])
 w.classpath = lambda _: (exp, cp)

@@ -43,8 +43,8 @@ public final class ProductionUniverse {
         Path classes = Path.of(args[1]);
         var coverage = new CoverageBuilder();
         var analyzer = new Analyzer(new ExecutionDataStore(), coverage);
-        try (var paths = Files.walk(classes.toRealPath())) {
-            Path root = classes.toRealPath();
+        Path root = classes.toRealPath();
+        try (var paths = Files.walk(root, FileVisitOption.FOLLOW_LINKS)) {
             for (Path path : paths.filter(p -> p.toString().endsWith(".class")).sorted().toList()) {
                 Path relative = root.relativize(path);
                 if (relative.startsWith("META-INF")) continue;
@@ -56,7 +56,10 @@ public final class ProductionUniverse {
         var lines = new TreeSet<String>();
         for (var cls : coverage.getClasses()) {
             String file = sourceOf(names, cls.getName());
-            if (file == null || !Path.of(file).getFileName().toString().equals(cls.getSourceFileName())) continue;
+            // javac -g:lines retains executable lines without a SourceFile attribute.
+            // The parsed declaration still identifies the source in that case.
+            String sourceName = cls.getSourceFileName();
+            if (file == null || (sourceName != null && !Path.of(file).getFileName().toString().equals(sourceName))) continue;
             binaries.put(cls.getName(), file);
             for (int n = cls.getFirstLine(); n <= cls.getLastLine(); n++) {
                 if (cls.getLine(n).getInstructionCounter().getTotalCount() > 0) lines.add(file + "\t" + n);
