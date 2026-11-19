@@ -67,7 +67,7 @@ screen:
 
 survival:
   # control_failures: stop       # optional: exclude records failed control methods and continues
-  execution: legacy             # legacy | batch; batch ignores measurement retries and records per-test lines
+  execution: legacy             # legacy | batch; batch ignores measurement retries and records scope lines only
   definition: cumulative-fixed-denominator   # only value
   flaky_rerun: 1
   environment_errors:
@@ -77,7 +77,6 @@ survival:
   build_fail: carry-over        # only value
 
 coverage:
-  # universe: scope             # batch: scope (default) | production
   changed_line: true
   at_anchor: true
   groups: alive-entering        # only value
