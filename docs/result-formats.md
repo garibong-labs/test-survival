@@ -109,17 +109,17 @@ and report formats, with these explicit differences:
 - Local derived groups inherit their parent's observations, including when the
   parent is imported. Chained derivations preserve per-test lines and verdicts
   without executing the child independently; imported files remain unchanged.
-- `results/coverage/<index>-<group>-lines.csv.gz` contains only executable scope
-  source lines. Empty test groups still get the scope executable universe and
+- `results/coverage/<index>-<group>-lines.csv.gz` contains the executable lines in the
+  configured universe. Empty test groups still get the full denominator and
   uncovered rows. There is **no** `results/coverage/<index>-<group>.xml` (or gzip
   XML) in batch mode, and no retained per-member probes for later XML creation.
   Coverage-scoped developer selection at t remains its separate existing stage.
 - `raw-coverage` records are projections of the original batch, not second runs.
   `phase: B` identifies the consumer, with exact alive-entry method membership.
   A failed coverage observation uses `status: coverage-missing` and no line CSV.
-- `changed-lines.csv` keeps the legacy header. All `all_*` and `other_*` values
+- `changed-lines.csv` keeps the legacy header. In the default scope mode, `all_*` and `other_*` values
   are empty/unavailable; `scope_*` values are populated where measured. Exposure
-  counts and table 4 use scope pre-images. Skipped predecessors use the existing
+  counts and table 4 use pre-images in the configured universe. Skipped predecessors use the existing
   `coverage-index-aliases.json`; build failures remain unavailable.
 - Coverage aggregation and reports never execute Java tests. Index zero's hits
   come from batch control; other indices' hits come from survival. Ordered
@@ -129,10 +129,10 @@ and report formats, with these explicit differences:
   and completed-stage audits calculate exclusions without publishing evidence,
   even when the summary is absent. Audits wait for the resolved scope, anchor,
   frozen denominators and (for survival) commit sequence/path records.
-- The final summary includes `execution: batch`, `coverage_scope: scope` and
+- The final summary includes `execution: batch`, `coverage_scope: scope | production` and
   `ignored_settings`. Scope-only measurement does not itself mark a run partial;
   genuinely missing scope measurements do. `phase_seconds.cover` is aggregation
-  time. All/other report sections explicitly say unavailable.
+  time. In scope mode the all/other report sections say unavailable.
 
 Legacy mode is the default and retains full-production line maps and XML. The
 new mode does not migrate finished legacy experiments or accept their lineless
@@ -142,12 +142,53 @@ Status and resume retain the existing run lock and worker/container ownership;
 failed or interrupted batch scratch is retained. Successful checkouts release
 after durable group projections validate, before the non-executing cover stage.
 
+### Whole-project coverage in production mode
+
+`results/coverage-total.csv` and `results/coverage-total.md` give one row per
+group at index 0 and at the last evaluated index, including when that commit
+has no production diff. Trailing skipped commits and failed builds do not move
+the endpoint. A run measured only at the anchor has one row per group. These
+two endpoints are reported even with `coverage.changed_line: false` or
+`coverage.at_anchor: false`.
+
+The columns are `index,sha,group,files,executable_lines,covered_lines,percent`.
+`files` counts distinct source files with executable lines. `executable_lines`
+counts distinct module-relative file and line pairs. A class with zero hits
+still contributes its executable lines. `covered_lines` is the union of hits
+from methods alive entering that index. Percent is 100 times covered divided
+by executable, rounded to three decimal places. Missing coverage leaves covered
+and percent blank. An empty group with a measured universe has zero hits. A
+zero-line universe leaves percent blank.
+
+Production sources must be present in the commit under the selected module's
+`src/main/java`. The compiled class must map to a declaration in one of those
+files. Nested and secondary classes contribute to their enclosing source file.
+Generated sources elsewhere, including JavaCC output under `target/`, are
+excluded. In `changed-lines.csv`, `all_executable`, `all_<group>_covered` and
+`all_<group>_percent` use all changed executable production lines. `scope_*`
+keeps the anchor file list and `other_*` covers the complement, including
+post-anchor additions outside that list.
+
+The same endpoint tables appear under `results/policy/<policy>/`, including
+`none`. Before regeneration, groups inherit their baseline measurements. At a
+regeneration index, the new composition supplies the hits. Subsequent rows use
+members alive entering the index, including a method that fails there.
+Production policy `coverage-commits.csv` uses `all_executable` for its changed-line
+denominator. Its companion `coverage-total.json` still aggregates changed lines
+across commits. The CSV and Markdown endpoint tables measure whole-project lines
+at individual commits.
+
 ## Affected-selection records
 
 Fresh batch method rows add `selection_action: executed | carried`,
 `last_executed_index`, and `last_executed_sha`. A carried row adds
 `carried_from_index`, pointing directly to the actual observation, and retains
-that observation's state and scope `lines`. Dead/not-selected inventory markers
+that observation's state. In production mode every hit file is included in the
+method's dependencies. An edit, deletion or rename of a dependency triggers
+execution against the new commit. For a carry, baseline and policy intersect the
+last actual execution's `(file, line)` hits with the current commit's executable
+universe. New files enter the denominator with zero hits from that carry. A
+chain of carries always projects from the actual origin. Dead/not-selected inventory markers
 and unevaluated commit markers are excluded from execution counts.
 
 Affected actual executions add a `dependency_record` containing `version: 4`,
@@ -156,9 +197,8 @@ Affected actual executions add a `dependency_record` containing `version: 4`,
 references (stopping at production classes), and production simple names found as
 Java identifiers in the selected/reached test sources. Nested/local/anonymous
 classes map through classfile source metadata to source files. Unmapped project
-classes or incomplete analysis are conservatively unbounded. Only dependency
-file sets and existing scope lines persist; no full-production line coverage,
-probe dumps, or XML are added by selection. Legacy/all rows without dependencies
+classes or incomplete analysis are conservatively unbounded. Selection retains dependency file sets alongside the lines requested by
+`coverage.universe`. Legacy/all rows without dependencies
 remain readable observations and cannot authorize an affected carry.
 Version 4 retains production class hits from pre-plan discovery (such as Vintage
 parameter providers), setup from every ancestor test container, and lazy class

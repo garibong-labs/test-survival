@@ -121,7 +121,11 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
         cleanup_stage(b.exp, b.execution_config, 'policy-survive')
         if until == 'survive':
             return
-        step('cover',lambda:cover.run(b,step),outputs=[b.exp/f'results/policy/{p}/coverage-total.json' for p in names])
+        coverage_outputs = [b.exp/f'results/policy/{p}/coverage-total.json' for p in names]
+        if b.execution_config['coverage'].get('universe') == 'production':
+            coverage_outputs.extend(b.exp/f'results/policy/{p}/coverage-total.{ext}'
+                                    for p in ['none', *names] for ext in ('csv', 'md'))
+        step('cover',lambda:cover.run(b,step),outputs=coverage_outputs)
         if until == 'cover':
             return
         step('report',lambda:report.run(b),outputs=[b.exp/'results/policy/summary.csv',b.exp/'results/policy/consistency.md'])

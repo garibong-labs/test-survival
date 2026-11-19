@@ -14,13 +14,15 @@ def run(b):
     shutil.copy2(b.path/'results/first-failures.csv',none/'first-failures.csv')
     changed = read_csv(b.path/'results/changed-lines.csv')
     reference_groups = [g for g in b.groups if not regenerates(b,g,'none')]
-    baseline_coverage = [{**{k:r[k] for k in ('index','sha','date','subject','scope_executable')},
-                          **{g+s:r.get('scope_'+g+s,'') for g in b.groups for s in ('_covered','_percent')},
+    partition = 'all' if b.execution_config.get('coverage', {}).get('universe') == 'production' else 'scope'
+    denominator = partition+'_executable'
+    baseline_coverage = [{**{k:r[k] for k in ('index','sha','date','subject',denominator)},
+                          **{g+s:r.get(partition+'_'+g+s,'') for g in b.groups for s in ('_covered','_percent')},
                           **{g+'_reference':'baseline (no regeneration)' for g in reference_groups}} for r in changed]
-    write_csv(none/'coverage-commits.csv',baseline_coverage,['index','sha','date','subject','scope_executable',*[g+s for g in b.groups for s in ('_covered','_percent')],*[g+'_reference' for g in reference_groups]])
-    write_json(none/'coverage-total.json',dict(executable=sum(int(r['scope_executable']) for r in changed if r['scope_executable']),
-                                             groups={g:sum(int(r.get('scope_'+g+'_covered') or 0) for r in changed) for g in b.groups if not changed or any(r.get('scope_'+g+'_covered','') != '' for r in changed)},
-                                             group_executable={g:sum(int(r['scope_executable']) for r in changed if r.get('scope_'+g+'_covered','') != '' and r['scope_executable']) for g in b.groups},
+    write_csv(none/'coverage-commits.csv',baseline_coverage,['index','sha','date','subject',denominator,*[g+s for g in b.groups for s in ('_covered','_percent')],*[g+'_reference' for g in reference_groups]])
+    write_json(none/'coverage-total.json',dict(executable=sum(int(r[denominator]) for r in changed if r[denominator]),
+                                             groups={g:sum(int(r.get(partition+'_'+g+'_covered') or 0) for r in changed) for g in b.groups if not changed or any(r.get(partition+'_'+g+'_covered','') != '' for r in changed)},
+                                             group_executable={g:sum(int(r[denominator]) for r in changed if r.get(partition+'_'+g+'_covered','') != '' and r[denominator]) for g in b.groups},
                                              reference_groups=reference_groups))
     names = ['none',*[p['name'] for p in b.options['set']]]
     summary = []; checks = []; curves = {}

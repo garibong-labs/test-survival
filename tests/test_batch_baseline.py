@@ -428,3 +428,70 @@ def test_batch_summary_excludes_unevaluated_rows_even_with_observations(tmp_path
     summary=build(tmp_path,config)
     assert summary['selection_totals']==original['selection_totals']
     assert summary['selection_control']==original['selection_control']
+
+
+@pytest.mark.java_integration
+def test_production_worker_includes_new_package_and_excludes_generated(tmp_path, java_environment):
+    """Run both universes on the same bytecode, including an exercised generated parser."""
+    from pathlib import Path
+    image, libs = java_environment
+    package = Path(__file__).parents[1]/'src/test_survival'
+    script = r"""
+from pathlib import Path
+import json, subprocess, sys, time
+sys.path.insert(0, '/package')
+from adapters import java_worker as w, policy_coverage
+exp = Path('/out')
+w.EXP = w.SHARED = exp
+w.HELPERS = Path('/package/adapters/java')
+w.JVM = dict(javac='256m', jacoco='256m', launcher='256m')
+w.TIMEOUTS = dict(compile=60, test_class=60)
+(exp/'work').mkdir()
+(exp/'work/libs').symlink_to('/libs')
+sources = {
+    'src/main/java/p/Anchor.java': 'package p; public class Anchor { public static int value() { return 1; } }',
+    'src/main/java/unconventional/Added.java': 'package newpkg; public class Added { public static int value() { return Nested.value(); } static class Nested { static int value() { return 2; } } }',
+    'src/main/java/newpkg/Unused.java': 'package newpkg; public class Unused { int neverCalled() { return 0; } }',
+    'target/generated-sources/javacc/parser/Parser.java': 'package parser; public class Parser { public static int value() { return 3; } }',
+}
+for name, code in sources.items():
+    path = exp/name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(code)
+classes = exp/'target/classes'
+classes.mkdir(parents=True)
+subprocess.run(['javac','-g','-d',str(classes),*[str(exp/n) for n in sources]], check=True)
+records = json.loads((w.HELPERS/'classpath-artifacts.json').read_text())
+cp = ':'.join([str(classes), *['/libs/'+n for n in w.runner_test_jars(records)]])
+w.classpath = lambda _: (exp, cp)
+w.jacoco_version = lambda _: '0.8.14'
+root = exp/'tests'
+root.mkdir()
+(root/'T.java').write_text('class T { @org.junit.jupiter.api.Test void works() { org.junit.jupiter.api.Assertions.assertEquals(6, p.Anchor.value()+newpkg.Added.value()+parser.Parser.value()); } }')
+method = dict(id='t', file='tests/T.java', file_hash='h', source_root='tests', **{'class':'T'}, method='works')
+scope = ['src/main/java/p/Anchor.java']
+production = sorted(n for n in sources if n.startswith('src/main/java/'))
+times = []
+for name, files in [('scope', scope), ('production', production)]:
+    started = time.monotonic()
+    policy_coverage.run(w, dict(index=1, sha='fixture', methods=[method], survival=True, scope_universe=True,
+        scope_files=files, scope_classes=['p.Anchor'], coverage_universe=name, work=name, output=name+'.json'))
+    times.append(time.monotonic()-started)
+    result = json.loads((exp/(name+'.json')).read_text())
+    assert result['methods'][0]['state'] == 'pass', result
+    assert {f for f,n in result['universe']} == set(files)
+    assert {f for f,n in result['methods'][0]['lines']} == set(files)-{'src/main/java/newpkg/Unused.java'}
+(exp/'timings.json').write_text(json.dumps(times))
+for members, work in [([method], 'pool'), ([], 'empty')]:
+    policy_coverage.run(w, dict(index=0, sha='fixture', methods=members, candidate_suite=True,
+        coverage_universe='production', scope_files=production, work=work, output=work+'.json'))
+    result = json.loads((exp/(work+'.json')).read_text())
+    assert {f for f,n in result['universe']} == set(production)
+    assert len(result['methods']) == len(members)
+    if members:
+        assert result['methods'][0]['state'] == 'pass'
+        assert {f for f,n in result['methods'][0]['lines']} == set(production)-{'src/main/java/newpkg/Unused.java'}
+"""
+    subprocess.run(['docker', 'run', '--rm', '--network', 'none', '-v', f'{package}:/package:ro',
+                    '-v', f'{libs}:/libs:ro', '-v', f'{tmp_path}:/out', image, 'python3', '-c', script],
+                   check=True, timeout=180)

@@ -9,7 +9,7 @@ from functools import lru_cache
 from ..io import read_json, write_json, write_csv
 from ..selection import Selector, carry, executed, counts
 from ..adapters.dependencies import RECORD_VERSION
-from ..rules.coverage import usable_lines
+from ..rules.coverage import coordinates, projected_lines, usable_lines
 from ..rules.survival import dead_method
 from ..work import release_checkout
 from .config import active_plan, regenerates, COVERAGE_VERSION
@@ -36,6 +36,10 @@ def records_complete(b):
         raw = read_json(path, {})
         return raw, {key(r):r for r in raw.get('methods', [])}
 
+    @lru_cache(maxsize=2)
+    def universe(index):
+        return coordinates(b.path, index, b.groups)
+
     for policy in b.options['set']:
         p = policy['name']
         segments = read_json(b.exp/f'results/policy/{p}/segments.json')
@@ -53,17 +57,22 @@ def records_complete(b):
                         if not usable_lines(row) or not current_dependencies(row): return False
                         origin = row.get('last_executed_index')
                         if origin is None or not s['start'] <= origin <= index: return False
+                        projection = None
                         if row.get('selection_action') == 'carried':
+                            if raw.get('coverage_universe') == 'production':
+                                projection = universe(index)
                             if origin >= index or row.get('carried_from_index') != origin: return False
                             _, prior = evidence(logical_path(b,p,g,s['segment'],origin))
                             actual = prior.get(k, {})
+                            if projected_lines(actual, projection) != row.get('lines'): return False
                             if actual.get('selection_action') != 'executed' or any(actual.get(n) != row.get(n) for n in
-                                    ('state','lines','dependency_record','last_executed_index','last_executed_sha')): return False
+                                    ('state','dependency_record','last_executed_index','last_executed_sha')): return False
                         elif row.get('selection_action') != 'executed' or origin != index: return False
                         physical, physical_rows = evidence(b.exp/f'results/policy/runs/{execution_id(row)}/{origin}.json')
                         actual = physical_rows.get(k, {})
                         if (physical.get('sha') != b.by_index[origin]['sha'] or actual.get('selection_action') != 'executed'
-                                or any(actual.get(n) != row.get(n) for n in ('lines','dependency_record','last_executed_sha'))): return False
+                                or projected_lines(actual, projection) != row.get('lines')
+                                or any(actual.get(n) != row.get(n) for n in ('dependency_record','last_executed_sha'))): return False
     return True
 
 
@@ -71,6 +80,7 @@ class Decisions:
     def __init__(self, b, runs):
         self.b, self.runs = b, runs
         self.selector = Selector(runs.adapter)
+        self.production = runs.adapter.config.get('coverage', {}).get('universe') == 'production'
         self.history = {}
         self.phase = defaultdict(int)
 
@@ -139,6 +149,7 @@ class Decisions:
         self.runs.initialize()
         context = self.selector.context(index, sha)
         wanted = {}; decisions = {}; previous = {}
+        universe = None
         for p,g,s,alive in consumers:
             slot = (p,g,s['segment'])
             path = logical_path(self.b,p,g,s['segment'],index)
@@ -153,6 +164,10 @@ class Decisions:
                 prior = self.history.get((*slot,k))
                 if not boundary and not self.selector.decision(prior,index,sha,context,start=s['start']):
                     rows[k] = carry(prior)
+                    if self.production:
+                        if universe is None:
+                            universe = coordinates(self.b.path, index, self.b.groups)
+                        rows[k]['lines'] = projected_lines(prior, universe)
                 else:
                     wanted[k] = t
             decisions[slot] = rows
@@ -178,9 +193,12 @@ class Decisions:
                     else:
                         rows[k] = settle({**t, **row}, verdict, [])
                 rows[k] = {**rows[k], 'id':key(t)}
-                if k in alive: self.history[(*slot,k)] = rows[k]
+                if k in alive and (not self.production or rows[k].get('selection_action') != 'carried'):
+                    self.history[(*slot,k)] = rows[k]
             record = dict(index=index,sha=sha,segment=s['segment'],selection='affected',methods=list(rows.values()),
                           selection_counts=counts(rows.values()))
+            if self.production:
+                record['coverage_universe'] = 'production'
             write_json(logical_path(self.b,p,g,s['segment'],index),record,compress=True)
             result[p,g] = record['methods']
         return result
@@ -262,5 +280,6 @@ def survive(b, plan, pools, step):
         write_json(directory/'selection-phases.json',ledger[p])
         totals = selection_at[p].rows()
         write_json(directory/'selection-counts.json',totals)
-        write_json(directory/'final-summary.json',dict(selection='affected',selection_totals=selection_at[p].totals(b.groups)))
+        write_json(directory/'final-summary.json',dict(selection='affected',selection_totals=selection_at[p].totals(b.groups),
+                         **({'coverage_scope':'production'} if b.execution_config.get('coverage', {}).get('universe') == 'production' else {})))
     write_json(b.exp/'results/policy/needed-runs.json',[dict(execution_hash=h,index=i) for h,i in sorted(runs.needed)])

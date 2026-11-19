@@ -301,7 +301,7 @@ def test_coverage_batches_by_resource_snapshot_not_test_method(tmp_path):
     def worker(job):
         jobs.append(job)
         return dict(methods=job['methods'],universe=[['A.java',1]])
-    result=coverage(SimpleNamespace(exp=tmp_path,worker=worker),1,tests,'union')
+    result=coverage(SimpleNamespace(exp=tmp_path,worker=worker,config={'coverage':{}}),1,tests,'union')
     assert [len(j['methods']) for j in jobs]==[4,3]
     assert len(result['methods'])==7 and result['universe']==[('A.java',1)]
 

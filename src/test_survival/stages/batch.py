@@ -8,6 +8,7 @@ import hashlib
 from pathlib import Path
 
 from ..denominators import finish_control, frozen_after_control
+from ..adapters.run_reuse import scope_compatible_fingerprint
 from ..adapters.java_maven import JavaMavenAdapter
 from ..adapters.policy_coverage import COVERAGE_VERSION
 from ..config import canonical_hash, derived_source, execution_groups, group_names
@@ -15,7 +16,7 @@ from ..io import read_csv, read_json, write_csv, write_json, resolve_path
 from ..policy.artifacts import resource_tree_hash, tree_hash
 from ..policy.execute import screening_exclusion_details, settle
 from ..rules.survival import FAILURES, dead_method
-from ..rules.coverage import usable_lines
+from ..rules.coverage import projected_lines, usable_lines
 from ..runner import measurement_session
 from ..runner.dispatch import dispatch
 from ..work import release_checkout
@@ -65,10 +66,15 @@ class Measurements:
         self.excluded, self.exclusion_summary = screening_exclusion_details(exp, {}, self.tests, exp,
                                             {g: methods.get(g, 'dev') for g in self.tests}, baseline_prefix='',
                                             round_limits={g['name']:g['rounds']['max'] for g in config['generators']})
-        self.runner = self.adapter.provenance()
+        self.universe = config['coverage'].get('universe', 'scope')
+        self.runner = self.adapter.provenance(production_coverage=True) if self.universe == 'production' else self.adapter.provenance()
         inputs = dict(version=1, implementation=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), coverage=COVERAGE_VERSION, tests=self.tests,
                       scope=self.scope, excluded=sorted(self.excluded), runner=self.runner,
                       inputs={g:self.adapter.run_fingerprint(ts) for g,ts in self.tests.items()})
+        if self.universe == 'production':
+            inputs['coverage_universe'] = self.universe
+        else:
+            inputs['implementation'] = scope_compatible_fingerprint(inputs['implementation'])
         self.digest = canonical_hash(inputs)
         self.control_digests = {self.digest}
         if phase == 'control':
@@ -82,14 +88,13 @@ class Measurements:
         self.unique = {identity(t):t for g,ts in self.tests.items()
                        if g not in self.imported and g not in self.derived for t in ts}
 
-    def valid_origin(self, row, *, historical=False):
-        if row.get('selection_action') != 'carried': return True
+    def origin(self, row):
         index = row.get('carried_from_index')
         path = resolve_path(self.exp/f'results/baseline-batches/{index}.json')
         try:
             stat = path.stat()
         except FileNotFoundError:
-            return False
+            return None, {}
         signature = (str(path), stat.st_ino, stat.st_mtime_ns, stat.st_size)
         cached = self.origins.get(index)
         if cached is None or cached[0] != signature:
@@ -99,15 +104,22 @@ class Measurements:
             if len(self.origins) > 32: self.origins.popitem(last=False)
         self.origins.move_to_end(index)
         _, digest, sources = cached
-        source = sources.get(identity(row), {})
+        return digest, sources.get(identity(row), {})
+
+    def valid_origin(self, row, *, universe=None, historical=False):
+        if row.get('selection_action') != 'carried': return True
+        digest, source = self.origin(row)
         return ((historical or digest == self.digest)
                 and source.get('selection_action') == 'executed'
+                and projected_lines(source, universe) == row.get('lines')
                 and all(source.get(n) == row.get(n) for n in
-                        ('state','lines','dependency_record','last_executed_sha','last_executed_index')))
+                        ('state','dependency_record','last_executed_sha','last_executed_index')))
 
     def cached(self, index, sha, dead, *, require_lines=True, historical=False):
         raw = read_json(self.exp/f'results/baseline-batches/{index}.json', {})
-        if ((not historical and raw.get('input_sha256') not in (self.control_digests if self.phase == 'control' else {self.digest})) or raw.get('sha') != sha
+        digests = self.control_digests if self.phase == 'control' else {self.digest}
+        if (raw.get('coverage_universe', 'scope') != self.universe or raw.get('sha') != sha
+                or (not historical and raw.get('input_sha256') not in digests)
                 or raw.get('coverage_version') != COVERAGE_VERSION or 'universe' not in raw):
             return None
         rows = {identity(t):t for t in raw.get('methods', [])}
@@ -115,7 +127,8 @@ class Measurements:
             return None
         if any(rows[k]['state'] == 'dead' and k not in dead for k in rows):
             return None
-        if any(not self.valid_origin(row, historical=historical) for row in rows.values()):
+        universe = set(map(tuple, raw['universe'])) if self.universe == 'production' and self.selector else None
+        if any(not self.valid_origin(row, universe=universe, historical=historical) for row in rows.values()):
             return None
         if require_lines and not complete_lines(raw, dead):
             return None
@@ -126,13 +139,14 @@ class Measurements:
         prior = read_json(path, {})
         current = prior.get('input_sha256') == self.digest and prior.get('sha') == sha
         old = {identity(t):t for t in prior.get('methods', [])} if current else {}
+        prior_universe = set(map(tuple, prior.get('universe', []))) if current and self.universe == 'production' and self.selector else None
         kept = {}; requested = []; verdicts = {}
         context = self.selector.context(index, sha) if self.selector and self.unique else None
         for k,t in self.unique.items():
             row = old.get(k)
             if k in dead:
                 kept[k] = row if row and row.get('state') != 'dead' and usable_lines(row) else dead_method(t, dead[k])
-            elif row and row.get('state') != 'dead' and usable_lines(row) and self.valid_origin(row):
+            elif row and row.get('state') != 'dead' and usable_lines(row) and self.valid_origin(row, universe=prior_universe):
                 kept[k] = row
             elif self.selector and index and not self.selector.decision(self.history.get(k), index, sha, context):
                 kept[k] = carry(self.history[k])
@@ -158,6 +172,14 @@ class Measurements:
                          scope_classes=[c['class'] for c in self.scope], excluded_files=sorted(self.excluded),
                          scope_universe=True, output=f'results/baseline-batches/{index}-measurement.json',
                          work=f'work/baseline-batches/{index}'))
+        if self.universe == 'production' and self.selector:
+            universe = set(map(tuple, measured['universe']))
+            for k, row in kept.items():
+                if row.get('selection_action') == 'carried':
+                    _, origin = self.origin(row)
+                    if not usable_lines(origin):
+                        raise RuntimeError('Missing executed origin for carried coverage')
+                    kept[k] = {**row, 'lines':projected_lines(origin, universe)}
         for observation in measured['methods']:
             k = identity(observation)
             if k not in self.unique:
@@ -168,6 +190,8 @@ class Measurements:
             raise ValueError('Incomplete baseline batch inventory')
         raw = {**measured, 'execution':'batch', 'input_sha256':self.digest, 'runner_sha256':self.runner,
                'methods':[kept[k] for k in self.unique], 'ignored_settings':['survival.flaky_rerun','survival.environment_errors']}
+        if self.universe == 'production':
+            raw['coverage_universe'] = self.universe
         raw['selection_counts'] = counts(raw['methods'])
         raw['coverage_status'] = 'complete' if all(usable_lines(t) for t in raw['methods']) else 'missing'
         write_json(path, raw, compress=True)
@@ -228,7 +252,7 @@ def control(exp, config):
     frozen = frozen_after_control(exp, config)
     project_coverage(exp, config, 0, {g:[t['id'] for t in frozen[g]] for g in m.frozen})
     return (f'Excluded {excluded} frozen methods after control at t (batch)' if excluded else
-            'All frozen methods passed at the anchor (batch; scope coverage recorded)')
+            f'All frozen methods passed at the anchor (batch; {m.universe} coverage recorded)')
 
 
 def survive(exp, config):

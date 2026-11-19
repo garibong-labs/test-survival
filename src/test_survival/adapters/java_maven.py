@@ -359,13 +359,17 @@ class JavaMavenAdapter:
         write_csv(self.exp/'dev/dev-methods-all.csv', rows, fields)
         return rows
 
-    def provenance(self):
+    def provenance(self, *, production_coverage=False):
         paths = [*sorted(self.helpers.glob('*')), Path(__file__), Path(__file__).with_name('java_worker.py'), Path(__file__).with_name('compilation.py'), Path(__file__).with_name('maven_dependencies.py'), Path(__file__).parents[1]/'runner/docker.py', Path(__file__).parents[1]/'runner/cache.py', Path(__file__).parents[1]/'rules/environment.py']
         paths.append(Path(__file__).with_name('compiler_session.py'))
         paths.append(Path(__file__).parents[1]/'io.py')
         paths.append(Path(__file__).parents[1]/'selection.py')
         paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py','dependencies.py','selection_context.py'))
         result = {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
+        from .run_reuse import scope_compatible_fingerprint
+        if not production_coverage:
+            result.pop('ProductionUniverse.java', None)
+            result = {name:scope_compatible_fingerprint(digest) for name,digest in result.items()}
         # Submodules build siblings from each checkout's reactor; no record from an
         # earlier provenance (none carries this key) is equivalent to that execution.
         module = str(PurePosixPath(self.config['project']['module']))
@@ -384,6 +388,14 @@ class JavaMavenAdapter:
         if job.get('index', 0) != 0:
             if self.build(job['index'], job['sha'])['build'] != 'ok':
                 raise RuntimeError('Worker workspace build failed')
+        if self.config.get('coverage', {}).get('universe') == 'production' and (
+                job['action'] == 'policy-survive' or job.get('production_pool')):
+            # Use the commit tree, before Maven or a source generator adds files.
+            module = PurePosixPath(self.config['project']['module'])
+            source = module / 'src/main/java'
+            paths = self.git('ls-tree', '-rz', '--name-only', job['sha'], '--', str(source)).split('\0')
+            job.update(coverage_universe='production',
+                       scope_files=[str(PurePosixPath(p).relative_to(module)) for p in paths if p.endswith('.java')])
         developer=job.get('group') in {g['name'] for g in self.config['dev']['groups']}
         framework = self.config['project']['test_framework'] if job.get('action') == 'setup' else self.test_framework() if developer else 'auto'
         job.update(experiment=self.runner.path(self.exp), module=self.config['project']['module'],

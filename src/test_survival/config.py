@@ -218,7 +218,7 @@ SCHEMA = {
                  'flaky_rerun': integer(1, 0), 'build_fail': enum('carry-over', 'carry-over'),
                  'environment_errors': {'patterns': Field(list, []), 'max_reruns': integer(3, 0),
                                         'backoff_seconds': Field(float, 5, minimum=0)}},
-    'coverage': {'changed_line': Field(bool, True), 'at_anchor': Field(bool, True),
+    'coverage': {'universe': enum('scope', 'scope', 'production'), 'changed_line': Field(bool, True), 'at_anchor': Field(bool, True),
                  'groups': enum('alive-entering', 'alive-entering')},
     'runner': {
         'docker': DOCKER,
@@ -367,6 +367,13 @@ def generator_config(config, generator):
 def validate(data):
     data = as_written(data)
     c = _validate(data, SCHEMA)
+    # Scope is the historical wire format, including when requested explicitly.
+    if c['coverage']['universe'] == 'scope':
+        c['coverage'].pop('universe')
+        if data.get('coverage', {}).pop('universe', None) and not data['coverage']:
+            data.pop('coverage')
+    elif c['survival']['execution'] != 'batch' and not c['policies']:
+        raise ConfigError('coverage.universe: production requires survival.execution: batch')
     if c['policies'] is not None:
         from .policy.config import validate as validate_policies
         c['policies'] = validate_policies(c['policies'])
@@ -592,6 +599,8 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
         if c['survival'].get('selection') == 'affected': data['survival']['selection'] = 'affected'
     if index >= 5 and 'survival' in c:
         data['survival'] = c['survival']
+    if index >= 4 and c.get('coverage', {}).get('universe') == 'production':
+        data['coverage'] = {'universe': 'production'}
     if index >= 6 and 'coverage' in c:
         data['coverage'] = c['coverage']
     if index >= 7:

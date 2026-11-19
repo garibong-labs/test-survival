@@ -21,6 +21,7 @@ FIXTURES = {
     'test_lazy_initializer_dependencies_survive_probe_resets[isolated]',
     'test_lazy_initializer_dependencies_survive_probe_resets[defined]',
     'test_scope_universe_without_tests_or_probe_data',
+    'test_production_worker_includes_new_package_and_excludes_generated',
     'test_dependency_identity_with_real_runner[image]',
     'test_dependency_identity_with_real_runner[compose]',
     'test_container_owned_scratch_cleanup',

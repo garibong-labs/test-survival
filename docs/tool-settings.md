@@ -161,12 +161,33 @@ code; alive-entry dispatch applies when survival starts in a new process.
 ## Baseline execution and screening runs
 
 `survival.execution` accepts `legacy` (default) or `batch`. Batch uses the policy
-worker for control and survival, with scope-only line coverage in the same pass.
+worker for control and survival, and records per-test line coverage in the same pass.
 The `cover` stage aggregates existing lines without Java test execution. Batch
 ignores `survival.flaky_rerun` and `survival.environment_errors` for measurement;
 these settings continue to apply to legacy measurement and their existing
 preparation/selection consumers. An omitted execution setting retains legacy
 fingerprints. Changing the mode invalidates control and later stages.
+
+For batch execution, set `coverage.universe` to `scope` (default) or
+`production`. Scope measures executable lines in the source files selected at
+the anchor. Production measures the module's compiled Java sources at each
+commit, including files added later and classes without target methods. Generated
+sources under `target/generated-sources` are outside this universe. The setting
+also controls per-test lines and the denominator for group coverage.
+
+```yaml
+survival:
+  execution: batch
+coverage:
+  universe: production
+```
+
+Switching to production changes the control, survive, cover and report hashes.
+Completed prepare, scope, generate and screen stages can be reused. Omitting
+the setting or explicitly selecting `scope` preserves the historical hashes.
+Policy runs inherit the baseline's universe. To use production coverage for
+policy pools and regenerated groups, point the policy run at a baseline with
+a completed production coverage report.
 
 `screen.stable_runs` controls generated-test screening, including generator
 pools. `dev.stable_runs` controls developer stability, including developer pool

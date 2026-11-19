@@ -23,6 +23,21 @@ public final class PerTestCoverage implements TestExecutionListener {
     private final Path output;
     private final Map<String, byte[]> analysisClasses;
     private final Set<String> scope;
+    private static final Map<String, String> productionSources = productionSources();
+
+    private static Map<String, String> productionSources() {
+        String manifest = System.getProperty("survival.coverage.production");
+        if (manifest == null) return null;
+        Map<String, String> sources = new HashMap<>();
+        try {
+            for (String row : Files.readAllLines(Path.of(manifest))) {
+                String[] fields = row.split("\t", 2);
+                sources.put(fields[0], fields[1]);
+            }
+        } catch (IOException e) { throw new UncheckedIOException(e); }
+        return sources;
+    }
+
     private final boolean dependencies = Boolean.getBoolean("survival.dependencies");
     private final Map<String, Set<String>> setupHits = new HashMap<>();
     private Set<String> discoveryHits = Set.of();
@@ -146,6 +161,10 @@ public final class PerTestCoverage implements TestExecutionListener {
         try (var paths = Files.walk(binaryRoot, FileVisitOption.FOLLOW_LINKS)) {
             for (Path path : paths.filter(p -> Files.isRegularFile(p) && p.toString().endsWith(".class")).sorted().toList()) {
                 if (binaryRoot.relativize(path).startsWith("META-INF")) continue;
+                if (productionSources != null) {
+                    String relative = binaryRoot.relativize(path).toString();
+                    if (!productionSources.containsKey(relative.substring(0, relative.length() - 6))) continue;
+                }
                 byte[] bytes = Files.readAllBytes(path);
                 if (scope != null) {
                     ClassReader reader = new ClassReader(bytes);
@@ -237,13 +256,23 @@ public final class PerTestCoverage implements TestExecutionListener {
     }
 
     private void writeCoverage(String name, byte[] bytes) throws Exception {
-        if (scope == null) Files.write(output.resolve(name + ".exec"), bytes);
+        if (scope == null && productionSources == null) Files.write(output.resolve(name + ".exec"), bytes);
         ExecFileLoader data = new ExecFileLoader();
         data.load(new ByteArrayInputStream(bytes));
         CoverageBuilder coverage = new CoverageBuilder();
         Analyzer analyzer = new Analyzer(data.getExecutionDataStore(), coverage);
         for (var entry : analysisClasses.entrySet()) analyzer.analyzeClass(entry.getValue(), entry.getKey());
         try (BufferedWriter writer = Files.newBufferedWriter(output.resolve(name + ".tsv"))) {
+            if (productionSources != null) {
+                // The independent class inventory already enumerated uncovered lines.
+                for (IClassCoverage cls : coverage.getClasses()) {
+                    String path = productionSources.get(cls.getName());
+                    for (int n = cls.getFirstLine(); n <= cls.getLastLine(); n++)
+                        if (cls.getLine(n).getInstructionCounter().getCoveredCount() > 0)
+                            writer.write(path + "\t" + n + "\ttrue\n");
+                }
+                return;
+            }
             for (ISourceFileCoverage file : coverage.getSourceFiles()) {
                 String path = "src/main/java/" + (file.getPackageName().isEmpty() ? "" : file.getPackageName() + "/") + file.getName();
                 if (scope != null && !scope.contains(path)) continue;

@@ -29,6 +29,12 @@ class Baseline:
                 raise ConfigError('Pre-framework baseline requires policies.baseline_config')
             source = self.resolve(fallback, repo)
         self.config = load(source)
+        if (config['coverage'].get('universe') == 'production'
+                and self.config['coverage'].get('universe') != 'production'):
+            raise ConfigError('Production policy coverage requires a production coverage baseline')
+        if (self.config['coverage'].get('universe') == 'production'
+                and read_json(self.path/'results/final-summary.json', {}).get('coverage_scope') != 'production'):
+            raise ConfigError('Baseline must have completed its production coverage report')
         self.repo = Path(self.config['project']['repo']).expanduser().resolve()
         self.groups = self.options['groups']
         self.frozen = frozen_after_control(self.path, self.config)
