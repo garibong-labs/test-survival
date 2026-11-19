@@ -15,6 +15,7 @@ import shutil
 import sys
 import time
 import types
+from typing import NamedTuple
 sys.dont_write_bytecode=True
 if __package__:
     from . import java_worker
@@ -93,29 +94,77 @@ def erase_generics(signature):
     return signature
 
 
+# Only unquoted parentheses outside comments affect the annotation argument depth.
+ANNOTATION_NAME = re.compile(r'@[\w$]+(?:\s*\.\s*[\w$]+)*\s*')
+ARGUMENT_TOKEN = re.compile(
+    r'''/\*.*?\*/|//[^\r\n]*|"""(?:\\.|(?!""").)*"""|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[()]''', re.DOTALL)
+
+
+def without_annotations(signature):
+    if '@' not in signature:
+        return signature
+    parts = []
+    start = 0
+    while match := ANNOTATION_NAME.search(signature, start):
+        parts.append(signature[start:match.start()])
+        start = match.end()
+        if signature.startswith('(', start):
+            depth = 1
+            for token in ARGUMENT_TOKEN.finditer(signature, start + 1):
+                if token[0] == '(':
+                    depth += 1
+                elif token[0] == ')':
+                    depth -= 1
+                    if depth == 0:
+                        start = token.end()
+                        break
+            while start < len(signature) and signature[start].isspace():
+                start += 1
+    parts.append(signature[start:])
+    return re.sub(r'\s*\.\s*', '.', ''.join(parts))
+
+
 def simple_key(signature):
-    # Keep the historical comparison for groups with a single match.
-    simple = re.sub(r'(?:\w+\.)+(\w+)', r'\1', erase_generics(signature))
+    simple = re.sub(r'(?:\w+\.)+(\w+)', r'\1', erase_generics(without_annotations(signature)))
     return re.sub(r'\s+', '', simple.replace('...', '[]'))
 
 
 def matching_positions(signature, qualified):
-    params = erase_generics(signature).partition('(')[2][:-1]
+    params = erase_generics(without_annotations(signature)).partition('(')[2][:-1]
     params = re.sub(r'\s+', '', params).replace('...', '[]')
     types = params.split(',') if params else []
     return [pos for pos, full_types in qualified.items() if len(types) == len(full_types)
             and all(full == t or full.endswith('.' + t) for t, full in zip(types, full_types))]
 
 
-def match_class_methods(cls, eligible, extractor, index_methods):
-    """Return the original index spellings in Spoon source order."""
+class FocalMethod(NamedTuple):
+    cls: str
+    original: str
+    lookup: str
+
+
+def lookup_spelling(extractor, ct, method, original):
+    name = str(method.getSimpleName())
+    simple = ', '.join(str(p.getType().getSimpleName()) for p in method.getParameters())
+    for spelling in dict.fromkeys([original, without_annotations(original), f'{name}({simple})']):
+        # DatasetPrepare splits on every opening parenthesis. Annotation arguments
+        # would truncate method-name, and can leave its generic-erasure loop unbalanced.
+        if spelling.count('(') != 1:
+            continue
+        args = erase_generics(spelling).partition('(')[2][:-1]
+        if extractor.getCtMethod(ct, name, args.split(', ') if args else []) == method:
+            return spelling
+    return None
+
+
+def match_class_methods(cls, eligible, extractor, index_methods, errors):
     inventory = collections.defaultdict(list)
     for signature in eligible:
         inventory[simple_key(signature)].append(signature)
 
     spoon = collections.defaultdict(list)
     ct = extractor.getCtClass(cls)
-    ordered = sorted(ct.getMethods(), key=lambda m: m.getPosition().getLine())
+    ordered = sorted(ct.getMethods(), key=lambda m: m.getPosition().getLine()) if ct is not None else []
     for order, method in enumerate(ordered):
         params = [p.getType() for p in method.getParameters()]
         simple = ', '.join(str(t.getSimpleName()) for t in params)
@@ -132,6 +181,7 @@ def match_class_methods(cls, eligible, extractor, index_methods):
 
     selected = {}
     for key, signatures in inventory.items():
+        name = key.partition('(')[0]
         overloads, candidates = spoon[key], indexed[key]
         if len(signatures) == len(overloads) == len(candidates) == 1:
             selected[overloads[0][0]] = candidates[0]
@@ -141,25 +191,48 @@ def match_class_methods(cls, eligible, extractor, index_methods):
         qualified = {pos: tuple(str(t.getQualifiedName()).replace('$', '.') for t in params)
                      for pos, params in overloads}
         index_positions = [(s, matching_positions(s, qualified)) for s in candidates]
-        name = key.partition('(')[0]
         for signature in signatures:
             positions = matching_positions(signature, qualified)
             if len(positions) == 1:
                 pos = positions[0]
                 entries = [(s, matches) for s, matches in index_positions if pos in matches]
                 if pos not in selected and len(entries) == 1 and entries[0][1] == positions:
-                    entry = entries[0][0]
-                    # DatasetPrepare uses this lookup for the focal body. Its suffix match
-                    # can return BA.X for A.X even when the index keys are distinct.
-                    args = erase_generics(entry).partition('(')[2][:-1]
-                    if extractor.getCtMethod(ct, name, args.split(', ') if args else []) == ordered[pos]:
-                        selected[pos] = entry
-                        continue
+                    selected[pos] = entries[0][0]
+                    continue
             spoon_names = [name + '(' + ', '.join(types) + ')' for types in qualified.values()]
-            raise ValueError(f'Cannot match KTester overloads one to one in {cls}: '
-                             f'inventory={signatures}, Spoon={spoon_names}, index={candidates}')
+            errors.append(f'{cls}: inventory={signature}, Spoon={spoon_names}, index={candidates}')
 
-    return [cls + '.' + selected[pos] for pos in sorted(selected)]
+    matches = []
+    for pos, original in sorted(selected.items()):
+        lookup = lookup_spelling(extractor, ct, ordered[pos], original)
+        if lookup is None:
+            errors.append(f'{cls}.{original}: DatasetPrepare lookup did not resolve the expected Spoon method')
+        else:
+            matches.append(FocalMethod(cls, original, lookup))
+    return matches
+
+
+def match_methods(classes, eligible, extractor, indexed):
+    matches = []
+    errors = []
+    for cls in classes:
+        matches.extend(match_class_methods(cls, eligible.get(cls, []), extractor,
+                                           indexed.get(cls, {}).get('methods', {}), errors))
+    if errors:
+        raise ValueError('Cannot match KTester overloads one to one:\n' + '\n'.join(errors))
+    return matches
+
+
+def restore_method_names(entries, matches):
+    originals = {(m.cls, m.lookup): m.original for m in matches}
+    empty = []
+    for row in entries:
+        key = row['class'], row['method-name']
+        row['method-name'] = originals[key]
+        if not (row.get('focal-method') or '').strip():
+            empty.append(row['class'] + '.' + row['method-name'])
+    if empty:
+        raise ValueError('Empty KTester focal-method bodies:\n' + '\n'.join(empty))
 
 
 def validate_population(entries, methods):
@@ -193,24 +266,30 @@ def dataset():
     start_jvm()
     extractor=jpype.JClass('extractor.SpoonExtractor')([str(PROJECT/'src/main/java')],[str(PROJECT/'libs')])
     indexed=json.loads((INDEX/'json'/(PROJECT_NAME+'.json')).read_text())['source']
-    methods=[]
-    for c in scope['classes']:
-        cls = c['class']
-        methods.extend(match_class_methods(cls, eligible[cls], extractor, indexed[cls]['methods']))
-    assert len(methods)==scope['m'],(len(methods),scope['m'])
-    meta=[dict(project_name=PROJECT_NAME,put_path='projects/'+PROJECT_NAME,method_name_to_idx={m:i for i,m in enumerate(methods)})]
-    write_json(DS/'dataset_meta.json',meta)
+    matches = match_methods([c['class'] for c in scope['classes']], eligible, extractor, indexed)
+    assert len(matches) == scope['m'], (len(matches), scope['m'])
+    methods = [m.cls + '.' + m.original for m in matches]
+    lookups = {m.cls + '.' + m.lookup: i for i, m in enumerate(matches)}
+    meta = [dict(project_name=PROJECT_NAME, put_path='projects/'+PROJECT_NAME, method_name_to_idx=lookups)]
+    write_json(DS/'dataset_meta.json', meta)
     jpype.JClass('DatasetPrepare').main([str(DS)])
     jpype.shutdownJVM()
     shutil.copy2(DS/'dataset_info.json',DS/'dataset_info.raw.json')
     data=json.loads((DS/'dataset_info.raw.json').read_text())
+    restore_method_names(data[PROJECT_NAME]['focal-methods'], matches)
     entries=renumber(data[PROJECT_NAME]['focal-methods'])
     checked=validate_population(entries,methods)
     data[PROJECT_NAME]['focal-methods']=entries
     write_json(DS/'dataset_info.json',data)
+    substitutions = [{'class': m.cls, 'original': m.original, 'lookup': m.lookup}
+                     for m in matches if m.original != m.lookup]
+    if substitutions:
+        meta[0]['method_name_to_idx'] = {m: i for i, m in enumerate(methods)}
+        write_json(DS/'dataset_meta.json', meta)
     for name in ['dataset_info.raw.json','dataset_info.json','dataset_meta.json']:
         shutil.copy2(DS/name,EXP/'population'/name)
     csvout(EXP/'population/ktester-population.csv',entries,['id','class','method-name','test-class','test-path'])
+    csvout(EXP/'population/ktester-lookup-spellings.csv', substitutions, ['class','original','lookup'])
     write_json(RESULTS/'ktester-population-validation.json',checked)
     print(json.dumps(checked),flush=True)
 
