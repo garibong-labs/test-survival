@@ -113,3 +113,25 @@ def survival_provenance_matches(previous, current):
     # New batch behavior is opt-in. Legacy worker/selection semantics did not
     # change; compare every unrelated provenance component exactly as before.
     return _matches(previous, current) or _matches(previous, {**current, **PRE_BATCH})
+
+
+# These exact revisions only add opt-in production coverage. Preserve the
+# historical scope-mode record bytes. A later implementation gets its own hash.
+_SCOPE_EQUIVALENT = {
+    # batch.py
+    '6cbf7d5dcaa136f148e63dedb04f47618ab3ee4354e630e20b20dc36a1876997':
+        'ca2b556f923a56a428fff5d93737df253bd8ac694cbdc9d4309988f6d7c4f86f',
+    # java_maven.py
+    '28f4a4ad6145ec377513bf2cb128263d71e918bd40065daba3433842d22d792d':
+        'b44593dba082d9e85b86eb2c2182ef3aa363ee7ad41e26133514af2c09aa6d47',
+    # policy_coverage.py
+    '106ae3ffefc7036e663e346fde23bf0f0a9186615dc6658bba988ac07ffe94c7':
+        '0ae99b4f0e9817de8f0fbef74d368ef22ffa729ed6be0ad834382c49550838ea',
+    # PerTestCoverage.java
+    '1c780521de8bce26eb012c2fd20c08c03d42b527de9b4d39ebe64e35681f43f2':
+        'ded7259fc81d237334e543defc8eb5b215de0ec2e8f1229171da1ea97524156f',
+}
+
+
+def scope_compatible_fingerprint(digest):
+    return _SCOPE_EQUIVALENT.get(digest, digest)

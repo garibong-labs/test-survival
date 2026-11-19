@@ -68,6 +68,9 @@ def run(w, job):
     tool_helper = work/'tool-helper'; tool_helper.mkdir()
     helper_cp = cp+':'+str(cli)+':'+str(agent)
     helper_sources = ['PerTestCoverage.java','SourceInventory.java','DependencySources.java','SnapshotCompiler.java']
+    production = job.get('coverage_universe') == 'production'
+    if production:
+        helper_sources.append('ProductionUniverse.java')
     compiled = w.execute(['javac', '-cp', helper_cp, '-d', str(tool_helper), *[str(w.HELPERS/name) for name in helper_sources]], folder, work/'helper.txt', w.TIMEOUTS['compile'])
     if compiled['exit_code']:
         raise RuntimeError('Cannot compile per-test coverage launcher')
@@ -132,10 +135,22 @@ def run(w, job):
     scope_options = ['-Dsurvival.coverage.isolateMethods=true'] if job.get('candidate_suite') else []
     initializer_agent = None
     agent_options = 'output=none,dumponexit=false'
-    if job.get('survival'):
+    override = os.environ.get('SURVIVAL_JVM_JACOCO')
+    heap = override or w.JVM['jacoco']
+    if production or job.get('survival'):
         scope_file = work/'scope-files.txt'
         scope_file.write_text('\n'.join(job['scope_files'])+'\n')
-        scope_options = ['-Dsurvival.coverage.scope='+str(scope_file)]
+        if production:
+            binaries = work/'production-classes.tsv'
+            universe_file = work/'universe.tsv'
+            inventory = w.execute(['java', '-Xmx'+heap, '-cp', str(tool_helper)+':'+helper_cp,
+                                   'ProductionUniverse', str(scope_file), str(folder/'target/classes'),
+                                   str(binaries), str(universe_file)], folder, work/'universe.txt', w.TIMEOUTS['compile'])
+            if inventory['exit_code'] or inventory.get('timeout'):
+                raise RuntimeError('Cannot enumerate executable production lines')
+            scope_options.append('-Dsurvival.coverage.production='+str(binaries))
+        else:
+            scope_options.append('-Dsurvival.coverage.scope='+str(scope_file))
         if job.get('survival') and job.get('selection') == 'affected':
             scope_options += ['-Dsurvival.dependencies=true']
             from .dependencies import class_inventory
@@ -146,10 +161,11 @@ def run(w, job):
             with ZipFile(initializer_agent, 'w') as jar:
                 jar.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nPremain-Class: PerTestCoverage$Initializers\n\n')
                 for path in helper.glob('PerTestCoverage*.class'): jar.write(path, path.name)
+        elif production:
+            names = (row.split('\t', 1)[0].replace('/', '.') for row in binaries.read_text().splitlines())
+            agent_options += ',includes='+(includes_pattern(names) or '__no_production__')
         else:
             agent_options += ',includes='+includes_pattern(job['scope_classes'])
-    override = os.environ.get('SURVIVAL_JVM_JACOCO')
-    heap = override or w.JVM['jacoco']
     jvm = dict(configured=w.JVM['jacoco'], effective=heap,
                environment={'SURVIVAL_JVM_JACOCO': override} if override else {})
     w.write_json(work/'coverage-jvm.json', dict(jvm=jvm, agent_options=agent_options))
@@ -203,7 +219,7 @@ def run(w, job):
             if (output/(serial+'.unbounded')).exists(): unbounded.add(ident)
             for item in (output/(serial+'.tsv')).read_text().splitlines():
                 file, lineno, hit = item.split('\t'); coordinate = (file, int(lineno))
-                if job.get('survival') and file not in scope:
+                if (production or job.get('survival')) and file not in scope:
                     continue
                 universe.add(coordinate)
                 if hit == 'true': covered[ident].add(coordinate)
@@ -218,11 +234,15 @@ def run(w, job):
                     try:
                         classes, root, source = dependency_inputs[(t['class'],t['method'],t.get('execution_hash',t['file_hash']))]
                         record = dependencies.record({**t, 'file':str(source)}, classes, root, runtime[ident])
+                        if production:
+                            record['files'] = sorted(set(record['files']) | {f for f, _ in covered[ident]})
                         if ident in unbounded:
                             record.update(unbounded=True, reason='incomplete class-initializer attribution')
                     except (ValueError, OSError, RuntimeError) as exc: record['reason'] = str(exc)
                 methods[-1]['dependency_record'] = record
-    if job.get('scope_universe'):
+    if production:
+        universe = {(f, int(n)) for line in universe_file.read_text().splitlines() for f,n in [line.split('\t')]}
+    elif job.get('scope_universe'):
         output = work/'universe.tsv'
         analysis = w.execute(['java', '-Xmx'+heap, '-cp', str(helper)+':'+helper_cp,
                               'PerTestCoverage', '--universe', str(folder/'target/classes'),
@@ -234,7 +254,8 @@ def run(w, job):
         for t in methods:
             t.setdefault('dependency_record', dict(version=RECORD_VERSION, selection='affected', files=[], unbounded=True, reason='no instrumented execution'))
     missing = any(r['exit_code'] or r.get('timeout') for r in runs)
-    w.write_json(w.EXP/job['output'], dict(coverage_status='missing' if missing else 'complete',
+    w.write_json(w.EXP/job['output'], dict(**({'coverage_universe':'production'} if production else {}),
+                                         coverage_status='missing' if missing else 'complete',
                                          coverage_reason='batch JVM failed or timed out' if missing else '',
                                          coverage_version=COVERAGE_VERSION, status='evaluated', index=job['index'], sha=job['sha'], methods=methods,
                                          universe=sorted(universe), runs=runs, jvm=jvm, files=files, compile=compile_runs))

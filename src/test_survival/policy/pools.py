@@ -27,10 +27,14 @@ def coverage(adapter, index, tests, name, full_suite=False, candidate_suite=Fals
     combined = dict(status='evaluated', index=index, methods=[], universe=[], runs=[])
     sha = read_json(adapter.exp/f'results/builds/{index}.json')['sha']
     combined['sha'] = sha
+    production = adapter.config['coverage'].get('universe') == 'production'
+    if production and not contexts:
+        contexts['dev/src-test-t'] = []
     for number, members in enumerate(contexts.values()):
         label = name+'-'+str(number)
         job = dict(action='policy-cover', index=index, sha=sha, group='policy-coverage', methods=members,
                    full_suite=full_suite, output=f'results/policy-coverage/{label}.json', work=f'work/policy-coverage/{label}')
+        if production: job['production_pool'] = True
         if candidate_suite: job['candidate_suite'] = True
         result = adapter.worker(job)
         combined['methods'].extend(result['methods'])

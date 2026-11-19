@@ -138,8 +138,9 @@ per pool. Scratch copies leave pool sources and stored execution hashes intact.
 Compiled methods execute in bounded JVM chunks through `PerTestCoverage`, with isolated
 class loaders for distinct snapshots. Each snapshot supplies its classpath and
 filesystem resources. The helper dumps and resets JaCoCo after each test;
-parameterized invocations are unioned by `class#method`. Only scope source-file
-coordinates from `population/scope.json` are persisted for policy survival.
+parameterized invocations are unioned by `class#method`. By default, policy survival persists coordinates from the anchor scope. A
+production coverage baseline supplies the commit-specific production universe
+for pools, survival and policy coverage.
 The JaCoCo agent and CLI version follow the runner JDK (0.8.14 on JDK 22+, including
 JDK 25), even when production classes were compiled with `--release 17`.
 
@@ -194,8 +195,10 @@ content. Identical snapshots stored at different paths share runs, while changed
 helpers or resources cannot overwrite a carried snapshot. A run contains the
 union of methods needed from that snapshot across all policies; policy
 rows select from that record. Baseline source records are also imported for
-carried tests. Skips and build failures preserve the current alive set. The cover step performs no Java execution. It computes the union of alive policy tests after each commit's transitions, and counts
-covered changed executable scope lines using the baseline executable universe.
+carried tests. Skips and build failures preserve the current alive set. The cover step performs no Java execution. In scope mode it counts changed executable lines covered by the
+alive policy tests after each commit's transitions. Production mode counts the
+hits of methods alive entering each commit and uses the new composition at a
+regeneration boundary.
 Totals sum line/commit pairs, rather than deduplicating a line across history.
 Container teardown probes are reset separately and excluded from per-test hits,
 so one class's cleanup cannot contribute coverage to the next class's tests.
@@ -309,7 +312,7 @@ Segment 1, `none`, and kept developer references consume the read-only baseline;
 they do not retroactively remeasure it with a different selection setting.
 
 Selection uses endpoint changes since each method's last actual execution,
-including intervening untouched and failed-build commits. It carries usable scope
+including intervening untouched and failed-build commits. It carries usable per-test
 lines along with state. Missing dependencies, unknown classpath/POM evidence,
 unbounded dependencies, and unusable coverage force measurement. Coverage repair
 preserves consumed verdicts and retains `remeasured_state` when results disagree;

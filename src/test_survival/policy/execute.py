@@ -172,8 +172,11 @@ class Runs:
                     raise ValueError('Incomplete policy batch inventory')
                 observed = [observations[identity(t)] for t in methods]
                 scope = {c['file'] for c in self.b.scope['classes']}
-                observed = [{**t, 'message':t.get('message', '')[:4000], **({'lines':[line for line in t['lines'] if line[0] in scope]} if 'lines' in t else {})}
-                            for t in observed]
+                observed = [{**t, 'message':t.get('message', '')[:4000]} for t in observed]
+                if self.b.execution_config['coverage'].get('universe') != 'production':
+                    for row in observed:
+                        if 'lines' in row:
+                            row['lines'] = [line for line in row['lines'] if line[0] in scope]
                 complete = all(usable_lines(t) for t in observed)
                 # Reasons are derived from the final rows, kept or measured, so a
                 # rewrite carries a disagreement or a non-executing remeasure over.
@@ -436,7 +439,8 @@ def survive(b, plan, pools, step):
         directory = b.exp/'results/policy'/p
         ledger = selection_at[p].rows()
         write_json(directory/'selection-counts.json',ledger)
-        write_json(directory/'final-summary.json',dict(selection='all',selection_totals=selection_at[p].totals(b.groups)))
+        write_json(directory/'final-summary.json',dict(selection='all',selection_totals=selection_at[p].totals(b.groups),
+                         **({'coverage_scope':'production'} if b.execution_config.get('coverage', {}).get('universe') == 'production' else {})))
         write_json(directory/'segments.json', segments[p])
         write_json(directory/'alive.json', alive_at[p])
         write_csv(directory/'survival.csv',curves[p],list(curves[p][0]))

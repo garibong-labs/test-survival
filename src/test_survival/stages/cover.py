@@ -1,13 +1,16 @@
 from ..denominators import frozen_after_control
 from collections import defaultdict, Counter
+from functools import lru_cache
 import re
 
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,read_csv,write_json,write_csv,result_exists
+from ..report import coverage_total
 from ..pipeline import log
 from ..work import release_checkout
 from ..runner import measurement_session
 from ..config import group_names, execution_groups
+from ..rules.coverage import coordinates
 from ..rules.commits import coverage_indices
 from .survive import skipped_commits
 
@@ -50,31 +53,48 @@ def aggregate(exp,config):
     scope={r['file'] for r in read_json(exp/'population/scope.json')['classes']}
     indices=[int(r['index']) for r in read_csv(exp/'results/coverage-commits.csv')]
     aliases=read_json(exp/'results/coverage-index-aliases.json',{})
-    maps={};missing=[];identical=[];mismatches=[]
-    for i in indices:
-        maps[i]={}
+    # A production map can be large. Changed-line aggregation only needs the
+    # current and predecessor maps, even across a skipped predecessor alias.
+    @lru_cache(maxsize=2)
+    def line_maps(i):
+        result = {}
         failed_build = i != 0 and read_json(exp/f'results/builds/{i}.json', {}).get('build') == 'fail'
         for g in groups:
-            path=exp/f'results/coverage/{i}-{g}-lines.csv'
-            if failed_build or not result_exists(path):maps[i][g]=None;missing.append(dict(index=i,group=g));continue
-            rows=read_csv(path);data={(r['file'],int(r['line'])):r['covered']=='yes' for r in rows}
-            if len(data)!=len(rows):raise RuntimeError('Duplicate coverage lines')
-            maps[i][g]=data
-        available=[set(m) for m in maps[i].values() if m is not None]
-        if available and any(m!=available[0] for m in available):mismatches.append(i)
-        elif len(available)==len(groups):identical.append(i)
-    write_json(exp/'results/coverage-universe-mismatches.json',mismatches)
-    if mismatches:raise RuntimeError('Executable line universes differ across groups')
+            path = exp/f'results/coverage/{i}-{g}-lines.csv'
+            if failed_build or not result_exists(path):
+                result[g] = None
+                continue
+            rows = read_csv(path)
+            data = {(r['file'],int(r['line'])):r['covered']=='yes' for r in rows}
+            if len(data) != len(rows): raise RuntimeError('Duplicate coverage lines')
+            result[g] = data
+        return result
+
+    missing=[];identical=[];mismatches=[]
+    production = config['coverage'].get('universe') == 'production'
+    scope_only = config['survival'].get('execution') == 'batch' and not production
     rows=[];zero=unavailable=0
     def flatten(image):return {(file,int(line)) for file,lines in image.items() for line in lines}
-    for commit in commits:
-        if commit['changes-src-main']!='yes' or not config['coverage']['changed_line']:continue
-        i=int(commit['index']);change=read_json(exp/f'results/changes/{i}.json')
+    by_index = {int(r['index']):r for r in commits}
+    for i in indices:
+        current = line_maps(i)
+        missing.extend(dict(index=i,group=g) for g,m in current.items() if m is None)
+        available = [m.keys() for m in current.values() if m is not None]
+        if available and any(m!=available[0] for m in available):
+            mismatches.append(i)
+            continue
+        elif len(available)==len(groups):identical.append(i)
+        commit = by_index.get(i)
+        if not commit or commit['changes-src-main'] != 'yes' or not config['coverage']['changed_line']: continue
+        change = read_json(exp/f'results/changes/{i}.json')
         post=flatten(change['post_image']);pre=flatten(change['pre_image'])
-        current=maps[i];previous=maps[aliases.get(str(i-1),i-1)];available=[m for m in current.values() if m is not None]
+        previous = line_maps(aliases.get(str(i-1), i-1))
+        universe = available[0] if available else None
+        if production and universe is None and curves[i]['evaluated'] == 'yes':
+            universe = coordinates(exp, i, groups)
         row={k:commit[k] for k in ['index','sha','date','subject']}
         for category,changed in [('all',post),('scope',{p for p in post if p[0] in scope}),('other',{p for p in post if p[0] not in scope})]:
-            executable=changed&available[0].keys() if available and (config['survival'].get('execution') != 'batch' or category == 'scope') else None
+            executable=changed & universe if universe is not None and (not scope_only or category == 'scope') else None
             n=len(executable) if executable is not None else ''
             row[category+'_executable']=n
             for g in groups:
@@ -85,13 +105,21 @@ def aggregate(exp,config):
             row[g+'_lost']=int(curves[i][g+'_lost'])
             before=previous[g]
             row[g+'_pre_image_covered']=sum(before[p] for p in pre&before.keys()) if before is not None else ''
-        partition = 'scope' if config['survival'].get('execution') == 'batch' else 'all'
+        partition = 'scope' if scope_only else 'all'
         if row[partition+'_executable']=='':unavailable+=1
         elif row[partition+'_executable']==0:zero+=1
         rows.append(row)
+    write_json(exp/'results/coverage-universe-mismatches.json',mismatches)
+    if mismatches:raise RuntimeError('Executable line universes differ across groups')
     write_csv(exp/'results/changed-lines.csv',rows,list(rows[0]) if rows else ['index'])
     result=dict(coverage_indices=len(indices),production_changes=len(rows),identical_executable_line_sets=identical,missing=missing,zero_executable_change_commits=zero,unavailable_commits=unavailable)
     write_json(exp/'results/coverage-consistency.json',result)
+    if production:
+        last = max((i for i,r in curves.items() if r['evaluated'] == 'yes'), default=0)
+        coverage_total.baseline(exp, groups, [(i, curves[i]['sha']) for i in sorted({0, last})])
+    else:
+        for ext in ('csv', 'md'):
+            (exp/f'results/coverage-total.{ext}').unlink(missing_ok=True)
     return result
 
 
@@ -102,6 +130,9 @@ def run(exp,config):
     commits=read_csv(exp/'results/commits.csv')
     skipped=skipped_commits(exp,config,commits)
     indices,aliases=coverage_indices(commits,skipped,config['coverage'])
+    if config['coverage'].get('universe') == 'production':
+        measured = (int(r['index']) for r in read_csv(exp/'results/survival.csv') if r['evaluated'] == 'yes')
+        indices.update((0, max(measured, default=0)))
     if config['coverage']['changed_line']:
         for row in commits:
             if row['changes-src-main']!='yes':continue
