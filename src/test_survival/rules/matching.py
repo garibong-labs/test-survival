@@ -23,8 +23,10 @@ def renumber(entries):
         params = entry['method-name'].split('(',1)[1][:-1]
         return len(params.split(', ')) if params else 0, params
     for (cls, method), group in sorted(groups.items()):
-        if len({r['method-name'] for r in group}) != len(group):
-            raise ValueError('Duplicate focal signatures')
+        signatures = Counter(r['method-name'] for r in group)
+        for signature, count in signatures.items():
+            if count > 1:
+                raise ValueError(f'Duplicate focal signature {cls}.{signature} ({count} entries)')
         base = cls.rsplit('.',1)[-1]+'_'+method
         index = 1
         for entry in sorted(group, key=order):
