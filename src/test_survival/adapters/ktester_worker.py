@@ -3,7 +3,6 @@ import argparse
 import collections
 import csv
 import hashlib
-import importlib.util
 import json
 import logging
 import itertools
@@ -17,8 +16,13 @@ import sys
 import time
 import types
 sys.dont_write_bytecode=True
-from java_worker import execute,write_json
-import java_worker
+if __package__:
+    from . import java_worker
+    from ..rules.matching import renumber
+else:  # Direct worker invocation inside the KTester container.
+    import java_worker
+    from rules.matching import renumber
+execute, write_json = java_worker.execute, java_worker.write_json
 
 
 def csvout(path,rows,fields):
@@ -83,43 +87,129 @@ def index():
     jpype.shutdownJVM()
 
 
+def erase_generics(signature):
+    while re.search(r'<[^<>]*>', signature):
+        signature = re.sub(r'<[^<>]*>', '', signature)
+    return signature
+
+
+def simple_key(signature):
+    # Keep the historical comparison for groups with a single match.
+    simple = re.sub(r'(?:\w+\.)+(\w+)', r'\1', erase_generics(signature))
+    return re.sub(r'\s+', '', simple.replace('...', '[]'))
+
+
+def matching_positions(signature, qualified):
+    params = erase_generics(signature).partition('(')[2][:-1]
+    params = re.sub(r'\s+', '', params).replace('...', '[]')
+    types = params.split(',') if params else []
+    return [pos for pos, full_types in qualified.items() if len(types) == len(full_types)
+            and all(full == t or full.endswith('.' + t) for t, full in zip(types, full_types))]
+
+
+def match_class_methods(cls, eligible, extractor, index_methods):
+    """Return the original index spellings in Spoon source order."""
+    inventory = collections.defaultdict(list)
+    for signature in eligible:
+        inventory[simple_key(signature)].append(signature)
+
+    spoon = collections.defaultdict(list)
+    ct = extractor.getCtClass(cls)
+    ordered = sorted(ct.getMethods(), key=lambda m: m.getPosition().getLine())
+    for order, method in enumerate(ordered):
+        params = [p.getType() for p in method.getParameters()]
+        simple = ', '.join(str(t.getSimpleName()) for t in params)
+        key = simple_key(f'{method.getSimpleName()}({simple})')
+        if key in inventory:
+            spoon[key].append((order, params))
+
+    indexed = collections.defaultdict(list)
+    for name in {key.partition('(')[0] for key in inventory}:
+        for entry in index_methods.get(name, []):
+            declaration = entry['signature']
+            signature = declaration[declaration.index(name + '('):]
+            indexed[simple_key(signature)].append(signature)
+
+    selected = {}
+    for key, signatures in inventory.items():
+        overloads, candidates = spoon[key], indexed[key]
+        if len(signatures) == len(overloads) == len(candidates) == 1:
+            selected[overloads[0][0]] = candidates[0]
+            continue
+
+        # Spoon's qualified name retains the enclosing chain as pkg.Outer$Inner$X.
+        qualified = {pos: tuple(str(t.getQualifiedName()).replace('$', '.') for t in params)
+                     for pos, params in overloads}
+        index_positions = [(s, matching_positions(s, qualified)) for s in candidates]
+        name = key.partition('(')[0]
+        for signature in signatures:
+            positions = matching_positions(signature, qualified)
+            if len(positions) == 1:
+                pos = positions[0]
+                entries = [(s, matches) for s, matches in index_positions if pos in matches]
+                if pos not in selected and len(entries) == 1 and entries[0][1] == positions:
+                    entry = entries[0][0]
+                    # DatasetPrepare uses this lookup for the focal body. Its suffix match
+                    # can return BA.X for A.X even when the index keys are distinct.
+                    args = erase_generics(entry).partition('(')[2][:-1]
+                    if extractor.getCtMethod(ct, name, args.split(', ') if args else []) == ordered[pos]:
+                        selected[pos] = entry
+                        continue
+            spoon_names = [name + '(' + ', '.join(types) + ')' for types in qualified.values()]
+            raise ValueError(f'Cannot match KTester overloads one to one in {cls}: '
+                             f'inventory={signatures}, Spoon={spoon_names}, index={candidates}')
+
+    return [cls + '.' + selected[pos] for pos in sorted(selected)]
+
+
+def validate_population(entries, methods):
+    # The author writes test_classes/<simple test class>.java, then we archive those flat files.
+    owners = {field: {} for field in ('id', 'test-class', 'test-path', 'filename')}
+    actual = []
+    for row in entries:
+        method = row['class'] + '.' + row['method-name']
+        actual.append(method)
+        filename = row['test-class'].rsplit('.', 1)[-1] + '.java'
+        for field, seen in owners.items():
+            value = filename if field == 'filename' else row[field]
+            if value in seen:
+                raise ValueError(f'KTester {field} {value} is shared by {seen[value]} and {method}')
+            seen[value] = method
+    prepared, expected = collections.Counter(actual), collections.Counter(methods)
+    if prepared != expected:
+        raise ValueError(f'KTester population differs from matched methods: '
+                         f'missing={expected - prepared}, extra={prepared - expected}')
+    return dict(valid=True, entries=len(entries), unique_ids=len(owners['id']))
+
+
 def dataset():
     import jpype
-    from renumber_dataset_ids import renumber,validate
     inventory=json.loads((RESULTS/'source-inventory.json').read_text())
-    def normalized(signature):
-        while '<' in signature:
-            signature=re.sub(r'<[^<>]*>','',signature)
-        return re.sub(r'\s+','',re.sub(r'(?:\w+\.)+(\w+)',r'\1',signature).replace('...','[]'))
-    eligible={(m['class'],normalized(m['signature'])) for m in inventory['main']['methods'] if m['eligible']}
+    eligible = collections.defaultdict(list)
+    for method in inventory['main']['methods']:
+        if method['eligible']:
+            eligible[method['class']].append(method['signature'])
     scope=json.loads((EXP/'population/scope.json').read_text())
     start_jvm()
     extractor=jpype.JClass('extractor.SpoonExtractor')([str(PROJECT/'src/main/java')],[str(PROJECT/'libs')])
     indexed=json.loads((INDEX/'json'/(PROJECT_NAME+'.json')).read_text())['source']
     methods=[]
     for c in scope['classes']:
-        ct=extractor.getCtClass(c['class'])
-        for m in sorted(ct.getMethods(),key=lambda x:x.getPosition().getLine()):
-            sig=str(m.getSimpleName())+'('+', '.join(str(p.getType().getSimpleName()) for p in m.getParameters())+')'
-            if (c['class'],normalized(sig)) in eligible:
-                name=str(m.getSimpleName())
-                candidates=[name+x['signature'].split(name,1)[1] for x in indexed[c['class']]['methods'][name] if normalized(name+x['signature'].split(name,1)[1])==normalized(sig)]
-                assert len(candidates)==1,(sig,candidates)
-                methods.append(c['class']+'.'+candidates[0])
+        cls = c['class']
+        methods.extend(match_class_methods(cls, eligible[cls], extractor, indexed[cls]['methods']))
     assert len(methods)==scope['m'],(len(methods),scope['m'])
     meta=[dict(project_name=PROJECT_NAME,put_path='projects/'+PROJECT_NAME,method_name_to_idx={m:i for i,m in enumerate(methods)})]
     write_json(DS/'dataset_meta.json',meta)
     jpype.JClass('DatasetPrepare').main([str(DS)])
     jpype.shutdownJVM()
     shutil.copy2(DS/'dataset_info.json',DS/'dataset_info.raw.json')
-    raw=json.loads((DS/'dataset_info.raw.json').read_text());data=renumber(raw)
-    checked=validate(raw,data,expected_count=scope['m'])
+    data=json.loads((DS/'dataset_info.raw.json').read_text())
+    entries=renumber(data[PROJECT_NAME]['focal-methods'])
+    checked=validate_population(entries,methods)
+    data[PROJECT_NAME]['focal-methods']=entries
     write_json(DS/'dataset_info.json',data)
     for name in ['dataset_info.raw.json','dataset_info.json','dataset_meta.json']:
         shutil.copy2(DS/name,EXP/'population'/name)
-    entries=data[PROJECT_NAME]['focal-methods']
-    actual={m['class']+'.'+m['method-name'] for m in entries}
-    assert actual==set(methods),(actual^set(methods))
     csvout(EXP/'population/ktester-population.csv',entries,['id','class','method-name','test-class','test-path'])
     write_json(RESULTS/'ktester-population-validation.json',checked)
     print(json.dumps(checked),flush=True)
@@ -262,14 +352,6 @@ def main():
     settings.TimeRecord=type('TimeRecord',(),dict(TIME_RECORD_PATH=str(DS/'time'),TIME_FILE_NAME='time_records.json',START_RECORD=True))
     settings.BaseLine=type('BaseLine',(),dict(BASELINES=[],BASELINE_PATH=str(EXP/'work/ktester-baseline'),UTGEN_DATA=str(EXP/'work/utgen'),CHATUNITEST_DATA=str(EXP/'work/chatunitest')))
     sys.modules['settings']=settings
-    spec=importlib.util.spec_from_file_location('matching',Path(__file__).parents[1]/'rules/matching.py');matching=importlib.util.module_from_spec(spec);spec.loader.exec_module(matching)
-    def renumber(raw):
-        result=json.loads(json.dumps(raw));result[PROJECT_NAME]['focal-methods']=matching.renumber(result[PROJECT_NAME]['focal-methods']);return result
-    def validate(raw,data,expected_count):
-        rows=data[PROJECT_NAME]['focal-methods']
-        if len(rows)!=expected_count or len({r['id'] for r in rows})!=expected_count:raise RuntimeError('KTester dataset validation failed')
-        return dict(valid=True,entries=len(rows),unique_ids=len({r['id'] for r in rows}))
-    sys.modules['renumber_dataset_ids']=types.SimpleNamespace(renumber=renumber,validate=validate)
     if JOB['action']=='prepare':prepare()
     elif JOB['action']=='index':index()
     elif JOB['action']=='dataset':dataset()
