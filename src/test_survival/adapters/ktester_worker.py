@@ -18,10 +18,12 @@ import types
 from typing import NamedTuple
 sys.dont_write_bytecode=True
 if __package__:
-    from . import java_worker
+    from . import java_worker, ktester_classpath
+    from ..rules.ktester_round import fully_visited
     from ..rules.matching import renumber
 else:  # Direct worker invocation inside the KTester container.
-    import java_worker
+    import java_worker, ktester_classpath
+    from rules.ktester_round import fully_visited
     from rules.matching import renumber
 execute, write_json = java_worker.execute, java_worker.write_json
 
@@ -61,9 +63,9 @@ def prepare():
     assert attempts[-1]['exit_code']==0,attempts
     if submodule:
         if (PROJECT/'libs').exists():shutil.rmtree(PROJECT/'libs')
-        shutil.copytree(reactor_libs,PROJECT/'libs')
+        if reactor_libs.is_dir():shutil.copytree(reactor_libs,PROJECT/'libs')
+    (PROJECT/'libs').mkdir(exist_ok=True)
     jars=sorted((PROJECT/'libs').glob('*.jar'))
-    assert jars
     (PROJECT/'dependencies.txt').write_text('target/classes:'+':'.join('libs/'+p.name for p in jars))
     write_json(DS/'dataset_info.json',{PROJECT_NAME:{'project-name':PROJECT_NAME,'project-url':'projects/'+PROJECT_NAME,'focal-methods':[]}})
     (DS/'.gitignore').write_text('**/target/\n**/*.jar\n__pycache__/\n')
@@ -294,34 +296,100 @@ def dataset():
     print(json.dumps(checked),flush=True)
 
 
-def observe_repairs(author, out):
-    """Best-effort observer: missing hooks or marker failures never skip repair."""
-    try:
-        repairer = author.Post.CodeRepairer
-        original_check = repairer.check_test_class
-        if not callable(original_check):
-            return
+class PostProcess(logging.Handler):
+    """Observe terminal outcomes for dataset IDs and the author's project future."""
+    def __init__(self):
+        super().__init__()
+        self.started = set()
+        self.outcomes = {}
+        self.finished = False
+        self.project_error = None
 
-        def marker(task_info, status):
-            try:
-                path = out/'progress'/(task_info['id']+'.json')
-                write_json(path, {'class': task_info['test-class'], 'status': status})
-            except Exception:
-                pass  # Observability must not change the author's result.
+    def emit(self, record):
+        message = record.getMessage()
+        if message.startswith('Post process completed:'):
+            self.finished = True
+        elif message.startswith('Error in post process:'):
+            self.project_error = message
 
-        def check(self, task_info, *args, **kwargs):
-            marker(task_info, 'running')
-            try:
-                value = original_check(self, task_info, *args, **kwargs)
-            except BaseException:
-                marker(task_info, 'failed')
-                raise
-            marker(task_info, 'completed')
-            return value
+    def summary(self, expected, failure=None):
+        visited = expected.intersection(self.started)
+        errors = [error for i, error in self.outcomes.items() if i in expected and error]
+        error = self.project_error
+        if not expected.issubset(self.outcomes) or not self.finished:
+            error = error or failure or f'Project post-process ended after {len(visited)} of {len(expected)} classes'
+        return dict(status='incomplete' if error else 'completed', visited=len(visited),
+                    total=len(expected), skipped=len(errors), error=error or next(iter(errors), None))
 
-        repairer.check_test_class = check
-    except Exception:
-        pass  # Other author-tool revisions may not expose this optional hook.
+
+def observe_repairs(author, out, observer=None):
+    repairer = getattr(getattr(author, 'Post', None), 'CodeRepairer', None)
+    original_check = getattr(repairer, 'check_test_class', None)
+    if not callable(original_check):
+        return
+
+    def marker(task, status, error=None):
+        try:
+            write_json(out/'progress'/(task['id']+'.json'),
+                       {'class': task['test-class'], 'status': status, 'error': error})
+        except OSError:
+            pass  # Live progress is optional. The final count uses in-memory outcomes.
+
+    def check(self, task, *args, **kwargs):
+        if observer is not None:
+            observer.started.add(task['id'])
+        marker(task, 'running')
+        try:
+            value = original_check(self, task, *args, **kwargs)
+        except Exception as exc:
+            error = f"{task['test-class']}: {type(exc).__name__}: {exc}"
+            if observer is not None:
+                observer.outcomes[task['id']] = error
+            marker(task, 'failed', type(exc).__name__)
+            raise
+        if observer is not None:
+            observer.outcomes[task['id']] = None
+        marker(task, 'completed')
+        return value
+
+    repairer.check_test_class = check
+
+
+def resolve_console(version, destination):
+    # Projects can bring any JUnit release. Fetch just its matching launcher
+    # when the runner cache does not already have it.
+    coordinate = f'org.junit.platform:junit-platform-console-standalone:{version}'
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory(dir=destination.parent) as scratch:
+        staged = Path(scratch)/destination.name
+        java_worker.maven_dependencies.maven(
+            'dependency:copy', Path(scratch), RESULTS/'ktester-console', 600, execute,
+            options=('-Dartifact='+coordinate, '-DoutputDirectory='+scratch), verify=staged.is_file)
+        staged.replace(destination)
+
+
+def retire_round(out, destination):
+    from uuid import uuid4
+    history = EXP/'work/generation-history'/uuid4().hex/JOB['group']
+    for path in (destination, out):
+        if path.exists():
+            record = java_worker.result_io.read_json(path/'run.json', {})
+            verified_copy = fully_visited(record) and (path == destination or not destination.exists())
+            if record.get('status') != 'completed' or verified_copy:
+                raise RuntimeError('Interrupted or unexpected KTester round; inspect '+str(path))
+    for path, kind in ((out, 'worker'), (destination, 'generated')):
+        if path.exists():
+            archived = history/kind/path.name
+            archived.parent.mkdir(parents=True)
+            path.rename(archived)
+    # These two directories contain only the author's generated sources and
+    # compiled tests. Keep an old skipped class out of the replacement snapshot.
+    for relative in ('src/test/java', 'target/test-classes'):
+        path = PROJECT/relative
+        if path.exists():
+            archived = history/'project-workspace'/relative
+            archived.parent.mkdir(parents=True, exist_ok=True)
+            path.rename(archived)
 
 
 def generate():
@@ -329,12 +397,18 @@ def generate():
     label=JOB['label']
     ds=DS
     out=ds/'rounds'/label
-    if (out/'run.json').exists():return
-    if out.exists():raise RuntimeError('Interrupted KTester calls require ledger inspection before retry')
-    out.mkdir(parents=True)
+    destination = EXP/'generated'/JOB['group']/label
     os.chdir(TOOL/'code');sys.path.insert(0,str(TOOL/'code'))
     from settings import FileStructure as FS, TaskSettings as TS, LLMSettings as LS, TimeRecord as TR
     FS.DATASET_PATH=os.path.relpath(DS,TOOL/'code')
+    # Resolve dependencies before opening the model-call ledger.
+    supplement = PROJECT/'target/ktester-test-libs'
+    classpath = ktester_classpath.configure(PROJECT, EXP/'work/libs', supplement, resolve_console)
+    if out.exists() or destination.exists():
+        retire_round(out, destination)
+    out.mkdir(parents=True)
+    write_json(out/'test-classpath.json', classpath)
+    FS.DEPENDENCY_PATH = os.path.relpath(supplement, TOOL/'code')
     FS.CODE_INFO_PATH=FS.DATASET_PATH+'/project_index'
     for field,folder in [('PROMPT_PATH','context+prompts'),('FIX_PATH','fix'),('RESPONSE_PATH','responses'),('TESTCLASSS_PATH','test_classes'),('REPORT_PATH','reports')]:
         setattr(FS,field,str(out/'<project>'/folder))
@@ -385,25 +459,40 @@ def generate():
     logging.basicConfig(filename=str(out/'generation.log'),level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     class SecretFilter(logging.Filter):
         def filter(self,record):
-            record.msg=record.getMessage().replace(key,'KEY_OK (value never logged)');record.args=();return True
+            record.msg=record.getMessage().replace(key,'KEY_OK (value never logged)');record.args=()
+            if record.exc_info:
+                record.exc_text = logging.Formatter().formatException(record.exc_info).replace(key, 'KEY_REDACTED')
+            return True
     for handler in logging.getLogger().handlers:handler.addFilter(SecretFilter())
     import jpype
     import preparation
     preparation.set_file_structure()
     jpype.startJVM(jpype.getDefaultJVMPath(),'-Xmx4g',classpath=['./Java/project-info-process.jar','./Java/project-index-builder.jar'])
     start=time.monotonic();status='completed';error=None
+    rows = json.loads((DS/'dataset_info.json').read_text())[PROJECT_NAME]['focal-methods']
+    expected = {row['id'] for row in rows}
+    observer = PostProcess()
+    logger = logging.getLogger('procedure.post_process')
+    logger.addHandler(observer)
     try:
         import generate_unit_test
-        observe_repairs(generate_unit_test,out)
+        observe_repairs(generate_unit_test, out, observer)
         generate_unit_test.run()
     except Exception as exc:
         status='failed';error=type(exc).__name__
         logging.error('KTester round failed: %s',type(exc).__name__)
     finally:
+        logger.removeHandler(observer)
         jpype.shutdownJVM()
-        result=dict(round=args.round,status=status,error_type=error,seconds=round(time.monotonic()-start,3),model_calls=len(list(raw.glob('*/call.json'))),model=LS.MODEL,temperature=LS.TEMPERATURE,fix_tries=TS.FIX_TRIES,workers=TS.MAX_WORKERS,prompts_unmodified=True,provider_pinned=False)
+        post = observer.summary(expected, error)
+        if post['error']:
+            post['error'] = post['error'].replace(key, 'KEY_REDACTED')
+        if post['status'] != 'completed':
+            status = 'failed'
+        result=dict(post_process=post,round=args.round,status=status,error_type=error,seconds=round(time.monotonic()-start,3),model_calls=len(list(raw.glob('*/call.json'))),model=LS.MODEL,temperature=LS.TEMPERATURE,fix_tries=TS.FIX_TRIES,workers=TS.MAX_WORKERS,prompts_unmodified=True,provider_pinned=False)
         write_json(out/'run.json',result)
-        destination=EXP/'generated'/JOB['group']/label
+        if status == 'failed':
+            write_json(out/'funnel.json', dict(post_process=post))
         # Never archive credentials, jars, or compiled classes.
         shutil.copytree(out,destination,ignore=shutil.ignore_patterns('*.class','*.jar'),dirs_exist_ok=True)
         project=PROJECT
@@ -414,6 +503,8 @@ def generate():
                 result['credential_redactions']=result.get('credential_redactions',0)+1
         write_json(RESULTS/f"{JOB['group']}-{label}.json",result)
         print(json.dumps(result),flush=True)
+    if status != 'completed':
+        raise RuntimeError(error or post['error'])
 
 
 def main():
@@ -431,7 +522,10 @@ def main():
     settings.TimeRecord=type('TimeRecord',(),dict(TIME_RECORD_PATH=str(DS/'time'),TIME_FILE_NAME='time_records.json',START_RECORD=True))
     settings.BaseLine=type('BaseLine',(),dict(BASELINES=[],BASELINE_PATH=str(EXP/'work/ktester-baseline'),UTGEN_DATA=str(EXP/'work/utgen'),CHATUNITEST_DATA=str(EXP/'work/chatunitest')))
     sys.modules['settings']=settings
-    if JOB['action']=='prepare':prepare()
+    if JOB['action']=='retire':
+        for label in JOB['superseded']:
+            retire_round(DS/'rounds'/label, EXP/'generated'/JOB['group']/label)
+    elif JOB['action']=='prepare':prepare()
     elif JOB['action']=='index':index()
     elif JOB['action']=='dataset':dataset()
     elif JOB['action']=='generate':generate()

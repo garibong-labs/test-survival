@@ -165,7 +165,7 @@ Each generation attempt uses a new round number; zero-compile results do not ret
 
 ### `ktester` / `author-tool`
 
-Tool: `~/_projects/experiment-projects/KTester` on branch `experiment/2026-10-week4-jsv-commit-survival` (contains the extractor patch for `NetworkXNoPath`). Record its HEAD sha as `ktester_base` in `anchor.json`. Do not copy the tool into this repository.
+Set `tool_path` to the Hamjoon/KTester runtime checkout. For per-class repair recovery, use `tool/ktester-runtime` with the signature-based helper merge and per-class exception guard. The adapter also checks visit counts when an older runtime catches and logs a project failure. Preparation records the checkout’s HEAD as `ktester_base` in `anchor.json`.
 
 The wrapper ports `prepare_ktester.py` (dataset preparation from `population/ktester-population.csv`, `DatasetPrepare`, then deterministic id renumbering from `renumber_dataset_ids.py` into `rules/matching.py`), `generate_ktester.py` (params `fix_tries`, `temperature`, `workers`), and `record_ktester_completion.py`. Output layout under `generated/ktester/round1/`: `json-schema-validator/test_classes/*.java` (the tool's output tree, project name as the tool writes it), `raw-responses/`, `generation.log`, `run.json`, `time/`, `sources/` (flat copy of produced test files), `funnel.json`, `funnel.md`. The tool is invoked inside the container defined by the generator's `docker` override when present, otherwise `runner.docker`. The KTester tool needs JDK 17; when the runner image is a newer JDK (ta4j-core needs 25), the override points at the KTester compose.
 

@@ -410,6 +410,26 @@ state, stage hashes, or execution provenance.
 
 Funnel JSON records `group`, `round`, `files`, `compiled`, `methods`, `stable_runs`, `stable_passed`, `duplicates`, `kept_this_round`, `total_kept`, `developer_denominator`, `ratio_to_dev`, `per_prompt`. The stable count means methods passing every configured screening run. Readers accept old `stable_3_of_3` counts; new funnels explicitly state the run count. Developer pool funnels use the same two fields alongside `discovered`, `selected`, and `kept`. Reading old funnels does not rewrite their source files. Compile-failure records contain `file`, `category`, and `diagnostic`.
 
+### KTester post-process
+
+Each author round records `post_process` in `generated/<group>/round<N>/run.json` and `funnel.json`. After screening, the same object appears in the round's funnel in `rounds.json`.
+
+| Field | Meaning |
+|---|---|
+| `status` | `completed` when the author finishes the project loop and every expected class has a terminal outcome. Otherwise `incomplete`. |
+| `visited` | Number of distinct focal-method IDs that entered the class check. Each ID owns one test class. |
+| `total` | Number of classes in the project’s prepared focal-method dataset. |
+| `skipped` | Number of visited classes whose check raised an exception. A class can finish its allowed repair attempts with failing tests and still complete its check. |
+| `error` | Project-level failure or incomplete-loop diagnostic, otherwise the first class exception, otherwise `null`. |
+
+A completed loop can have skips. The patched KTester runtime records the class name and traceback in `generation.log`, and the adapter records the class and exception type in `progress/<id>.json`. An incomplete loop fails generation before screening. Its archive contains the model-call ledger, a failed round record, and a funnel with the post-process counts.
+
+When generation encounters an older completed KTester round without full visit evidence, it retains that round's files under `work/generation-history/` and generates fresh output under the configured round rules. The check also applies to regenerated policy pools. Importing generated KTester output requires a verified round record for each active round.
+
+`test-classpath.json` in each KTester round records `project`, `platform_version`, and the filenames `added` to the project's Maven test classpath. KTester uses the project’s jars first for both compilation and execution. Missing Mockito core, Mockito’s Jupiter extension, Byte Buddy, its agent, and Objenesis come from the runner's resolved libraries. Where needed, a matching JUnit Platform standalone console supplies Jupiter API, parameterized tests, engines, and the launcher. A project without a JUnit Platform release uses the runner's pinned console. If the project brings a different release, the adapter uses that release and resolves its console into `work/libs` on a cache miss. The dependency resolution tries Maven offline first. Conflicting project JUnit releases stop setup before model calls.
+
+The post-process contract changes the KTester group’s generate hash, aggregate generate hash, and screen, control, survive, cover, and report hashes for configurations with KTester. Prepare, scope, and Ouédraogo group generate hashes retain their previous values.
+
 ## Dashboard mappings
 
 | Layout | Inputs | Commit index | Alive | Denominator | Coverage |

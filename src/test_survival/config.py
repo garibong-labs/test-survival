@@ -605,6 +605,8 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
         data['coverage'] = c['coverage']
     if index >= 7:
         data = c
+    if index >= 2 and any(g.get('method', 'ktester') == 'ktester' for g in selected):
+        data['ktester_post_process_version'] = 1
     return data
 
 
