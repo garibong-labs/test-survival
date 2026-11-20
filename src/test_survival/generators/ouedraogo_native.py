@@ -1,10 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
-import hashlib
 import time
 
 from .base import RoundResult
 from ..config import generator_config
-from .parts import context,prompts,postprocess
+from .parts import context,import_hints,prompts,postprocess
 from .parts.extraction import extract
 from ..adapters.java_maven import JavaMavenAdapter
 from ..io import read_json,write_json,atomic_text,now
@@ -24,29 +23,46 @@ class OuedraogoNative:
         directory.mkdir(parents=True,exist_ok=True)
         scope=read_json(self.exp/'population/scope.json')['classes']
         settings=self.group['context']['dependency_signatures']
-        data=context.inventory(self.adapter,directory) if settings['enabled'] or self.group['postprocess']['import_repair']['enabled'] else None
+        hints_enabled = self.group['prompt'].get('import_hints', False)
+        data = None
+        if hints_enabled or settings['enabled'] or self.group['postprocess']['import_repair']['enabled']:
+            data = context.inventory(self.adapter, directory, import_hints=hints_enabled)
+        hints_checked = []
         jobs=[];blocks=[]
         keys=folder_keys([row['class'] for row in scope])
         for row in scope:
             name=row['class'].rsplit('.',1)[-1]
             key=keys[row['class']]
             source=(self.adapter.folder(0)/row['file']).read_text()
+            dest=directory/'prompts'/key
             block=''
+            dependencies=[]
             if settings['enabled']:
                 block,metadata=context.dependency_block(data,row['class'],source,settings)
-                dest=directory/'prompts'/key
+                dependencies=metadata['included']
                 atomic_text(dest/'dependency-signatures.txt',block)
                 write_json(dest/'dependency-block.json',metadata)
                 write_json(dest/'dependency-manifest.json',metadata)
                 blocks.append(metadata)
+            hints = ''
+            if hints_enabled:
+                hints, manifest = import_hints.render(data, row['class'], dependencies, settings)
+                import_hints.gate(hints, manifest, settings)
             for technique in self.group['params']['prompts']:
-                rendered=prompts.render(technique,name,source,block,self.group['prompt']['api_constraint'])
+                rendered=prompts.render(technique,name,source,block,self.group['prompt']['api_constraint'], hints)
                 path=directory/'prompts'/key/(technique+'.txt')
                 if path.exists() and path.read_text()!=rendered and (directory/'runs').exists():
                     raise RuntimeError('Cannot change a prompt after its model call')
                 atomic_text(path,rendered)
                 jobs.append((key,technique,rendered,row['class']))
-        write_json(directory/'prompts/pre-call-check.json',dict(passed=True,checked_at=now(),blocks=blocks,empty_angle_brackets=False,headers_valid=True))
+            if hints_enabled:
+                atomic_text(dest/'import-hints.txt', hints)
+                write_json(dest/'import-hints.json', manifest)
+                hints_checked.append(key)
+        check = dict(passed=True,checked_at=now(),blocks=blocks,empty_angle_brackets=False,headers_valid=True)
+        if hints_enabled:
+            check['import_hints_checked'] = hints_checked
+        write_json(directory/'prompts/pre-call-check.json', check)
         client=OpenRouter(self.config['model'])
         records=read_json(directory/'generation.json')
         if records is not None:

@@ -27,6 +27,7 @@ FIXTURES = {
     'test_container_owned_scratch_cleanup',
     'test_inventory_records_sealed_annotations_and_multiline',
     'test_inventory_skips_bad_type_without_partial_rows',
+    'test_imports_resolve_in_the_declaring_source_file',
     'test_policy_coverage_does_not_assign_container_teardown_to_next_test[jupiter]',
     'test_policy_coverage_does_not_assign_container_teardown_to_next_test[vintage]',
     'test_mixed_snapshot_batch_switches_every_test_data_folder',

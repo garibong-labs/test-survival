@@ -5,10 +5,12 @@ CONSTRAINT='Use only classes, constructors and methods that appear in the class 
 MODIFIERS=r'public|protected|private|abstract|static|final|strictfp|sealed|non-sealed'
 
 
-def render(technique,name,source,block='',constraint=False):
+def render(technique,name,source,block='',constraint=False,import_hints=''):
     root=files('test_survival.generators.parts').joinpath('templates')
     template=root.joinpath(technique+'.txt').read_text()
     appended=('\n\n'+CONSTRAINT if constraint else '')+('\n\n'+block if block else '')
+    if import_hints:
+        appended += '\n\n' + import_hints
     values={'{class_name}':name,'{source_code}':source+appended,'{fewshot_example}':root.joinpath('fewshot_example.txt').read_text()}
     return ''.join(values.get(piece,piece) for piece in re.split(r'(\{class_name\}|\{source_code\}|\{fewshot_example\})',template))
 

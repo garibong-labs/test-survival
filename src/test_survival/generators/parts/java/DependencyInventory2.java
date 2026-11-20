@@ -2,6 +2,7 @@ import com.sun.source.tree.*;
 import com.sun.source.util.*;
 import javax.tools.*;
 import javax.lang.model.element.Modifier;
+import javax.lang.model.element.TypeElement;
 import java.nio.file.*;
 import java.util.*;
 import java.util.stream.*;
@@ -47,13 +48,75 @@ class DependencyInventory2 {
   static String row(Object... fields) {
     return Arrays.stream(fields).map(x -> x == null ? "" : x.toString().replace('\t',' ').replace('\n',' ').replace('\r',' ')).collect(Collectors.joining("\t"));
   }
+  /** Resolve names in their declaring compilation unit, including inherited member types and
+   * type variables. Only trees used by the signature renderer contribute API references. */
+  static void importReferences(CompilationUnitTree unit, Trees trees, Map<ClassTree,String> names,
+                               Set<String> project, Set<Tree> signatureTrees) {
+    Set<String> imported = new LinkedHashSet<>(), wildcards = new HashSet<>();
+    for(ImportTree imp:unit.getImports()) {
+      String name=imp.getQualifiedIdentifier().toString();
+      if(name.endsWith(".*")) {
+        name=name.substring(0,name.length()-2);
+        wildcards.add(name);
+      } else if(!project.contains(name) && imp.isStatic()) {
+        // A static field or method import also names its declaring type.
+        name=name.substring(0,name.lastIndexOf('.'));
+      }
+      if(project.contains(name))imported.add(name);
+    }
+    Map<String,Set<String>> signatures=new LinkedHashMap<>();
+    new TreePathScanner<Void,Boolean>() {
+      String owner;
+      public Void visitClass(ClassTree cls,Boolean api) {
+        String previous=owner;
+        // Local/anonymous bodies can use a wildcard import from the enclosing file.
+        if(names.containsKey(cls)) {
+          owner=names.get(cls);
+          signatures.put(owner,new LinkedHashSet<>());
+        }
+        super.visitClass(cls,false);
+        owner=previous;
+        return null;
+      }
+      public Void scan(Tree node,Boolean api) {
+        return super.scan(node,api || signatureTrees.contains(node));
+      }
+      void reference(boolean api) {
+        if(owner==null || (!api && wildcards.isEmpty()))return;
+        if(trees.getElement(getCurrentPath()) instanceof TypeElement type) {
+          String name=type.getQualifiedName().toString();
+          if(project.contains(name)) {
+            if(api)signatures.get(owner).add(name);
+            int dot=name.lastIndexOf('.');
+            if(dot>=0 && wildcards.contains(name.substring(0,dot)))imported.add(name);
+          }
+        }
+      }
+      public Void visitIdentifier(IdentifierTree id,Boolean api) {
+        reference(api);
+        return null;
+      }
+      public Void visitMemberSelect(MemberSelectTree select,Boolean api) {
+        reference(api);
+        return super.visitMemberSelect(select,api);
+      }
+    }.scan(unit,false);
+    signatures.forEach((owner,refs) -> {
+      imported.forEach(t -> System.out.println(row("R",owner,"source-import",t)));
+      refs.forEach(t -> System.out.println(row("R",owner,"signature-type",t)));
+    });
+  }
   public static void main(String[] args) throws Exception {
     JavaCompiler compiler=ToolProvider.getSystemJavaCompiler();
     try(StandardJavaFileManager manager=compiler.getStandardFileManager(null,null,null)) {
       List<Path> paths;
       try(Stream<Path> s=Files.walk(Path.of(args[0]))) { paths=s.filter(p->p.toString().endsWith(".java")).sorted().collect(Collectors.toList()); }
       DiagnosticCollector<JavaFileObject> diagnostics=new DiagnosticCollector<>();
-      JavacTask task=(JavacTask)compiler.getTask(null,manager,diagnostics,List.of("-proc:none"),null,manager.getJavaFileObjectsFromPaths(paths));
+      boolean hints=args.length>1;
+      List<String> options=hints ? List.of("-proc:none","-classpath",args[1]) : List.of("-proc:none");
+      JavacTask task=(JavacTask)compiler.getTask(null,manager,diagnostics,options,null,manager.getJavaFileObjectsFromPaths(paths));
+      Map<ClassTree,String> names=new IdentityHashMap<>();
+      Set<Tree> signatureTrees=Collections.newSetFromMap(new IdentityHashMap<>());
       Iterable<? extends CompilationUnitTree> units=task.parse();
       SourcePositions positions=Trees.instance(task).getSourcePositions();
       for(CompilationUnitTree unit:units) {
@@ -64,6 +127,7 @@ class DependencyInventory2 {
           public Void visitClass(ClassTree cls,String parent) {
             String name=cls.getSimpleName().toString(); if(name.isEmpty())return null;
             String fqn=parent==null?(pkg.isEmpty()?name:pkg+"."+name):parent+"."+name;
+            if(hints)names.put(cls,fqn);
             List<String> rows=new ArrayList<>();
             kinds.put(fqn,cls.getKind());
             try {
@@ -89,6 +153,12 @@ class DependencyInventory2 {
               for(ImportTree imp:unit.getImports())rows.add(row("I",fqn,imp.getQualifiedIdentifier()));
               if(cls.getExtendsClause()!=null)rows.add(row("R",fqn,"super",cls.getExtendsClause()));
               for(Tree i:cls.getImplementsClause())rows.add(row("R",fqn,"super",i));
+              if(hints) {
+                cls.getTypeParameters().forEach(t -> signatureTrees.addAll(t.getBounds()));
+                if(cls.getExtendsClause()!=null)signatureTrees.add(cls.getExtendsClause());
+                signatureTrees.addAll(cls.getImplementsClause());
+                signatureTrees.addAll(cls.getPermitsClause());
+              }
               for(Tree member:cls.getMembers()) {
                 if(member instanceof MethodTree) {
                   MethodTree m=(MethodTree)member;
@@ -99,6 +169,12 @@ class DependencyInventory2 {
                   Set<Modifier> flags=m.getModifiers().getFlags();
                   boolean visible=flags.contains(Modifier.PUBLIC)||flags.contains(Modifier.PROTECTED)||cls.getKind()==Tree.Kind.INTERFACE||cls.getKind()==Tree.Kind.ANNOTATION_TYPE;
                   if(visible) {
+                    if(hints) {
+                      m.getTypeParameters().forEach(t -> signatureTrees.addAll(t.getBounds()));
+                      if(m.getReturnType()!=null)signatureTrees.add(m.getReturnType());
+                      m.getParameters().forEach(p -> signatureTrees.add(p.getType()));
+                      signatureTrees.addAll(m.getThrows());
+                    }
                     String mods=flags.stream().map(Object::toString).collect(Collectors.joining(" "));
                     String types=m.getTypeParameters().isEmpty()?"":"<"+m.getTypeParameters().stream().map(Object::toString).collect(Collectors.joining(", "))+"> ";
                     String params=m.getParameters().stream().map(p -> parameter(p,unit,positions,original)).collect(Collectors.joining(", "));
@@ -107,8 +183,12 @@ class DependencyInventory2 {
                   }
                 } else if(member instanceof VariableTree) {
                   VariableTree v=(VariableTree)member;rows.add(row("R",fqn,"field",v.getType()));
-                  if(v.getModifiers().getFlags().contains(Modifier.PUBLIC)||cls.getKind()==Tree.Kind.INTERFACE||cls.getKind()==Tree.Kind.ANNOTATION_TYPE)
+                  boolean component=cls.getKind()==Tree.Kind.RECORD && positions.getStartPosition(unit,v)<body;
+                  if(hints && component)signatureTrees.add(v.getType());
+                  if(v.getModifiers().getFlags().contains(Modifier.PUBLIC)||cls.getKind()==Tree.Kind.INTERFACE||cls.getKind()==Tree.Kind.ANNOTATION_TYPE) {
+                    if(hints)signatureTrees.add(v.getType());
                     rows.add(row("A",fqn,v.getModifiers().getFlags().stream().map(Object::toString).collect(Collectors.joining(" "))+" "+v.getType()+" "+v.getName()+";"));
+                  }
                 }
               }
               rows.forEach(System.out::println);
@@ -120,6 +200,13 @@ class DependencyInventory2 {
             return null;
           }
         }.scan(unit,null);
+      }
+      if(hints) {
+        // Resolve symbols after saving source-faithful declarations; analysis can rewrite the AST.
+        task.analyze();
+        Trees trees=Trees.instance(task);
+        Set<String> project=new HashSet<>(names.values());
+        for(CompilationUnitTree unit:units)importReferences(unit,trees,names,project,signatureTrees);
       }
       for(Diagnostic<?> d:diagnostics.getDiagnostics())if(d.getKind()==Diagnostic.Kind.ERROR)System.out.println(row("D",d.getSource(),d.getLineNumber(),d.getMessage(Locale.ROOT)));
     }

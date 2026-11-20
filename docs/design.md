@@ -91,6 +91,7 @@ generators:                     # generator groups follow the configured develop
       dependency_signatures: {enabled: false, max_types: 15, max_lines: 400}
     prompt:
       api_constraint: false
+      import_hints: false
     postprocess:
       import_repair: {enabled: false, passes: 2}
 
@@ -173,13 +174,41 @@ The wrapper ports `prepare_ktester.py` (dataset preparation from `population/kte
 
 Five prompt templates (`ZSL`, `FSL`, `CoT`, `ToT`, `GToT`) are packaged in `generators/parts/templates/` and preserve the archived jsoup templates. One model call per prompt type per scope class per round (5 classes × 5 types = 25 calls). Parameters `temperature`, `max_tokens`, `prompts` (list of enabled types). The native generator ports `generate_ouedraogo.py`, `tools/ouedraogo/generate.py`, `render_cut_prompts.py`, `extract_v2.py`, `extract_llm.py`, `dedup_lib.py`. Output layout under `generated/<group>/round<N>/`: `prompts/<Class>/<TYPE>.txt`, `raw-responses/`, `records/`, `runs/`, `sources/<Class>/<TYPE>/<TestClass>.java`, `validation/`, `validation-logs/`, `funnel.json`, `funnel.md`, `generation.json`. Every model call is recorded with request parameters, response metadata, and timing; never the key.
 
-Three optional adjustments. All three are off by default and are what distinguishes the groups `ouedraogo-adj` and `ouedraogo-adj2` from `ouedraogo` in the acceptance configuration.
+The native generator has four optional adjustments. The acceptance configuration enables the API constraint, dependency signatures and import repair for the adjusted groups.
 
 `prompt.api_constraint: true` appends these two sentences after the class source, identical for all five prompt types:
 
 > Use only classes, constructors and methods that appear in the class source above or in the dependency signatures below. Do not use APIs from other versions of this library. Construct real objects through the constructors or factory methods shown instead of mocking; do not mock or subclass abstract classes or interfaces of this library.
 
 `context.dependency_signatures.enabled: true` appends, after the constraint, one block per referenced project type: `// public API of <FQN>` followed by the type header with its declaration modifiers (`public abstract class ... extends ... implements ...`, `public interface ...`, `public enum ...`, nested `public static class ...`), constructors, and public/protected method signatures without bodies. Type parameters are printed only when the declaration has them. Varargs print as `Type...`. Referenced types are: imports under the project's base package (including nested types), same-package types used in field declarations, constructor parameters and method signatures, and the superclass chain. Order: superclass chain, constructor parameter types, field types, the rest. Cap at `max_types` types and `max_lines` lines; when the cap cuts, keep the earlier ones and record the omitted types in `prompts/<Class>/dependency-block.json`. Before any model call, render all blocks and fail the stage if any block contains `<>` with nothing inside or a malformed type header (package-private types legitimately have no access modifier) (this is the pre-call gate of the hand-run addendum). The Ouédraogo context helper lives in `generators/parts/java/DependencyInventory2.java`; the legacy copy in `adapters/java` remains unchanged because its bytes are part of completed runner provenance. The context helper uses the runner's JDK (17+) syntax parser, preserves record components and sealed `permits` clauses, and falls back to the AST for synthetic parameter positions. An unrenderable type produces an `S` row (FQN, source file, reason) in `source-api-inventory.tsv` and an entry in `skipped-types.json`, with no partial type/API rows. Parser errors also produce `D` diagnostic rows; other types remain available.
+
+#### Import hints
+
+Set `generators[].prompt.import_hints: true` on a native Ouédraogo group to include the package and imports. Every template places the same block at the end of its class-source placeholder, after the optional API constraint and dependency signatures. Any remaining template instructions follow it. This example shows the fixed wording and the JUnit 4, Hamcrest and Mockito imports supplied by the runner.
+
+```java
+// Use this package and copy the imports your test needs.
+package p;
+// Write nested types as Outer.Inner. When several outer classes declare the same simple name, qualify it with the declaring outer class.
+import p.Owner;
+import q.Ast;
+// Use Ast.Literal.
+import q.Core;
+// Use Core.Literal.
+import org.junit.Test;
+import static org.junit.Assert.*;
+import org.hamcrest.Matchers;
+import static org.hamcrest.MatcherAssert.assertThat;
+import org.mockito.Mockito;
+```
+
+Importing each outer class once lets the test use both nested types without a simple-name collision. When two outer classes share a name, the later one gets a fully qualified spelling. A conflicting library type also gets a fully qualified spelling. For an unnamed package, the package line becomes `// Use the unnamed package. Omit the package declaration.` and project types in that package get usage comments.
+
+The block lists the class under test first, then project types from its source imports, then each included dependency and project types named in its printed signature. The compiler resolves signature names in the declaring file. Wildcard imports contribute referenced project types. Each block independently uses `context.dependency_signatures.max_types` and `max_lines`, including when signatures are disabled. The import block counts unique project types (including the target) and all physical lines. It keeps the earliest complete entries and reserves space for the library lines. A line budget too small for the fixed lines and target fails before any call.
+
+Each round saves the exact block in `prompts/<Class>/import-hints.txt`. Its sibling `import-hints.json` lists included types, types omitted by the caps, and types without an accessible inventory declaration. The pre-call gate validates package and import syntax, name collisions, included types, library lines and caps for every class before the first request. New native round entries in `rounds.json` record the effective `import_hints` boolean.
+
+Omitting the setting or writing `false` preserves the original prompt bytes and hashes. Enabling it changes each affected call's `prompt_sha256`, the selected group's and aggregate `generate` configuration hashes, and the cumulative `screen`, `control`, `survive`, `cover` and `report` hashes. The `prepare`, `scope`, other groups' generation hashes and runner fingerprints retain their values. Policy pools use the same renderer at their regeneration commit. Their merged generator settings contribute to the policy execution hash. A prompt-only policy override preserves the planning hash.
 
 `postprocess.import_repair.enabled: true` runs after extraction and before screening, without model calls: compile each extracted file once; for every `cannot find symbol ... class X` where `X` resolves to exactly one type in the `t` source inventory (top-level or nested) or to exactly one type in `org.junit`, `org.junit.jupiter.api`, `org.mockito`, `org.mockito.stubbing`, `org.mockito.invocation`, `org.hamcrest`, add the import and compile again; at most `passes` passes; change nothing but import lines. Keep the pre-repair source as `<file>.pre-repair` beside the repaired file and record every added import per file in `round<N>/import-fixes.json`.
 

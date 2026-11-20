@@ -3,7 +3,7 @@ from copy import deepcopy
 import re
 
 from ..adapters.policy_coverage import COVERAGE_VERSION
-from ..config import ConfigError, Field, _validate, _strings, enum, integer
+from ..config import ConfigError, Field, _validate, _strings, enum, integer, omit_import_hints
 from ..rules.coverage import usable_lines
 from .segments import identity
 
@@ -53,8 +53,19 @@ def merge(base, override):
 
 def digest_options(options):
     # Composition changes must not invalidate already published pools.
-    return {k: ([{n:x for n,x in p.items() if n != 'developer'} for p in v] if k == 'set' else v)
+    result = {k: ([{n:x for n,x in p.items() if n != 'developer'} for p in v] if k == 'set' else v)
             for k,v in options.items() if k != 'regenerate_developer'}
+    # Pool prompts are already fingerprinted in the merged execution config.
+    # A prompt-only override does not move the planned regeneration points.
+    if 'generator_overrides' in result:
+        overrides = deepcopy(result['generator_overrides'])
+        for name, group in list(overrides.items()):
+            if 'import_hints' in group.get('prompt', {}):
+                omit_import_hints(group)
+                if not group:
+                    del overrides[name]
+        result['generator_overrides'] = overrides
+    return result
 
 
 def digest_plan(plan):

@@ -9,6 +9,7 @@ import pytest
 from test_survival.generators.parts import context
 from test_survival.generators.parts.prompts import gate
 from test_survival.io import read_json
+from test_junit4 import java_environment
 
 HELPER = Path(context.__file__).with_name('java')/'DependencyInventory2.java'
 
@@ -74,14 +75,14 @@ def inventory_java(tmp_path):
         if os.environ.get('SURVIVAL_REQUIRE_JAVA_TESTS') == '1':
             pytest.fail('Set SURVIVAL_JAVA_TEST_IMAGE for dependency inventory fixtures')
         pytest.skip('Set SURVIVAL_JAVA_TEST_IMAGE for dependency inventory fixtures')
-    def run(sources):
+    def run(sources, *, hints=False):
         root = tmp_path/'sources'
         root.mkdir()
         for name, source in sources.items():
             (root/name).write_text(source)
         result = subprocess.run(['docker', 'run', '--rm', '--network', 'none',
                                  '-v', f'{HELPER.parent}:/helper:ro', '-v', f'{root}:/sources:ro',
-                                 image, 'java', '/helper/DependencyInventory2.java', '/sources'],
+                                 image, 'java', '/helper/DependencyInventory2.java', '/sources', *(['.'] if hints else [])],
                                 capture_output=True, text=True, timeout=90)
         assert result.returncode == 0, result.stderr
         return result.stdout
@@ -146,3 +147,60 @@ def test_context_helper_preserves_legacy_runner_provenance(tmp_path):
     assert provenance[legacy.name] == hashlib.sha256(legacy.read_bytes()).hexdigest()
     assert provenance[legacy.name] != hashlib.sha256(HELPER.read_bytes()).hexdigest()
     assert not HELPER.is_relative_to(adapter.helpers)
+
+
+@pytest.mark.java_integration
+def test_imports_resolve_in_the_declaring_source_file(tmp_path, inventory_java, java_environment):
+    from test_survival.generators.parts import import_hints
+
+    text = inventory_java({
+        'Owner.java': '''package p;
+            import api.Api;
+            import ast.Ast.Literal;
+            import ops.*;
+            import static ops.Table.CONSTANT;
+            class Owner { Literal input; Op operation; Api api; }''',
+        'Api.java': '''package api;
+            import core.Core.Literal;
+            public class Api {
+                public Literal get() { return null; }
+                public <T extends core.Bound> void put(T item) {}
+                private core.Hidden secret;
+            }''',
+        'Ast.java': 'package ast; public class Ast { public static class Literal {} }',
+        'Core.java': 'package core; public class Core { public static class Literal {} }',
+        'Bound.java': 'package core; public interface Bound {}',
+        'Hidden.java': 'package core; public class Hidden {}',
+        'Op.java': 'package ops; public class Op {}',
+        'Table.java': 'package ops; public class Table { public static final int CONSTANT = 1; }',
+        'Unused.java': 'package ops; public class Unused {}',
+    }, hints=True)
+    assert not any(line.startswith(('S\t', 'D\t')) for line in text.splitlines()), text
+    data = inventory_from_text(tmp_path, text)
+    limits = dict(max_types=15, max_lines=400)
+    _, dependencies = context.dependency_block(data, 'p.Owner', 'Op operation;', limits)
+    block, meta = import_hints.render(data, 'p.Owner', dependencies['included'], limits)
+    import_hints.gate(block, meta, limits)
+    assert {'core.Core.Literal', 'core.Bound', 'ast.Ast.Literal', 'ops.Op', 'ops.Table'} <= set(meta['included'])
+    assert set(meta['included']).isdisjoint({'core.Hidden', 'ops.Unused'})
+    for name in ('ast.Ast', 'core.Core', 'ops.Op', 'ops.Table', 'core.Bound'):
+        assert f'import {name};' in block
+    assert '// Use Ast.Literal.' in block and '// Use Core.Literal.' in block
+
+    # Paste the complete block verbatim into a test and compile against the runner libraries.
+    sources = tmp_path/'sources'
+    (sources/'OwnerTest.java').write_text(block + """
+        public class OwnerTest {
+            @Test public void acceptsBoth() {
+                Ast.Literal a = null;
+                Core.Literal b = null;
+                assertThat(a, Matchers.nullValue());
+                assertNull(b);
+                Mockito.mock(Op.class);
+            }
+        }
+    """)
+    image, libs = java_environment
+    subprocess.run(['docker', 'run', '--rm', '--network', 'none', '-v', f'{sources}:/src:ro',
+                    '-v', f'{libs}:/libs:ro', image, 'javac', '-proc:none', '-cp', '/libs/*', '-d', '/tmp',
+                    *('/src/'+p.name for p in sorted(sources.glob('*.java')))], check=True, timeout=90)
