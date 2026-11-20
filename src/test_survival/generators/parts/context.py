@@ -3,13 +3,19 @@ from collections import defaultdict
 from pathlib import Path
 import re
 
-from ...io import write_json
+from ...io import read_json, write_json
 from .prompts import gate
 
 
-def inventory(adapter,directory):
+def inventory(adapter,directory, *, import_hints=False):
     log=directory/'prompts/source-api-inventory.tsv'
-    result=adapter.runner.execute(['java',str(Path(__file__).with_name('java')/'DependencyInventory2.java'),str(adapter.folder(0)/'src/main/java')],adapter.folder(0),log,adapter.config['runner']['timeouts']['compile'])
+    root = adapter.folder(0)
+    command = ['java', str(Path(__file__).with_name('java')/'DependencyInventory2.java'), str(root/'src/main/java')]
+    if import_hints:
+        build = read_json(adapter.exp/'results/builds/0.json', {})
+        classpath = (adapter.exp/build['classpath']).read_text().strip() if build.get('classpath') else ''
+        command.append(str(root/'target/classes') + (':'+classpath if classpath else ''))
+    result=adapter.runner.execute(command,root,log,adapter.config['runner']['timeouts']['compile'])
     if result['exit_code']:raise RuntimeError('Dependency inventory failed')
     skipped=[]
     types={};imports=defaultdict(list);refs=defaultdict(lambda:defaultdict(list));apis=defaultdict(list)

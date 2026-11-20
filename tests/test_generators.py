@@ -106,7 +106,7 @@ def test_failed_generate_reuses_ktester_and_25_ouedraogo_responses(tmp_path, mon
     preserved = [tmp_path/'generated/ktester/rounds.json', *sorted((directory/'raw-responses').glob('*.json'))]
     before = {p: p.read_bytes() for p in preserved}
     monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda self: None)
-    monkeypatch.setattr(context, 'inventory', lambda *args: None)
+    monkeypatch.setattr(context, 'inventory', lambda *args, **kwargs: None)
     def unexpected(*args):
         pytest.fail('Recorded model work must not be called again')
     monkeypatch.setattr(OpenRouter, 'complete', unexpected)

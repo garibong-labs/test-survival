@@ -57,6 +57,7 @@ generators:                     # list. Group name is `name`. `dev` is implicit 
       dependency_signatures: {enabled: false, max_types: 15, max_lines: 400}
     prompt:
       api_constraint: false
+      import_hints: false          # package, project types and JUnit 4 test imports
     postprocess:
       import_repair: {enabled: false, passes: 2}
 

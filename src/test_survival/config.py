@@ -188,7 +188,7 @@ GENERATOR = {
     'rounds': {'max': integer(1), 'until_dev_matched': Field(bool, False),
                'stop_after_zero_compile': integer(2, 0)},
     'context': {'dependency_signatures': {'enabled': Field(bool, False), 'max_types': integer(15), 'max_lines': integer(400)}},
-    'prompt': {'api_constraint': Field(bool, False)},
+    'prompt': {'api_constraint': Field(bool, False), 'import_hints': Field(bool, False)},
     'postprocess': {'import_repair': {'enabled': Field(bool, False), 'passes': integer(2)}},
 }
 SCHEMA = {
@@ -426,6 +426,8 @@ def validate(data):
             raise ConfigError(prefix + 'method/impl: not implemented in this version of the tool; implemented: ktester/author-tool, ouedraogo/native')
         if g['impl'] == 'author-tool' and g['tool_path'] is None:
             raise ConfigError(prefix + 'tool_path: required for author-tool')
+        if g['prompt']['import_hints'] and g['method'] != 'ouedraogo':
+            raise ConfigError(prefix+'prompt.import_hints: only supported for native Ouédraogo')
         g['display'] = g['display'] or g['name']
         given = set(g['params']) if isinstance(g['params'], dict) else set()
         g['params'] = _validate(g['params'], PARAMS[g['method']], prefix + 'params.')
@@ -540,9 +542,26 @@ def survival_inputs(config):
     return result
 
 
+def omit_import_hints(group):
+    """Remove this prompt-only input and any mapping introduced solely for it."""
+    prompt = group.get('prompt', {})
+    if 'import_hints' in prompt:
+        del prompt['import_hints']
+        if not prompt:
+            del group['prompt']
+
+
+def _written_hash_inputs(config):
+    c = as_written(config)
+    for group in c.get('generators', []):
+        if group.get('prompt', {}).get('import_hints') is False:
+            omit_import_hints(group)
+    return c
+
+
 def result_inputs(config):
     """Hash result-affecting settings, excluding scheduling and host wiring."""
-    c = as_written(config)
+    c = _written_hash_inputs(config)
     c.pop('policies', None)
     if c.get('survival', {}).get('selection') == 'all': c['survival'].pop('selection')
     if c.get('survival', {}).get('execution') == 'legacy':
@@ -570,7 +589,7 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
     if stage not in STAGES:
         raise ConfigError(f'stage: allowed values: {", ".join(STAGES)}')
     index = STAGES.index(stage)
-    c = as_written(c) if legacy else result_inputs(c)
+    c = _written_hash_inputs(c) if legacy else result_inputs(c)
     for g in c.get('dev', {}).get('groups', []):
         if index <= 3 or g.get('frozen', True):
             g.pop('frozen', None)

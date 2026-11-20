@@ -41,6 +41,8 @@ def run(exp,config,group=None,force=False):
             history.append(funnel['compiled'])
             action=decision(g['rounds'],round_no,history,len(kept),ndev)
             entries.append(dict(round=round_no,directory=label,funnel=funnel,model_calls=len(result.calls)))
+            if g['method'] == 'ouedraogo':
+                entries[-1]['import_hints'] = g['prompt'].get('import_hints', False)
             write_json(path,dict(config_hash=digest,rounds=entries,stopped=action if action!='next' else None))
             log(exp,f'generate: {g["name"]} {label}: {funnel["compiled"]} compiled files; {len(kept)} kept; {action}',config)
             if action=='next':round_no+=1
