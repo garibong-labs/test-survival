@@ -66,6 +66,10 @@ def screen_round(exp,config,g,directory,prior=()):
     ndev=len(read_csv(exp/'dev/dev-denominator.csv'))
     excluded=read_json(exp/'results/anchor.json',{}).get('dev_unmapped_excluded',0)
     funnel=dict(group=g['name'],round=directory.name,files=len(sources),compiled=sum(bool(r['compile']) and r['compile']['exit_code']==0 for r in records),methods=sum(len(r['methods']) for r in records),stable_runs=config['screen']['stable_runs'],stable_passed=stable,duplicates=duplicate,kept_this_round=stable-duplicate,total_kept=len(kept),developer_denominator=ndev,ratio_to_dev=len(kept)/ndev if ndev else None,per_prompt={})
+    if g['method'] == 'ktester':
+        post = read_json(directory/'run.json', {}).get('post_process')
+        if post is not None:
+            funnel['post_process'] = post
     funnel.update(dev_unmapped_excluded=excluded,notes=[unmapped_note(excluded)] if excluded else [])
     for tech in ['KTester'] if g['method']=='ktester' else ['ZSL','FSL','CoT','ToT','GToT']:
         selected=[r for r in records if g['method']=='ktester' or Path(r['file']).parent.name==tech]

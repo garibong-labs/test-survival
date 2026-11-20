@@ -96,9 +96,13 @@ def test_failed_generate_reuses_ktester_and_25_ouedraogo_responses(tmp_path, mon
     if manifest:
         write_json(directory/'generation.json', records)
     write_json(tmp_path/'population/scope.json', {'classes': scope})
+    write_json(tmp_path/'generated/ktester/round1/run.json',
+               dict(status='completed', post_process=dict(status='completed', visited=1, total=1, skipped=0, error=None)))
+    post = read_json(tmp_path/'generated/ktester/round1/run.json')['post_process']
+    write_json(tmp_path/'generated/ktester/round1/funnel.json', dict(post_process=post))
     write_json(tmp_path/'generated/ktester/rounds.json',
                {'config_hash': legacy_stage_hash(config, 'generate', 'ktester'), 'stopped': 'max-rounds',
-                'rounds': [{'round': 1, 'funnel': {'methods': 507, 'stable_3_of_3': 5}}]})
+                'rounds': [{'round': 1, 'funnel': {'methods': 507, 'stable_3_of_3': 5, 'post_process': post}}]})
     write_csv(tmp_path/'dev/dev-denominator.csv', [], ['class', 'method', 'kind'])
     for stage in STAGES[:2]:
         write_json(tmp_path/f'state/{stage}.json', {'status': 'completed', 'config_hash': stage_hash(config, stage)})

@@ -24,6 +24,15 @@ class Steps:
         self.digest = canonical_hash(dict(evidence_version=3, config=result_inputs(baseline.execution_config), policies=digest_options(baseline.options), plan=digest_plan(plan),
                                           frozen=baseline.frozen, survival=baseline.curves))
 
+    def pool_complete(self, output):
+        from ..generators.ktester_tool import verified_archives
+        root = output.parent
+        group = next((g for g in self.b.execution_config['generators']
+                      if g['name'] == root.parent.name and g['method'] == 'ktester'), None)
+        if group is None or read_json(root/'population/scope.json', {}).get('m') == 0:
+            return True
+        return verified_archives(root/'generated'/group['name'], group['rounds']['max'])
+
     def __call__(self, name, action, *, outputs=(), required_methods=None):
         path = self.b.guard(self.b.exp/f'state/policy-{name}.json')
         prior = read_json(path, {})
@@ -36,8 +45,13 @@ class Steps:
         fresh = True
         if name.startswith('run-'):
             fresh = all(reusable_run(read_json(p, {}), required_methods=required_methods) for p in outputs)
+        elif name.startswith('pool-') and outputs and prior.get('status') == 'completed':
+            fresh = self.pool_complete(outputs[0])
+            if not fresh:
+                for downstream in ('survive', 'cover', 'report'):
+                    (self.b.exp/f'state/policy-{downstream}.json').unlink(missing_ok=True)
         elif name == 'pools':
-            fresh = all(p.exists() for p in outputs)
+            fresh = all(p.exists() and self.pool_complete(p) for p in outputs)
         elif name in ('survive', 'cover', 'report'):
             fresh = prior.get('revision') == revision
             if name == 'survive' and fresh:

@@ -26,3 +26,19 @@ def test_legacy_retry_and_round_manifest_synthesis(tmp_path):
     assert state['config_hash']==stage_hash(load(exp),'generate')
     assert state['status']=='completed'
     assert len(read_json(exp/'state/import.json')['generated']['files'])==6
+
+
+def test_import_checks_ktester_post_process_before_copying(tmp_path):
+    import pytest
+    from test_survival.io import write_json
+    from test_survival.pipeline import PipelineError
+    src, dest = tmp_path/'source', tmp_path/'destination'
+    dest.mkdir()
+    (dest/'experiment.yaml').write_text(yaml.safe_dump(dict(name='fixture', project=dict(repo='/project'),
+        anchor='v1', generators=[dict(name='k', method='ktester', tool_path='/unused')])))
+    archive = src/'generated/k/round1'
+    write_json(archive/'run.json', dict(status='completed'))
+    write_json(archive/'funnel.json', dict(compiled=0))
+    with pytest.raises(PipelineError, match='unverified KTester'):
+        import_experiment(dest, src, 'generated')
+    assert not (dest/'generated').exists()

@@ -1,6 +1,7 @@
 import shutil
 from datetime import datetime,timezone
 from ..config import stage_hash,legacy_stage_hash
+from ..generators.ktester_tool import KTesterTool, verified_archives
 from ..generators.ouedraogo_native import OuedraogoNative
 from ..io import read_csv,read_json,write_json
 from ..pipeline import log
@@ -22,17 +23,20 @@ def run(exp,config,group=None,force=False):
             if source.exists():
                 archive=exp/'work/generation-history'/datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%f')/g['name']
                 archive.parent.mkdir(parents=True,exist_ok=True);shutil.move(source,archive)
+                work = exp/'work/ktester'/g['name']
+                if g['method'] == 'ktester' and work.exists():
+                    work.rename(archive.parent/('worker-'+g['name']))
         digest=stage_hash(config,'generate',g['name'])
         path=exp/'generated'/g['name']/'rounds.json'
         old=read_json(path,{})
         trusted=stage_current or saved.get('group_hashes',{}).get(g['name'])==digest
-        if (trusted or old.get('config_hash') in (digest, legacy_stage_hash(config, 'generate', g['name']))) and old.get('stopped'):
+        verified = g['method'] != 'ktester' or verified_archives(path.parent, g['rounds']['max'])
+        if verified and (trusted or old.get('config_hash') in (digest, legacy_stage_hash(config, 'generate', g['name']))) and old.get('stopped'):
             summaries.append(g['name']+': already generated');continue
         history=[];entries=[];kept=[];round_no=1
         while True:
             if g['method']=='ouedraogo':generator=OuedraogoNative(exp,config,g)
             else:
-                from ..generators.ktester_tool import KTesterTool
                 generator=KTesterTool(exp,config,g)
             result=generator.generate(round_no)
             label=f'round{round_no}'
@@ -44,7 +48,9 @@ def run(exp,config,group=None,force=False):
             if g['method'] == 'ouedraogo':
                 entries[-1]['import_hints'] = g['prompt'].get('import_hints', False)
             write_json(path,dict(config_hash=digest,rounds=entries,stopped=action if action!='next' else None))
-            log(exp,f'generate: {g["name"]} {label}: {funnel["compiled"]} compiled files; {len(kept)} kept; {action}',config)
+            post = funnel.get('post_process')
+            repair = f"; post-process {post['visited']}/{post['total']} visited, {post['skipped']} skipped" if post else ''
+            log(exp,f'generate: {g["name"]} {label}: {funnel["compiled"]} compiled files; {len(kept)} kept{repair}; {action}',config)
             if action=='next':round_no+=1
             else:break
         summaries.append(g['name']+': '+action)

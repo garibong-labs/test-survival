@@ -30,7 +30,7 @@ def completed(tmp_path, monkeypatch):
     for path in (dataset/'projects/source.java',dataset/'project_index/index'):
         path.parent.mkdir(parents=True,exist_ok=True);path.write_text('regenerable')
     work=dataset/'rounds/round1'
-    write_json(work/'run.json',dict(status='completed',round=1,model_calls=1))
+    write_json(work/'run.json',dict(status='completed',round=1,model_calls=1, post_process=dict(status='completed', visited=1, total=1, skipped=0, error=None)))
     write_json(work/'raw-responses/0001/call.json',dict(status='ok',seconds=1))
     write_json(work/'raw-responses/0001/request.json',dict(model='fixture',messages=[{'content':'original prompt'}]))
     write_json(work/'raw-responses/0001/response.json',dict(content='class Test {}'))
@@ -38,7 +38,9 @@ def completed(tmp_path, monkeypatch):
     archive=tmp_path/'generated/ktester/round1'
     shutil.copytree(work,archive)
     (archive/'sources').mkdir();shutil.copy2(source,archive/'sources/Test.java')
-    write_json(tmp_path/'generated/ktester/rounds.json',dict(config_hash=stage_hash(config,'generate','ktester'),stopped='max-rounds'))
+    post = read_json(archive/'run.json')['post_process']
+    write_json(archive/'funnel.json', dict(post_process=post))
+    write_json(tmp_path/'generated/ktester/rounds.json',dict(config_hash=stage_hash(config,'generate','ktester'),rounds=[dict(round=1,directory='round1',funnel=dict(post_process=post))],stopped='max-rounds'))
     write_json(tmp_path/'state/generate.json',dict(status='completed',config_hash=stage_hash(config,'generate')))
     write_json(tmp_path/'results/anchor.json',dict(sha='anchor'))
     summary=dict(status='completed',denominators={'ktester':1},model_rounds={'ktester':1},
@@ -85,7 +87,7 @@ def test_raising_round_limit_only_executes_the_new_round(completed,monkeypatch):
         job=read_json(Path(command[-1]));actions.append((job['round'],job['action']))
         if job['action']=='generate':
             new=exp/'generated/ktester'/job['label']
-            write_json(new/'run.json',dict(status='completed',round=job['round']))
+            write_json(new/'run.json',dict(status='completed',round=job['round'], post_process=dict(status='completed', visited=1, total=1, skipped=0, error=None)))
             for name,content in [('project/test_classes/Test.java','class Test { int generated; }'),
                                  ('sources/Test.java','class Test { int snapshot; }')]:
                 path=new/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(content)
@@ -158,3 +160,82 @@ def test_unverified_archive_never_reenters_generation(completed,status):
     with pytest.raises(RuntimeError,match='archive'):
         ktester_tool.KTesterTool(exp,config,config['generators'][0]).generate(1)
     assert snapshot(archive)==before
+
+
+@pytest.mark.parametrize('truncate', [False, True])
+def test_current_ledgers_require_verified_round_and_preserve_superseded_calls(completed, monkeypatch, truncate):
+    from test_survival import pipeline
+    from test_survival.adapters import ktester_worker
+    from test_survival.adapters.java_maven import JavaMavenAdapter
+    from test_survival.runner.docker import DockerRunner
+
+    exp, config, dataset, archive, _ = completed
+    write_csv(exp/'dev/dev-denominator.csv', [], ['id'])
+    for stage in ('prepare', 'scope'):
+        write_json(exp/f'state/{stage}.json', dict(status='completed', config_hash=stage_hash(config, stage)))
+    for path in (archive, dataset/'rounds/round1'):
+        write_json(path/'run.json', dict(status='completed'))
+    old_response = (archive/'raw-responses/0001/response.json').read_bytes()
+    post = dict(status='incomplete' if truncate else 'completed', visited=1, total=2 if truncate else 1,
+                skipped=0, error='stopped in fixture' if truncate else None)
+    actions = []
+    @contextmanager
+    def launch(exp, command, **kwargs):
+        job = read_json(Path(command[-1]))
+        actions.append(job['action'])
+        if job['action'] == 'retire':
+            assert job['superseded'] == ['round1']
+            monkeypatch.setattr(ktester_worker, 'EXP', exp, raising=False)
+            monkeypatch.setattr(ktester_worker, 'JOB', job, raising=False)
+            project = dataset/'projects/demo'
+            monkeypatch.setattr(ktester_worker, 'PROJECT', project, raising=False)
+            old_source = project/'src/test/java/Stale.java'
+            old_source.parent.mkdir(parents=True)
+            old_source.write_text('class Stale {}')
+            ktester_worker.retire_round(dataset/'rounds/round1', archive)
+        elif job['action'] == 'generate':
+            assert not archive.exists()
+            assert not (dataset/'projects/demo/src/test/java/Stale.java').exists()
+            # The coordinator checks the receipt even when a worker returns zero.
+            write_json(archive/'run.json', dict(status='completed', post_process=post))
+        yield SimpleNamespace(wait=lambda:None, returncode=0)
+    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda self: None)
+    monkeypatch.setattr(DockerRunner, 'command', lambda self, cmd, cwd: ['docker','run','fixture-only',*cmd])
+    monkeypatch.setattr(ktester_tool, 'launch', launch)
+    monkeypatch.setattr(ktester_tool, '_read', lambda *args: 'stub')
+    if truncate:
+        with pytest.raises(RuntimeError, match='stopped in fixture'):
+            pipeline.run(exp, config, stage='generate', no_panel=True)
+        assert read_json(exp/'state/generate.json')['status'] == 'failed'
+        assert read_json(dataset/'generate-round1.json')['status'] == 'failed'
+    else:
+        pipeline.run(exp, config, stage='generate', no_panel=True)
+        assert read_json(archive/'funnel.json')['post_process'] == post
+        assert read_json(archive.parent/'rounds.json')['rounds'][0]['funnel']['post_process'] == post
+    assert actions == ['retire', 'generate']
+    saved, = (exp/'work/generation-history').glob('*/ktester/generated/round1/raw-responses/0001/response.json')
+    assert saved.read_bytes() == old_response
+
+
+def test_policy_pool_skips_only_after_verified_round(completed):
+    from test_survival.policy.pipeline import Steps
+    exp, config, _, archive, _ = completed
+    root = exp/'results/policy/pools/ktester/3'
+    shutil.copytree(archive.parent, root/'generated/ktester')
+    pool = root/'pool.json'
+    write_json(pool, [])
+    baseline = SimpleNamespace(execution_config=config, exp=exp, options={'set':[]}, frozen={}, curves=[],
+                               guard=lambda path:path)
+    steps = Steps(baseline, {})
+    name = 'pool-ktester-3'
+    def complete():
+        write_json(exp/'state'/f'policy-{name}.json', dict(status='completed', config_hash=steps.digest))
+    complete()
+    action = []
+    steps(name, lambda:action.append(True), outputs=[pool])
+    assert not action
+    write_json(root/'generated/ktester/round1/run.json', dict(status='completed'))
+    write_json(exp/'state/policy-survive.json', dict(status='completed'))
+    steps(name, lambda:action.append(True), outputs=[pool])
+    assert action == [True]
+    assert not (exp/'state/policy-survive.json').exists()

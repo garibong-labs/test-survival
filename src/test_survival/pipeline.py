@@ -226,6 +226,12 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
             if current == 'control' and handlers is None:
                 from .denominators import control_policy_current
                 batch_current = batch_current and control_policy_current(exp, config)
+            unverified = set()
+            if current == 'generate' and handlers is None:
+                from .generators.ktester_tool import verified_archives
+                unverified = {g['name'] for g in config['generators'] if g['method'] == 'ktester'
+                              and not verified_archives(exp/'generated'/g['name'], g['rounds']['max'])}
+                batch_current = batch_current and not unverified
             if batch_current and not force and previous.get('status') == 'completed' and previous.get('config_hash') == digest:
                 log(exp, f'{current}: already completed; skipped', config)
                 if handlers is None:
@@ -241,7 +247,9 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
                 all_current = previous.get('status') == 'completed' and previous.get('config_hash') == digest
                 for g in config['generators']:
                     name = g['name']
-                    if all_current or hashes.get(name) == legacy_stage_hash(config, 'generate', name):
+                    if name in unverified:
+                        hashes.pop(name, None)
+                    elif all_current or hashes.get(name) == legacy_stage_hash(config, 'generate', name):
                         hashes[name] = stage_hash(config, 'generate', name)
                 state['group_hashes'] = hashes
                 if group:

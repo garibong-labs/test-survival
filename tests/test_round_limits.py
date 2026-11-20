@@ -34,8 +34,12 @@ def archived(tmp_path, monkeypatch):
     write_json(tmp_path/'results/anchor.json', dict(sha='t', date='date'))
     write_json(tmp_path/'population/scope.json', {'m':1, 'classes':[{'class':'A','file':'src/main/java/A.java','m':1}]})
     atomic_text(JavaMavenAdapter(tmp_path,c).folder(0)/'src/main/java/A.java', 'class A {}')
+    write_json(tmp_path/'generated/ktester/round1/run.json',
+               dict(status='completed', post_process=dict(status='completed', visited=1, total=1, skipped=0, error=None)))
+    post = read_json(tmp_path/'generated/ktester/round1/run.json')['post_process']
+    write_json(tmp_path/'generated/ktester/round1/funnel.json', dict(post_process=post))
     write_json(tmp_path/'generated/ktester/rounds.json',
-               dict(config_hash=stage_hash(c,'generate','ktester'), stopped='max-rounds', rounds=[]))
+               dict(config_hash=stage_hash(c,'generate','ktester'), stopped='max-rounds', rounds=[dict(round=1,directory='round1',funnel=dict(post_process=post))]))
     for n in (1,2):
         directory=tmp_path/f'generated/ouedraogo/round{n}'
         source=directory/f'sources/A/ZSL/Test{n}.java'; atomic_text(source, f'class Test{n} {{}}')
@@ -86,7 +90,7 @@ def test_lower_and_raise_reuse_archives_without_calls_or_credentials(archived):
     assert len(read_csv(exp/'results/llm-ouedraogo-denominator.csv'))==1
     from test_survival.progress import items, generation_progress
     assert items(exp,'screen',c,{})[1]==1
-    assert generation_progress(exp,c,{})['total']==1
+    assert generation_progress(exp,c,{'group':'ouedraogo'})['total']==1
     from test_survival.report.consistency import build
     write_csv(exp/'results/survival.csv', [dict(index=0, dev_alive=0, ktester_alive=0, ouedraogo_alive=1)],
               ['index','dev_alive','ktester_alive','ouedraogo_alive'])
