@@ -31,7 +31,14 @@ source overloads before coverage measurement.
 Affected-selection fixtures check iterative removal of erroneous sources,
 transitive helper dependencies, runtime class hits outside the coverage scope,
 concurrent JVM chunks, and peak JVM memory evidence.
-They do not run ta4j, Maven project builds, or any model calls.
+The Mockito fixtures resolve two small Maven profiles, one with AssertJ 3.24.2 and one
+that adds Mockito’s Jupiter extension 4.11.0 to the same dependencies. They check loaded jar
+versions and exercise ordinary, static and construction mocks under the
+author launcher’s classpath and the batch worker, and inject a broken pair before generation.
+To run the same check with the author’s JavaRunner, set `KTESTER_FIXTURE_TOOL` to its checkout
+and use an image with the author’s Python dependencies. The full offline author-round test
+uses the same library directory as `KTESTER_FIXTURE_LIBS`.
+The fixtures use local or stubbed inputs and make zero model calls.
 
 Missing image/library variables fail when `SURVIVAL_REQUIRE_JAVA_TESTS=1`; an absent
 or empty library directory always fails. The final JUnit XML check requires every named
@@ -50,11 +57,15 @@ To reproduce the Java fixture on a Docker-capable machine:
 ```sh
 python -m pip install -e '.[dev]'
 docker build --platform linux/amd64 -f ci/java.Dockerfile -t survival-java-ci:fixture ci
-python ci/java_fixture.py libraries /tmp/survival-java-libs
+export SURVIVAL_JAVA_TEST_LIBS=/tmp/survival-java-libs
+python ci/java_fixture.py libraries "$SURVIVAL_JAVA_TEST_LIBS"
+for profile in assertj project-mockito; do
+  mvn -B -q -f tests/fixtures/ktester/mockito/pom.xml -P"$profile" org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies -DincludeScope=test -DoutputDirectory="$SURVIVAL_JAVA_TEST_LIBS/$profile"
+done
 SURVIVAL_JAVA_TEST_IMAGE=survival-java-ci:fixture \
 SURVIVAL_JAVA_TEST_LIBS=/tmp/survival-java-libs \
 SURVIVAL_REQUIRE_JAVA_TESTS=1 \
-python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py tests/test_affected_selection.py --junitxml=java-results.xml
+python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py tests/test_affected_selection.py tests/test_mockito_classpath.py --junitxml=java-results.xml
 python ci/java_fixture.py report java-results.xml
 ```
 

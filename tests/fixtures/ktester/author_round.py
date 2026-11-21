@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -50,6 +51,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class {name} {{
     @ParameterizedTest @ValueSource(ints={{1}})
     public void exercise(int one, @Mock Runnable mock) {{
+        assertNotNull(Mockito.mock(Sample.class));
         mock.run();
         org.mockito.Mockito.verify(mock).run();
         assertEquals({1 if repairing else 0}, new Sample().{method}({argument}));
@@ -95,7 +97,7 @@ elif __name__ == '__main__':
     assert merged.count('class Helper') == 1 and merged.count('int lookup(') == 2 and 'return 12345;' in merged
     jpype.shutdownJVM()
     package.mkdir(parents=True)
-    (project/'libs').mkdir()
+    shutil.copytree(root/'work/libs/assertj', project/'libs')
     (project/'src/test-original/java').mkdir(parents=True)
     (package/'Sample.java').write_text('''package p;
 import java.lang.annotation.*;

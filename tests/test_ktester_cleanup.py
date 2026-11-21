@@ -162,8 +162,8 @@ def test_unverified_archive_never_reenters_generation(completed,status):
     assert snapshot(archive)==before
 
 
-@pytest.mark.parametrize('truncate', [False, True])
-def test_current_ledgers_require_verified_round_and_preserve_superseded_calls(completed, monkeypatch, truncate):
+@pytest.mark.parametrize('truncate, byte_buddy', [(False, False), (True, False), (False, True)])
+def test_current_ledgers_require_verified_round_and_preserve_superseded_calls(completed, monkeypatch, truncate, byte_buddy):
     from test_survival import pipeline
     from test_survival.adapters import ktester_worker
     from test_survival.adapters.java_maven import JavaMavenAdapter
@@ -174,7 +174,12 @@ def test_current_ledgers_require_verified_round_and_preserve_superseded_calls(co
     for stage in ('prepare', 'scope'):
         write_json(exp/f'state/{stage}.json', dict(status='completed', config_hash=stage_hash(config, stage)))
     for path in (archive, dataset/'rounds/round1'):
-        write_json(path/'run.json', dict(status='completed'))
+        if byte_buddy:
+            write_json(path/'test-classpath.json', dict(added=['mockito-core-5.24.0.jar', 'byte-buddy-agent-1.17.7.jar']))
+            (path/'generation.log').write_text('Caused by: java.lang.NoSuchFieldError: JAVA_V21\n'
+                                               '  org.mockito.internal.PremainAttachAccess.getInstrumentation(...)')
+        else:
+            write_json(path/'run.json', dict(status='completed'))
     old_response = (archive/'raw-responses/0001/response.json').read_bytes()
     post = dict(status='incomplete' if truncate else 'completed', visited=1, total=2 if truncate else 1,
                 skipped=0, error='stopped in fixture' if truncate else None)
@@ -239,3 +244,12 @@ def test_policy_pool_skips_only_after_verified_round(completed):
     steps(name, lambda:action.append(True), outputs=[pool])
     assert action == [True]
     assert not (exp/'state/policy-survive.json').exists()
+
+@pytest.mark.parametrize('log', ['1 tests successful', 'NoSuchFieldError: JAVA_V21\n  other.package.Method'])
+def test_compatible_project_byte_buddy_keeps_legacy_round(completed, log):
+    exp, config, _, archive, _ = completed
+    write_json(archive/'test-classpath.json', dict(added=['mockito-core-5.24.0.jar', 'byte-buddy-agent-1.17.7.jar']))
+    (archive/'generation.log').write_text(log)
+    assert ktester_tool.verified_archives(archive.parent, 1)
+    result = ktester_tool.KTesterTool(exp, config, config['generators'][0]).generate(1)
+    assert result.files == [archive/'project/test_classes/Test.java']

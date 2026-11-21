@@ -1,24 +1,25 @@
-"""Project-first classpath for KTester's javac and JUnit ConsoleLauncher."""
+"""Select Maven and runner jars for KTester's javac and ConsoleLauncher."""
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
+from tempfile import TemporaryDirectory
 
-MOCKITO_LIBRARIES = ('mockito-core', 'mockito-junit-jupiter', 'byte-buddy', 'byte-buddy-agent', 'objenesis')
 CONSOLE = 'junit-platform-console-standalone'
+MOCKITO_LIBRARIES = ('mockito-core', 'mockito-junit-jupiter', 'byte-buddy', 'byte-buddy-agent', 'objenesis')
+# Mockito 5 core supplies the inline maker. The legacy all-in-one and the
+# unshaded Byte Buddy jar can also shadow classes or plugin configuration.
+REPLACEMENTS = {name: name for name in MOCKITO_LIBRARIES}
+REPLACEMENTS.update({'mockito-inline': 'mockito-core', 'mockito-all': 'mockito-core', 'byte-buddy-dep': 'byte-buddy'})
 
 
-def artifacts(directory):
-    found = {}
-    for jar in sorted(directory.glob('*.jar')):
-        match = re.fullmatch(r'(.+?)-(\d[^/]*)\.jar', jar.name)
-        if match and not match[2].endswith(('-tests', '-sources', '-javadoc')):
-            name, version = match.groups()
-            if name.startswith('junit-') and name in found and found[name] != version:
-                raise ValueError(f'Conflicting project versions of {name}: {found[name]} and {version}')
-            found[name] = version
-    return found
+def artifact(jar):
+    match = re.fullmatch(r'(.+?)-(\d[^/]*)\.jar', Path(jar).name)
+    if match and not match[2].endswith(('-tests', '-sources', '-javadoc')):
+        return match.groups()
+    return None, None
 
 
 def platform_version(project):
@@ -34,9 +35,19 @@ def platform_version(project):
 
 
 def configure(project, runner_libs, supplement, resolve_console):
-    """Keep Maven jars first on both paths. The standalone includes Jupiter API, params and engines."""
     project_libs = project/'libs'
-    supplied = artifacts(project_libs)
+    # libs/* in the author runtime is non-recursive. Keep displaced originals in
+    # the disposable Maven snapshot so retries and later rounds see the same inputs.
+    displaced = project_libs/'ktester-displaced'
+    project_jars = {jar.name: jar for directory in (displaced, project_libs)
+                    for jar in sorted(directory.glob('*.jar'))}
+    supplied = {}
+    for jar in project_jars.values():
+        name, version = artifact(jar)
+        if name:
+            if name.startswith('junit-') and name in supplied and supplied[name] != version:
+                raise ValueError(f'Conflicting project versions of {name}: {supplied[name]} and {version}')
+            supplied[name] = version
     manifest = json.loads(Path(__file__).with_name('java').joinpath('classpath-artifacts.json').read_text())
     runner = {r['coordinate'].split(':')[1]: runner_libs/r['filename'] for r in manifest}
     version = platform_version(supplied) or runner[CONSOLE].stem.removeprefix(CONSOLE+'-')
@@ -48,10 +59,8 @@ def configure(project, runner_libs, supplement, resolve_console):
         if not console.is_file():
             resolve_console(version, console)
         added.append(console)
-    for name in MOCKITO_LIBRARIES:
-        if name not in supplied:
-            added.append(runner[name])
 
+    added.extend(runner[name] for name in MOCKITO_LIBRARIES)
     supplement.mkdir(parents=True, exist_ok=True)
     names = {jar.name for jar in added}
     for old in supplement.glob('*.jar'):
@@ -59,8 +68,39 @@ def configure(project, runner_libs, supplement, resolve_console):
             old.unlink()
     for jar in added:
         shutil.copy2(jar, supplement/jar.name)
-    project_jars = sorted(project_libs.glob('*.jar'))
-    entries = [os.path.relpath(jar, project) for jar in project_jars]
+
+    replaced = []
+    for jar in sorted(project_jars.values(), key=lambda p: p.name):
+        name, _ = artifact(jar)
+        if name in REPLACEMENTS:
+            displaced.mkdir(exist_ok=True)
+            destination = displaced/jar.name
+            replaced.append(dict(project_jar=jar.name, runner_jar=runner[REPLACEMENTS[name]].name))
+        else:
+            destination = project_libs/jar.name
+        if jar != destination:
+            jar.replace(destination)
+    entries = [os.path.relpath(jar, project) for jar in sorted(project_libs.glob('*.jar'))]
     entries.extend(os.path.relpath(supplement/jar.name, project) for jar in added)
     (project/'dependencies.txt').write_text(os.pathsep.join(['target/classes', *entries]))
-    return dict(project=project.name, platform_version=version, added=[jar.name for jar in added])
+    return dict(project=project.name, platform_version=version, added=[jar.name for jar in added], replaced=replaced)
+
+
+def smoke_test(project, supplement, *, env=None):
+    """Compile with the author's argument file and start its actual wildcard classpath."""
+    runtime = os.pathsep.join(['libs/*', 'target/test-classes', 'target/classes', str(supplement/'*')])
+    with TemporaryDirectory(dir=supplement.parent) as scratch:
+        source = Path(scratch)/'KTesterMockitoSmoke.java'
+        source.write_text('public class KTesterMockitoSmoke { public static void main(String[] args) {'
+                          ' org.mockito.Mockito.mock(KTesterMockitoSmoke.class); } }')
+        for command in (['javac', '-cp', '@dependencies.txt', '-d', scratch, str(source)],
+                        ['java', '-cp', scratch+os.pathsep+runtime, source.stem]):
+            try:
+                subprocess.run(command, cwd=project, capture_output=True, text=True, errors='replace',
+                               timeout=120, check=True, env=env)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+                jars = [str(p.relative_to(project)) for directory in (project/'libs', supplement)
+                        for p in sorted(directory.glob('*.jar')) if artifact(p)[0] in REPLACEMENTS]
+                detail = getattr(exc, 'stderr', None) or str(exc)
+                raise RuntimeError(f'KTester Mockito smoke test failed ({command[0]}). '
+                                   f'Active jars: {", ".join(jars)}\n{detail}') from exc
