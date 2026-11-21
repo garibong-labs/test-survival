@@ -5,7 +5,7 @@ import shutil
 
 from ..adapters.test_data import frozen_test_dirs
 from ..config import canonical_hash
-from ..frozen_tree import copy_frozen_tree, frozen_resource_hash
+from ..frozen_tree import FrozenTreeMismatch, copy_frozen_tree, frozen_resource_hash
 from ..io import read_csv, read_json
 
 
@@ -70,7 +70,7 @@ def snapshot(source_exp, destination, tests, *, group, method, scope, prefix):
                 shutil.copytree(source/'java', resource_root/'java')
         resources_hash = frozen_resource_hash(resource_root, record=False)
         if resources_hash != original:
-            raise RuntimeError('Frozen snapshot resources differ from baseline: '+str(resource_root))
+            raise FrozenTreeMismatch('Frozen snapshot resources differ from baseline: '+str(resource_root))
         if not pinned:
             frozen_resource_hash(resource_root)
     else:

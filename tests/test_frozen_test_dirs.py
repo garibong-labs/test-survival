@@ -116,3 +116,38 @@ def test_catalog_pins_an_empty_resource_tree(tmp_path):
     tree(root, ['resources'])
     with pytest.raises(RuntimeError, match='added resources/value'):
         frozen_resource_hash(root)
+
+
+@pytest.mark.parametrize('manifest', [True, False], ids=['per-file', 'legacy'])
+def test_cli_shows_frozen_tree_mismatch(tmp_path, capsys, manifest):
+    from test_survival.cli import main
+    from test_survival.frozen_tree import frozen_resource_hash
+    from test_survival.io import write_json
+
+    (tmp_path/'experiment.yaml').write_text('name: fixture\nproject: {repo: /repo}\nanchor: t\n')
+    root = tree(tmp_path/'dev/src-test-t', ['resources', 'suite'])
+    if manifest:
+        frozen_resource_hash(root)
+        message = f'Frozen test tree changed at {root}: changed resources/value, added suite/new, removed suite/value'
+    else:
+        write_json(tmp_path/'results/baseline-batches/0.json', {'methods':[{'resource_tree_hash':resource_tree_hash(root)}]})
+        message = f'Frozen test tree at {root} differs from its recorded resource_tree_hash (no historical per-file manifest)'
+
+    def snapshot():
+        return {p.relative_to(tmp_path):(p.read_bytes(), p.stat().st_mtime_ns) if p.is_file() else None
+                for p in tmp_path.rglob('*')}
+
+    before = snapshot()
+    assert main(['status', str(tmp_path)]) == 0
+    assert snapshot() == before
+    capsys.readouterr()
+    (root/'resources/value').write_text('changed')
+    (root/'suite/value').unlink()
+    (root/'suite/new').touch()
+    before = snapshot()
+    for command, flags in [('status', []), ('status', ['--watch', '--no-panel']), ('run', []), ('run', ['--background'])]:
+        assert main([command, str(tmp_path), *flags]) != 0
+        assert capsys.readouterr().err == f'survival: {message}\n'
+        if command == 'status':
+            assert snapshot() == before
+    assert not (tmp_path/'state/prepare.json').exists()

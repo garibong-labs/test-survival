@@ -10,6 +10,7 @@ import time
 from uuid import uuid4
 
 from .config import STAGES, stage_hash, legacy_stage_hash
+from .frozen_tree import verify_existing_tree
 from .io import atomic_text, now, read_json, write_json
 from .progress import describe, description
 from .display import load_display_settings
@@ -215,7 +216,6 @@ def run_session(exp):
 def _run(exp, config, *, selected, force=False, group=None, handlers=None):
     completed = []
     with run_session(exp):
-        from .frozen_tree import verify_existing_tree
         verify_existing_tree(exp/'dev/src-test-t')
         for current in selected:
             path = exp / 'state' / f'{current}.json'
@@ -296,6 +296,7 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
 
 def background(exp, *, until=None, stage=None, force=False, group=None, keep_work=False):
     exp = Path(exp).resolve()
+    verify_existing_tree(exp/'dev/src-test-t', record=False)
     arguments = ['run', str(exp)]
     for option, value in [('--until', until), ('--stage', stage), ('--group', group)]:
         if value:

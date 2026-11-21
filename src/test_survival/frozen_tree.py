@@ -9,6 +9,10 @@ from .config import canonical_hash
 from .io import read_json, write_json
 
 
+class FrozenTreeMismatch(RuntimeError):
+    """Frozen test data differs from its recorded identity."""
+
+
 def copy_frozen_tree(source, root):
     """Publish a complete tree. A failed copy never becomes a resumable freeze."""
     root.parent.mkdir(parents=True, exist_ok=True)
@@ -48,7 +52,7 @@ def frozen_resource_hash(root, *, record=True):
                       ('removed', removed)] for path in paths]
             if not detail:
                 detail.append('resource directory layout changed')
-            raise RuntimeError(f'Frozen test tree changed at {root}: '+', '.join(detail))
+            raise FrozenTreeMismatch(f'Frozen test tree changed at {root}: '+', '.join(detail))
         return saved['resource_tree_hash']
     # Older experiments may already carry an aggregate in the anchor batch or
     # pool. Never adopt a conflicting tree as its first per-file manifest.
@@ -56,8 +60,8 @@ def frozen_resource_hash(root, *, record=True):
     anchor = read_json(exp/'results/baseline-batches/0.json', {})
     members = [*anchor.get('methods', []), *read_json(exp/'pool.json', [])]
     if any(t.get('resource_tree_hash', digest) != digest for t in members):
-        raise RuntimeError(f'Frozen test tree at {root} differs from its recorded resource_tree_hash '
-                           '(no historical per-file manifest)')
+        raise FrozenTreeMismatch(
+            f'Frozen test tree at {root} differs from its recorded resource_tree_hash (no historical per-file manifest)')
     if record:
         write_json(marker, dict(resource_tree_hash=digest, files=files, present=root.is_dir()))
     return digest
