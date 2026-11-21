@@ -496,3 +496,19 @@ for members, work in [([method], 'pool'), ([], 'empty')]:
     subprocess.run(['docker', 'run', '--rm', '--network', 'none', '-v', f'{package}:/package:ro',
                     '-v', f'{libs}:/libs:ro', '-v', f'{tmp_path}:/out', image, 'python3', '-c', script],
                    check=True, timeout=180)
+
+
+@pytest.mark.java_integration
+def test_snapshot_compiler_drains_late_diagnostics(java_environment):
+    from pathlib import Path
+
+    image, _ = java_environment
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run([
+        'docker', 'run', '--rm', '--network', 'none',
+        '-v', f'{root}/src/test_survival/adapters/java:/helpers:ro',
+        '-v', f'{root}/tests/fixtures:/fixtures:ro', image, 'sh', '-ec',
+        'javac -d /tmp /helpers/SnapshotCompiler.java /fixtures/LateDiagnostics.java && java -cp /tmp LateDiagnostics',
+    ], capture_output=True, check=True)
+    assert result.stderr == b'first\nwarning\nlast\n'
+    assert result.stdout == b'\tZmlyc3Q=\n\tbGFzdA==\n'

@@ -229,7 +229,9 @@ limit, not an aggregate memory budget across concurrent chunks.
 New batch and policy compilations use iterative error-file removal in both
 selection modes. Affected compiles executed test sources plus non-test helpers;
 all compiles the eligible root. `-Xmaxerrs` is set to 2147483647, diagnostics keep
-source associations, and each retry uses a clean output directory. No frozen
+source associations, and each retry uses a clean output directory. The compile
+log includes diagnostics emitted while javac formats earlier messages. Source
+errors reported at that point participate in the same removal pass. No frozen
 sources or completed experiment artifacts are removed.
 
 
