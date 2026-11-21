@@ -32,7 +32,8 @@ Affected-selection fixtures check iterative removal of erroneous sources,
 transitive helper dependencies, runtime class hits outside the coverage scope,
 concurrent JVM chunks, and peak JVM memory evidence.
 The Mockito fixtures resolve two small Maven profiles, one with AssertJ 3.24.2 and one
-with project-owned Mockito 5.19.0. They check actual jar origins, mock a class under the
+that adds Mockito’s Jupiter extension 4.11.0 to the same dependencies. They check loaded jar
+versions and exercise ordinary, static and construction mocks under the
 author launcher’s classpath and the batch worker, and inject a broken pair before generation.
 To run the same check with the author’s JavaRunner, set `KTESTER_FIXTURE_TOOL` to its checkout
 and use an image with the author’s Python dependencies. The full offline author-round test

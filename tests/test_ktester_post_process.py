@@ -41,7 +41,7 @@ def test_offline_author_round(tmp_path):
     assert (run['post_process']['visited'], run['post_process']['total']) == (1, 4)
 
 
-def test_project_versions_precede_runner_fallbacks(tmp_path):
+def test_project_junit_version_and_pinned_mockito_stack(tmp_path):
     project = tmp_path/'sample'
     libs = project/'libs'
     libs.mkdir(parents=True)
@@ -60,11 +60,16 @@ def test_project_versions_precede_runner_fallbacks(tmp_path):
         assert version == '1.11.4'
         destination.touch()
     record = cp.configure(project, runner, supplemental, resolve)
-    assert record['added'] == [cp.CONSOLE+'-1.11.4.jar'] and record['replaced'] == []
+    assert cp.CONSOLE+'-1.11.4.jar' in record['added']
+    assert record['replaced'] == [
+        dict(project_jar='byte-buddy-agent-1.17.7.jar', runner_jar='byte-buddy-agent-1.17.7.jar'),
+        dict(project_jar='mockito-core-4.0.jar', runner_jar='mockito-core-5.24.0.jar'),
+    ]
     assert {p.name for p in supplemental.glob('*.jar')} == set(record['added'])
     entries = (project/'dependencies.txt').read_text().split(os.pathsep)
     assert entries[0] == 'target/classes'
-    assert entries[1:5] == ['libs/'+p.name for p in sorted(libs.iterdir())]
+    assert entries[1:3] == ['libs/'+p.name for p in sorted(libs.glob('*.jar'))]
+    assert all(p.startswith('target/ktester-test-libs/') for p in entries[3:])
     assert all((project/p).is_file() for p in entries[1:])
     (libs/'junit-platform-engine-1.9.3.jar').touch()
     with pytest.raises(ValueError, match='Inconsistent project JUnit'):
@@ -83,6 +88,10 @@ def test_supplied_mockito_records_all_displaced_versions_across_rounds(tmp_path)
         'byte-buddy-1.12.21.jar': 'byte-buddy-1.17.7.jar',
         'byte-buddy-dep-1.12.21.jar': 'byte-buddy-1.17.7.jar',
         'byte-buddy-agent-1.14.0.jar': 'byte-buddy-agent-1.17.7.jar',
+        'mockito-core-4.11.0.jar': 'mockito-core-5.24.0.jar',
+        'mockito-inline-4.11.0.jar': 'mockito-core-5.24.0.jar',
+        'mockito-all-1.10.19.jar': 'mockito-core-5.24.0.jar',
+        'mockito-junit-jupiter-4.11.0.jar': 'mockito-junit-jupiter-5.24.0.jar',
         'objenesis-2.6.jar': 'objenesis-3.3.jar',
     }
     for jar in replacements:

@@ -3,25 +3,31 @@
   <groupId>fixture</groupId>
   <artifactId>mockito-classpath</artifactId>
   <version>1</version>
+  <dependencies>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <version>3.24.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
   <profiles>
     <profile>
       <id>assertj</id>
-      <dependencies>
-        <dependency>
-          <groupId>org.assertj</groupId>
-          <artifactId>assertj-core</artifactId>
-          <version>3.24.2</version>
-          <scope>test</scope>
-        </dependency>
-      </dependencies>
     </profile>
     <profile>
       <id>project-mockito</id>
       <dependencies>
         <dependency>
           <groupId>org.mockito</groupId>
-          <artifactId>mockito-core</artifactId>
-          <version>5.19.0</version>
+          <artifactId>mockito-junit-jupiter</artifactId>
+          <version>4.11.0</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.junit.platform</groupId>
+          <artifactId>junit-platform-console-standalone</artifactId>
+          <version>1.9.1</version>
           <scope>test</scope>
         </dependency>
       </dependencies>

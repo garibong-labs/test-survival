@@ -2,16 +2,24 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 
-if __package__:
-    from .mockito_classpath import MOCKITO_LIBRARIES, artifact, project_owns_mockito
-else:
-    from mockito_classpath import MOCKITO_LIBRARIES, artifact, project_owns_mockito
-
 CONSOLE = 'junit-platform-console-standalone'
+MOCKITO_LIBRARIES = ('mockito-core', 'mockito-junit-jupiter', 'byte-buddy', 'byte-buddy-agent', 'objenesis')
+# Mockito 5 core supplies the inline maker. The legacy all-in-one and the
+# unshaded Byte Buddy jar can also shadow classes or plugin configuration.
+REPLACEMENTS = {name: name for name in MOCKITO_LIBRARIES}
+REPLACEMENTS.update({'mockito-inline': 'mockito-core', 'mockito-all': 'mockito-core', 'byte-buddy-dep': 'byte-buddy'})
+
+
+def artifact(jar):
+    match = re.fullmatch(r'(.+?)-(\d[^/]*)\.jar', Path(jar).name)
+    if match and not match[2].endswith(('-tests', '-sources', '-javadoc')):
+        return match.groups()
+    return None, None
 
 
 def platform_version(project):
@@ -52,9 +60,7 @@ def configure(project, runner_libs, supplement, resolve_console):
             resolve_console(version, console)
         added.append(console)
 
-    supply_mockito = not project_owns_mockito(supplied)
-    if supply_mockito:
-        added.extend(runner[name] for name in MOCKITO_LIBRARIES if runner[name].name not in project_jars)
+    added.extend(runner[name] for name in MOCKITO_LIBRARIES)
     supplement.mkdir(parents=True, exist_ok=True)
     names = {jar.name for jar in added}
     for old in supplement.glob('*.jar'):
@@ -66,13 +72,10 @@ def configure(project, runner_libs, supplement, resolve_console):
     replaced = []
     for jar in sorted(project_jars.values(), key=lambda p: p.name):
         name, _ = artifact(jar)
-        # byte-buddy-dep exposes the same net.bytebuddy classes using external ASM.
-        if name == 'byte-buddy-dep':
-            name = 'byte-buddy'
-        if supply_mockito and name in MOCKITO_LIBRARIES and jar.name != runner[name].name:
+        if name in REPLACEMENTS:
             displaced.mkdir(exist_ok=True)
             destination = displaced/jar.name
-            replaced.append(dict(project_jar=jar.name, runner_jar=runner[name].name))
+            replaced.append(dict(project_jar=jar.name, runner_jar=runner[REPLACEMENTS[name]].name))
         else:
             destination = project_libs/jar.name
         if jar != destination:
@@ -97,7 +100,7 @@ def smoke_test(project, supplement, *, env=None):
                                timeout=120, check=True, env=env)
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
                 jars = [str(p.relative_to(project)) for directory in (project/'libs', supplement)
-                        for p in sorted(directory.glob('*.jar')) if artifact(p)[0] in (*MOCKITO_LIBRARIES, 'mockito-all', 'byte-buddy-dep')]
+                        for p in sorted(directory.glob('*.jar')) if artifact(p)[0] in REPLACEMENTS]
                 detail = getattr(exc, 'stderr', None) or str(exc)
                 raise RuntimeError(f'KTester Mockito smoke test failed ({command[0]}). '
                                    f'Active jars: {", ".join(jars)}\n{detail}') from exc
