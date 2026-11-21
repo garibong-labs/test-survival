@@ -91,10 +91,17 @@ class Steps:
             self.progress.event(name, 'completed')
 
 
+def verify_baseline_trees(baseline, *, record):
+    from ..frozen_tree import verify_existing_tree
+    verify_existing_tree(baseline.path/'dev/src-test-t', record=False)
+    verify_existing_tree(baseline.exp/'results/policy/baseline-sources/dev/src-test-t', record=record)
+
+
 def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_DISPLAY, keep_work=False):
     config.keep_work = keep_work
     b = Baseline(exp,config)  # Validate the read-only boundary before creating lock/state files.
     with run_lock(b.exp, lock_fd), run_session(b.exp), LiveProgress(b.exp, display=display) as progress:
+        verify_baseline_trees(b, record=True)
         if force:
             root = b.exp/'results/policy'
             if root.exists():
@@ -150,6 +157,7 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
 
 def background(exp, config, until, force, keep_work=False):
     b = Baseline(exp,config)
+    verify_baseline_trees(b, record=False)
     arguments = ['policy','run',str(b.exp),'--until',until]
     if force:
         arguments.append('--force')

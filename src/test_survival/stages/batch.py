@@ -8,12 +8,13 @@ import hashlib
 from pathlib import Path
 
 from ..denominators import finish_control, frozen_after_control
-from ..adapters.run_reuse import scope_compatible_fingerprint
+from ..adapters.run_reuse import frozen_tree_fingerprint, scope_compatible_fingerprint
 from ..adapters.java_maven import JavaMavenAdapter
 from ..adapters.policy_coverage import COVERAGE_VERSION
 from ..config import canonical_hash, derived_source, execution_groups, group_names
 from ..io import read_csv, read_json, write_csv, write_json, resolve_path
-from ..policy.artifacts import resource_tree_hash, tree_hash
+from ..frozen_tree import frozen_resource_hash
+from ..policy.artifacts import tree_hash
 from ..policy.execute import screening_exclusion_details, settle
 from ..rules.survival import FAILURES, dead_method
 from ..rules.coverage import projected_lines, usable_lines
@@ -31,10 +32,10 @@ def complete_lines(raw, dead):
     return all(usable_lines(t) for t in raw['methods'] if identity(t) not in dead)
 
 
-def catalog(exp, config, frozen):
+def catalog(exp, config, frozen, *, record=True):
     """The same content identity as policy snapshots, without copying sources."""
     developers = {g['name'] for g in config['dev']['groups']}
-    resources = resource_tree_hash(exp/'dev/src-test-t')
+    resources = frozen_resource_hash(exp/'dev/src-test-t', record=record)
     roots = {}; result = {}
     for group, members in frozen.items():
         result[group] = []
@@ -50,7 +51,7 @@ def catalog(exp, config, frozen):
 
 
 class Measurements:
-    def __init__(self, exp, config, phase):
+    def __init__(self, exp, config, phase, *, record=True):
         from ..dev_results import imported_for
         self.exp, self.config, self.phase = exp, config, phase
         self.adapter = JavaMavenAdapter(exp, config)
@@ -60,7 +61,7 @@ class Measurements:
         self.provenance, self.imported = imported_for(exp, config, phase)
         self.frozen = execution_groups(config, read_json(exp/'results/frozen-denominators.json') if phase == 'control'
                                        else frozen_after_control(exp, config))
-        self.tests = catalog(exp, config, self.frozen)
+        self.tests = catalog(exp, config, self.frozen, record=record)
         self.scope = read_json(exp/'population/scope.json')['classes']
         methods = {g['name']: g['method'] for g in config['generators']}
         self.excluded, self.exclusion_summary = screening_exclusion_details(exp, {}, self.tests, exp,
@@ -68,7 +69,7 @@ class Measurements:
                                             round_limits={g['name']:g['rounds']['max'] for g in config['generators']})
         self.universe = config['coverage'].get('universe', 'scope')
         self.runner = self.adapter.provenance(production_coverage=True) if self.universe == 'production' else self.adapter.provenance()
-        inputs = dict(version=1, implementation=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(), coverage=COVERAGE_VERSION, tests=self.tests,
+        inputs = dict(version=1, implementation=frozen_tree_fingerprint(hashlib.sha256(Path(__file__).read_bytes()).hexdigest()), coverage=COVERAGE_VERSION, tests=self.tests,
                       scope=self.scope, excluded=sorted(self.excluded), runner=self.runner,
                       inputs={g:self.adapter.run_fingerprint(ts) for g,ts in self.tests.items()})
         if self.universe == 'production':
@@ -136,6 +137,8 @@ class Measurements:
 
     def measure(self, index, sha, dead):
         path = self.exp/f'results/baseline-batches/{index}.json'
+        # The host publishes its aggregate beside the container's measurement.
+        path.parent.mkdir(parents=True, exist_ok=True)
         prior = read_json(path, {})
         current = prior.get('input_sha256') == self.digest and prior.get('sha') == sha
         old = {identity(t):t for t in prior.get('methods', [])} if current else {}
@@ -361,7 +364,7 @@ def completed_items(exp, config, stage, *, historical=False):
         commits = read_csv(path)
         if any(r['index'] not in changes for r in commits):
             return [], None
-    m = Measurements(exp, config, stage)
+    m = Measurements(exp, config, stage, record=False)
     skipped = skipped_commits(exp,config,commits) if commits else {}
     rows = commits if stage == 'survive' else [dict(index=0,sha=anchor['sha'])]
     known = {}; completed = []

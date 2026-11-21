@@ -9,7 +9,8 @@ from zipfile import ZipFile
 
 from .snapshot_compile import compile_snapshot, filtered_roots
 from .dependencies import RECORD_VERSION
-from .test_data import frozen_test_dirs
+from . import test_data_runtime
+import sys
 
 
 COVERAGE_VERSION = 3  # Retry legacy missing records with bounded instrumentation.
@@ -20,21 +21,6 @@ MAX_SNAPSHOT_GROUPS = 8
 # at the end of each JVM discards the leaked threads and loaders together.
 CANDIDATE_TESTS_PER_GROUP = 64
 CANDIDATE_GROUPS_PER_JVM = 1
-
-
-def link_tree(source, destination):
-    """Copy a resource tree with hard links where the filesystem allows it.
-
-    Frozen test resources can be hundreds of megabytes (ojAlgo keeps 447 MB of
-    optimisation model files under src/test/resources at its anchor). One copy per
-    job and per JVM chunk filled a disk within hours. Hard links share the bytes;
-    a filesystem that refuses them falls back to a plain copy.
-    """
-    try:
-        shutil.copytree(source, destination, copy_function=os.link)
-    except OSError:
-        shutil.rmtree(destination, ignore_errors=True)
-        shutil.copytree(source, destination)
 
 
 def includes_pattern(classes):
@@ -88,7 +74,7 @@ def run(w, job):
     for ordinal, t in enumerate(job['methods']):
         root = t.get('source_root', str(Path(t['file']).parent))
         group = ordinal // CANDIDATE_TESTS_PER_GROUP if job.get('candidate_suite') else 'suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])
-        groups[root, group].append(t)
+        groups[root, group, t.get('resource_root', 'dev/src-test-t')].append(t)
     manifest = []; outputs = []; compile_runs = []; snapshots = {}; rejected = []
     for number, tests in enumerate(groups.values()):
         part = work/str(number); part.mkdir()
@@ -118,20 +104,13 @@ def run(w, job):
         selection = part/'selectors.tsv'
         selection.write_text('\n'.join(sorted({t['class'] if job.get('full_suite') else t['class']+'\t'+t['method'] for t in tests}))+'\n')
         resource_root = w.EXP/tests[0].get('resource_root', 'dev/src-test-t')
-        runtime = ':'.join(map(str, [classes, helper, helper_cp, resource_root/'resources', resource_root/'suite']))
+        runtime = ':'.join(map(str, [classes, helper, helper_cp, 'src/test/resources', 'src/test/suite']))
         output = part/'dumps'
         outputs.append((output, tests))
         fields = [output, folder/'target/classes', selection, runtime]
-        if job.get('survival'):
-            fields.append(resource_root)
+        fields.append(resource_root)
         manifest.append('\t'.join(map(str, fields)))
     manifest_path = work/'batches.tsv'; manifest_path.write_text('\n'.join(manifest)+'\n' if manifest else '')
-    runtime_dir = work/'runtime'; runtime_dir.mkdir()
-    if job['methods']:
-        resource_root = w.EXP/job['methods'][0].get('resource_root', 'dev/src-test-t')
-        for name in frozen_test_dirs(resource_root):
-            if (resource_root/name).exists():
-                link_tree(resource_root/name, runtime_dir/'src/test'/name)
     scope_options = ['-Dsurvival.coverage.isolateMethods=true'] if job.get('candidate_suite') else []
     initializer_agent = None
     agent_options = 'output=none,dumponexit=false'
@@ -173,8 +152,6 @@ def run(w, job):
     step = CANDIDATE_GROUPS_PER_JVM if job.get('candidate_suite') else MAX_SNAPSHOT_GROUPS
     def launch(start):
         chunk = work/'chunks'/str(start//step); chunk.mkdir(parents=True)
-        cwd = chunk/'runtime'; cwd.mkdir()
-        if (runtime_dir/'src').exists(): link_tree(runtime_dir/'src', cwd/'src')
         chunk_manifest = chunk/'batches.tsv'
         chunk_manifest.write_text('\n'.join(manifest[start:start+step])+'\n')
         chunk_outputs = outputs[start:start+step]
@@ -188,10 +165,12 @@ def run(w, job):
                 dependency_inputs[t['class'],t['method'],t.get('execution_hash',t['file_hash'])][0] for t in tests}
             initializer_options = ['-Dsurvival.initializer.roots='+os.pathsep.join(map(str, sorted(roots))),
                                    '-javaagent:'+str(initializer_agent)]
-        run = w.execute(['java', '-Xmx'+heap, *scope_options, '-Dsurvival.memory='+str(memory),
-                         f'-javaagent:{agent}={agent_options}', *initializer_options, '-cp', str(helper)+':'+helper_cp,
-                         'PerTestCoverage', str(chunk_manifest)], cwd, chunk/'console.txt',
-                        w.TIMEOUTS['test_class']*len(tests))
+        with test_data_runtime.runtime_slot(w.EXP/'work/runtime/slots') as cwd:
+            staging = ['-Dsurvival.python='+sys.executable, '-Dsurvival.stage='+test_data_runtime.__file__]
+            run = w.execute(['java', '-Xmx'+heap, *staging, *scope_options, '-Dsurvival.memory='+str(memory),
+                             f'-javaagent:{agent}={agent_options}', *initializer_options, '-cp', str(helper)+':'+helper_cp,
+                             'PerTestCoverage', str(chunk_manifest)], cwd, chunk/'console.txt',
+                            w.TIMEOUTS['test_class']*len(tests))
         measured_memory = {key:int(value) for line in memory.read_text().splitlines() for key,value in [line.split('\t')]} if memory.exists() else {}
         return chunk, chunk_outputs, tests, dict(run, manifest=str(chunk_manifest.relative_to(w.EXP)), groups=len(chunk_outputs), memory=measured_memory)
     with ThreadPoolExecutor(max_workers=job.get('chunk_workers', 1)) as executor:

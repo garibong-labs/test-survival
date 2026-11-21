@@ -107,12 +107,13 @@ def test_mode_hash_boundaries_and_historical_raw_fingerprint(tmp_path):
     assert changed['survival']['flaky_rerun']==1  # accepted, ignored by batch measurement
 
 
-def test_snapshot_helper_change_invalidates_batch(tmp_path,monkeypatch):
+def test_frozen_helper_addition_stops_batch(tmp_path,monkeypatch):
     config=fixture(tmp_path);jobs=[];setup_worker(monkeypatch,jobs)
     control.run(tmp_path,config)
     (tmp_path/'dev/src-test-t/java/Helper.java').write_text('class Helper {}')
-    control.run(tmp_path,config)
-    assert len(jobs)==2
+    with pytest.raises(RuntimeError, match='added java/Helper.java'):
+        control.run(tmp_path,config)
+    assert len(jobs)==1
 
 
 from test_junit4 import java_environment

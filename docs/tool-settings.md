@@ -263,13 +263,26 @@ because a sibling's sources changed.
 ## Test data folders
 
 The developer test tree frozen at t keeps every folder of the module's `src/test`.
-Test runs use a working directory that holds every one of those folders except
-`java` (for example `resources`, `suite`, `input`, `witness`), so tests that open
-files with module-relative paths such as `src/test/input/a.xml` find them.
-`resources` and `suite` stay on the test classpath as before; other folders are
-reachable only through the file system. KTester's workspace receives the same
-folders. Trees whose only data folders are `resources` and `suite` keep their
-earlier resource hashes and record fingerprints.
+Each test worker uses a private writable working directory. A classpath lookup
+in `resources` or `suite` and a module-relative path such as
+`src/test/resources/script.sml` reach the same staged file. Other data folders
+such as `input` and `witness` are available under `src/test`. KTester's
+workspace receives the same data folders.
+
+The runner restores the working directory before each snapshot group or legacy
+file job. Outputs beside a resource and in-place edits disappear before the
+next job uses the directory. A 447 MB tree needs up to 447 MB of staged data
+per simultaneous launcher, plus test outputs and file metadata. Sequential
+jobs reuse unchanged staged files. Docker mounts the frozen trees read-only.
+
+The experiment records file names and SHA-256 digests in
+`dev/frozen-test-tree.json`, beside `dev/src-test-t`. Policy pools keep their
+own manifests. When `survival run`, `survival status` or `survival policy run`
+detects a mismatch, it prints the tree path and the changed, added and removed
+files on stderr and exits with a non-zero status. Checking status leaves the
+experiment and its manifest untouched. An older intact tree acquires a manifest
+on its first run and keeps its existing resource, execution and stage hashes. If only an older
+aggregate hash exists, a disagreement can be reported at tree level only.
 
 ## Developer discovery and scope bounds
 

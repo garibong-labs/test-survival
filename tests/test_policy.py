@@ -503,7 +503,10 @@ def test_snapshot_uses_same_path_in_place(tmp_path, monkeypatch, method):
     assert actual['file'] == str(prefix/relative)
     assert actual['origin_id'] == 'original-id'
     assert (tmp_path/actual['source_root']/'Provider.java').exists()
-    assert before == {p:(p.read_bytes(), p.stat().st_mtime_ns) for p in source.rglob('*') if p.is_file()}
+    after = {p:(p.read_bytes(), p.stat().st_mtime_ns) for p in source.rglob('*') if p.is_file()}
+    assert read_json(source/'dev/frozen-test-tree.json')['resource_tree_hash'] == actual['resource_tree_hash']
+    del after[source/'dev/frozen-test-tree.json']
+    assert before == after
 
 
 def test_pool_failure_stops_new_work_before_waiting_for_earlier_pool(baseline, monkeypatch):
@@ -632,3 +635,27 @@ def test_new_implicit_candidate_defaults_preserve_policy_input_shape(baseline):
     assert b.execution_config['scope']['max_dev_scope']==400
     assert 'discovery' not in written['dev']
     assert 'max_dev_scope' not in written['scope']
+
+
+@pytest.mark.parametrize('manifest', [True, False], ids=['per-file', 'legacy'])
+def test_policy_cli_shows_frozen_baseline_mismatch(baseline, capsys, manifest):
+    from test_survival.cli import main
+    from test_survival.frozen_tree import frozen_resource_hash
+
+    exp, config, root = baseline
+    exp.mkdir()
+    (exp/'experiment.yaml').write_text(yaml.safe_dump(config))
+    frozen = root/'dev/src-test-t'
+    data = frozen/'resources/input'
+    data.parent.mkdir()
+    data.write_text('original')
+    digest = frozen_resource_hash(frozen, record=manifest)
+    if manifest:
+        message = f'Frozen test tree changed at {frozen}: removed resources/input'
+    else:
+        write_json(root/'results/baseline-batches/0.json', {'methods':[{'resource_tree_hash':digest}]})
+        message = f'Frozen test tree at {frozen} differs from its recorded resource_tree_hash (no historical per-file manifest)'
+    data.unlink()
+    for flags in ([], ['--background']):
+        assert main(['policy', 'run', str(exp), *flags]) != 0
+        assert capsys.readouterr().err == f'survival: {message}\n'

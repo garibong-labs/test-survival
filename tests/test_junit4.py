@@ -116,7 +116,6 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         method,=raw['methods']
         assert method['state']=='pass' and method['environment_reruns']==2 and not method['flaky']
         assert len(raw['files'][0]['runs'])==3
-        (tmp_path/'work/runtime/environment-attempts.txt').unlink()
         covered=adapter.method_coverage(row)
         assert raw['whole_frozen_suite_compile']['cache']['status']=='miss'
         assert covered['whole_frozen_suite_compile']['cache']['status']=='hit'
@@ -129,8 +128,7 @@ def test_real_worker_environment_retries_and_single_method_coverage(tmp_path,jav
         reset=adapter.runner.execute(['python3','-c',
             'import pathlib, shutil; shutil.rmtree("work/compile-cache"); '
             'base="results/dev-method-coverage-t/fixture.EnvironmentProbe#transientBind"; '
-            '[pathlib.Path(base+suffix).unlink() for suffix in (".json.gz", ".xml.gz")]; '
-            'pathlib.Path("work/runtime/environment-attempts.txt").unlink()'],
+            '[pathlib.Path(base+suffix).unlink() for suffix in (".json.gz", ".xml.gz")]'],
             tmp_path,tmp_path/'fixture-cache-reset.log',30)
         assert reset['exit_code']==0
         cold=adapter.method_coverage(row)
@@ -659,3 +657,67 @@ public class Production {
     assert all(m['state']=='pass' for m in measured['methods'])
     assert {m['method']:{tuple(line) for line in m['lines']} for m in measured['methods']}==expected
     assert expected['alpha']-expected['beta']=={('src/main/java/fixture/Production.java',7)}
+
+
+@pytest.mark.java_integration
+def test_survive_isolates_frozen_tree_across_commits(tmp_path, java_environment, monkeypatch):
+    import shutil
+    from test_survival.config import canonical_hash
+    from test_survival.io import read_json, write_csv
+    from test_survival.policy.artifacts import resource_tree_hash
+    from test_survival.stages import control, survive
+
+    image, libs = java_environment
+    config = validate(dict(name='writes', project={'repo':str(tmp_path)}, anchor='anchor',
+        dev={'groups':[{'name':'dev'}]}, survival={'execution':'batch'},
+        runner={'docker':{'image':image, 'mounts':{str(tmp_path):'/experiment',
+            str(Path(libs).resolve()):'/experiment/work/libs'}}, 'workers':{'survive':1}}))
+    frozen = tmp_path/'dev/src-test-t'
+    shutil.copytree(Path(__file__).parent/'fixtures/frozen-writes/src/test', frozen)
+    def contents():
+        return {p.relative_to(frozen):p.read_bytes() for p in frozen.rglob('*') if p.is_file()}
+    original, digest = contents(), resource_tree_hash(frozen)
+    row = dict(id='WritesTest#writes', file='dev/src-test-t/java/WritesTest.java',
+               **{'class':'WritesTest'}, method='writes', kind='plain')
+    write_json(tmp_path/'results/frozen-denominators.json', {'dev':[row]})
+    write_json(tmp_path/'results/denominators.json', {'dev':1})
+    write_json(tmp_path/'results/anchor.json', {'sha':'anchor','date':'date'})
+    production = 'src/main/java/Production.java'
+    write_json(tmp_path/'population/scope.json', {'classes':[{'class':'Production', 'file':production}]})
+    commits = [dict(index=i, sha=f'commit{i}', date='date', subject='change',
+                    **{'changes-src-main':'yes','changes-pom':'no'}) for i in (1, 2)]
+    write_csv(tmp_path/'results/commits.csv', commits, list(commits[0]))
+    write_json(tmp_path/'results/commit-paths.json', {str(r['index']):[production] for r in commits})
+    adapter = JavaMavenAdapter(tmp_path, config)
+    # Supply the three fixture builds and pinned runner jars offline.
+    for index, sha in enumerate(['anchor', 'commit1', 'commit2']):
+        folder = adapter.folder(index)
+        source = folder/production
+        source.parent.mkdir(parents=True)
+        source.write_text('class Production { static int version() { return '+str(index)+'; } }')
+        classes = folder/'target/classes'
+        classes.mkdir(parents=True)
+        compiled = adapter.runner.execute(['javac','-g','-d',str(classes),str(source)], folder,
+                                          tmp_path/f'compile-{index}.txt', 60)
+        assert compiled['exit_code'] == 0
+        write_json(tmp_path/f'results/builds/{index}.json',
+                   dict(sha=sha, build='ok', classpath='work/classpath.txt'))
+    (tmp_path/'work/classpath.txt').write_text('')
+    monkeypatch.setattr(JavaMavenAdapter, 'setup_runner', lambda self: None)
+    monkeypatch.setattr(JavaMavenAdapter, 'build', lambda self, i, sha: read_json(tmp_path/f'results/builds/{i}.json'))
+    control.run(tmp_path, config)
+    survive.run(tmp_path, config)
+    for index in (0, 1, 2):
+        measured, = read_json(tmp_path/f'results/baseline-batches/{index}.json')['methods']
+        assert measured['state'] == 'pass', measured
+        assert measured['resource_tree_hash'] == digest
+        assert measured['execution_hash'] == canonical_hash(dict(file=measured['file_hash'],
+            sources=measured['source_tree_hash'], resources=digest))
+    assert contents() == original
+    assert resource_tree_hash(frozen) == digest
+    (frozen/'resources/script.sml').unlink()
+    (frozen/'input/data').write_text('modified')
+    (frozen/'resources/extra').touch()
+    with pytest.raises(RuntimeError, match='changed input/data, added resources/extra, removed resources/script.sml'):
+        survive.run(tmp_path, config)
+    assert read_json(frozen.parent/'frozen-test-tree.json')['resource_tree_hash'] == digest

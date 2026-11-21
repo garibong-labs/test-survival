@@ -142,3 +142,33 @@ _SCOPE_EQUIVALENT = {
 
 def scope_compatible_fingerprint(digest):
     return _SCOPE_EQUIVALENT.get(digest, digest)
+
+# Frozen-tree isolation preserves the original measurement keys for these exact
+# revisions. Further changes must be evaluated independently in both universes.
+_FROZEN_TREE_EQUIVALENT = {
+    # java_maven.py
+    '0b202e9452a6b884258a4750f22e8b399de1baa6b3b9cf8725e66d009da6637e':
+        '28f4a4ad6145ec377513bf2cb128263d71e918bd40065daba3433842d22d792d',
+    # java_worker.py
+    '5a517fe657a1fbf2a5015371037315e50edbbf9d5d73d37cb88daf7c4a2376d8':
+        '6d79a1f3858e6c19dcab5c853a31b0f26a191d7bb465536e1b5b53d114555167',
+    # policy_coverage.py
+    'd0ea96ea361a4aee3106accf894b4f3fad4c946da89dc48efb63d2380f12ab02':
+        '106ae3ffefc7036e663e346fde23bf0f0a9186615dc6658bba988ac07ffe94c7',
+    # PerTestCoverage.java
+    'e20d02cdde5f910939230b2e3a12baa9e2e770e2780c73075a842c56c1f82da4':
+        '1c780521de8bce26eb012c2fd20c08c03d42b527de9b4d39ebe64e35681f43f2',
+    # batch.py
+    '5a582c2814c3664f72d98ca865b4e51c2fed552e0bb8a587dca0423bbd83cccc':
+        '6cbf7d5dcaa136f148e63dedb04f47618ab3ee4354e630e20b20dc36a1876997',
+    # docker.py
+    '8b94985fd55723af2f5f8832efcf165dec3933a25338a31f392e81db65bc6f3d':
+        '8ffe7dd59a13a8f7e8ab203777dc031be8627a3b07b516737c333f1ff2bfe8c1',
+    # test_data_runtime.py
+    'f1afbc769df49b86d0f0b199678f5a9c8e522cef2efe5aa460a56b02a2ced855':
+        None,
+}
+
+
+def frozen_tree_fingerprint(digest):
+    return _FROZEN_TREE_EQUIVALENT.get(digest, digest)

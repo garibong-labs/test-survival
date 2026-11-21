@@ -5,6 +5,7 @@ import shutil
 
 from ..adapters.test_data import frozen_test_dirs
 from ..config import canonical_hash
+from ..frozen_tree import FrozenTreeMismatch, copy_frozen_tree, frozen_resource_hash
 from ..io import read_csv, read_json
 
 
@@ -54,20 +55,26 @@ def tree_hash(root, pattern='*'):
 def snapshot(source_exp, destination, tests, *, group, method, scope, prefix):
     """Use local snapshots in place; copy evidence from other workspaces."""
     result = []
-    if method == 'dev':
-        source = source_exp/'dev/src-test-t'
-        target = destination/prefix/'dev/src-test-t'
-        # Generator groups may already have populated the shared resource folders.
-        if source.resolve() != target.resolve():
-            shutil.copytree(source, target, dirs_exist_ok=True)
-    else:
-        for name in frozen_test_dirs(source_exp/'dev/src-test-t'):
-            source = source_exp/'dev/src-test-t'/name
-            target = destination/prefix/'dev/src-test-t'/name
-            if source.exists() and not target.exists():
-                shutil.copytree(source, target)
+    source = source_exp/'dev/src-test-t'
     resource_root = destination/prefix/'dev/src-test-t'
-    resources_hash = resource_tree_hash(resource_root)
+    # External baselines are read-only. Freeze the complete tree once even if
+    # a generated group is cataloged before the first developer group.
+    if source.resolve() != resource_root.resolve():
+        original = frozen_resource_hash(source, record=False)
+        pinned = (resource_root.parent/'frozen-test-tree.json').exists()
+        if not pinned and source.is_dir() and not resource_root.exists():
+            copy_frozen_tree(source, resource_root)
+        elif not pinned and source.is_dir():
+            # Historical generated-only snapshots contain just the resource folders.
+            if (source/'java').is_dir() and not (resource_root/'java').exists():
+                shutil.copytree(source/'java', resource_root/'java')
+        resources_hash = frozen_resource_hash(resource_root, record=False)
+        if resources_hash != original:
+            raise FrozenTreeMismatch('Frozen snapshot resources differ from baseline: '+str(resource_root))
+        if not pinned:
+            frozen_resource_hash(resource_root)
+    else:
+        resources_hash = frozen_resource_hash(resource_root)
     roots = {}
     for t in tests:
         source = source_exp/t['file']

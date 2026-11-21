@@ -27,7 +27,8 @@ try:
     from . import maven_dependencies
     from .compilation import CompilationService
     from .compiler_session import CompilerSession
-    from .test_data import frozen_test_dirs, stage_test_data
+    from .test_data import frozen_test_dirs  # also used by ktester_worker
+    from .test_data_runtime import reset_runtime, runtime_slot
 except ImportError:  # This worker is also invoked directly inside the container.
     import importlib.util
     spec = importlib.util.spec_from_file_location('survival_result_io', Path(__file__).resolve().parents[1]/'io.py')
@@ -38,7 +39,8 @@ except ImportError:  # This worker is also invoked directly inside the container
     from adapters import maven_dependencies
     from adapters.compilation import CompilationService
     from adapters.compiler_session import CompilerSession
-    from adapters.test_data import frozen_test_dirs, stage_test_data
+    from adapters.test_data import frozen_test_dirs
+    from adapters.test_data_runtime import reset_runtime, runtime_slot
 
 RUNNER_JAR_TRANSIENT_PATTERNS = maven_dependencies.TRANSIENT_PATTERNS
 
@@ -129,11 +131,11 @@ def method_state(row,observations,run):
     return 'pass',''
 
 
-def selectors(rows,runtime,folder):
+def selectors(rows,runtime,folder,cwd):
     selected={}
     for cls in sorted({r['class'] for r in rows}):
         log=folder/('selectors-'+cls+'.txt')
-        run=execute(['java','-Xmx'+JVM['launcher'],'-cp',runtime,str(HELPERS/'MethodSelectors.java'),cls,TEST_FRAMEWORK],REPO,log,TIMEOUTS['test_class'])
+        run=execute(['java','-Xmx'+JVM['launcher'],'-cp',runtime,str(HELPERS/'MethodSelectors.java'),cls,TEST_FRAMEWORK],cwd,log,TIMEOUTS['test_class'])
         choices=collections.defaultdict(list)
         if run['exit_code']==0:
             for line in log.read_text().splitlines():
@@ -192,14 +194,14 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
         record['methods']=[{**r,'state':'compile-fail','initial_state':'compile-fail','baseline_states':[],'selector':[],'flaky':False,'message':('\n'.join(removed) if removed else (EXP/compile_run['log']).read_text(errors='replace'))[:4000]} for r in members]
         return record
     resources=EXP/members[0].get('resource_root','dev/src-test-t') if members else EXP/'dev/src-test-t'
-    runtime=':'.join([str(classes),cp,str(resources/'resources'),str(resources/'suite')])
-    runtime_cwd=SHARED/'work/runtime'
-    if members and members[0].get('resource_root'):
-        runtime_cwd=part/'runtime';runtime_cwd.mkdir(exist_ok=True)
-        for name in frozen_test_dirs(resources):
-            if (resources/name).exists():
-                shutil.copytree(resources/name,runtime_cwd/'src/test'/name,dirs_exist_ok=True)
-    selection=selectors(members,runtime,part)
+    with runtime_slot(EXP/'work/runtime/slots') as runtime_cwd:
+        reset_runtime(resources, runtime_cwd)
+        runtime = ':'.join([str(classes), cp, str(runtime_cwd/'src/test/resources'), str(runtime_cwd/'src/test/suite')])
+        return launch_file(members, runtime, runtime_cwd, part, folder, coverage_file, record, repetitions, retry, environment_retry)
+
+
+def launch_file(members, runtime, runtime_cwd, part, folder, coverage_file, record, repetitions, retry, environment_retry):
+    selection=selectors(members,runtime,part,runtime_cwd)
     base=['java','-Xmx'+JVM['launcher'],'-XX:+UseSerialGC']
     if coverage_file:base+=[f'-javaagent:{SHARED}/work/libs/org.jacoco.agent-{jacoco_version(folder/"target/classes")}-runtime.jar=destfile={coverage_file},append=true']
     base+=['-cp',runtime,'org.junit.platform.console.ConsoleLauncher','--disable-banner','--disable-ansi-colors','--fail-if-no-tests','--details','summary']
@@ -209,7 +211,7 @@ def run_file(index,group,filename,members,part,coverage_file=None,repetitions=1,
         for r in chosen:
             for selector in selection[r['id']]:args+=['--select-method',selector]
         if not args:
-            return dict(command=[],cwd=str(SHARED/'work/runtime'),timeout=False,exit_code=2,seconds=0,log='',selection='no compiled selector'),{}
+            return dict(command=[],cwd=str(runtime_cwd),timeout=False,exit_code=2,seconds=0,log='',selection='no compiled selector'),{}
         run=execute([*base,*args,'--reports-dir',str(reports)],runtime_cwd,reports/'console.txt',TIMEOUTS['test_class'])
         record['runs'].append(run)
         return run,parse_reports(reports)
@@ -295,8 +297,6 @@ def setup(wait=time.sleep):
     digest=hashlib.sha256((REPO/'pom.xml').read_bytes()).hexdigest()
     maven_dependencies.resolve(REPO,EXP/'work/classpaths'/f'{digest}.txt',RESULTS/'builds/logs/runner-setup',
                                TIMEOUTS['build'],execute,prefetch=True,wait=wait,module=MODULE)
-    runtime=EXP/'work/runtime';runtime.mkdir(parents=True,exist_ok=True)
-    stage_test_data(EXP/'dev/src-test-t',runtime)
     write_json(RESULTS/'runner-setup.json',{'status':'completed','jars':records,'project_dependencies':digest})
 
 

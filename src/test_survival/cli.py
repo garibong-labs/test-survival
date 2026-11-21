@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 from .config import ConfigError, STAGES, load
+from .frozen_tree import FrozenTreeMismatch, verify_existing_tree
 from .io import read_json
 from .pipeline import PipelineError, background, run, run_lock, status, stop
 from .display import DisplayConfigError, UTC_DISPLAY, load_display_settings
@@ -73,6 +74,27 @@ def parser():
     return p
 
 
+def show_status(args, display):
+    exp = args.exp_dir
+    if message := archived_status(exp):
+        print(message)
+        return
+    verify_existing_tree(exp/'dev/src-test-t', record=False)
+    if not (exp/'experiment.yaml').exists():
+        from .summary import saved_status
+        saved = saved_status(exp)
+        if saved is None:
+            raise FileNotFoundError(exp/'experiment.yaml')
+        print(saved)
+        return
+    config = load(exp)
+    if args.watch:
+        from .panel import watch
+        watch(exp, config, no_panel=args.no_panel, display=display)
+    else:
+        print(status(exp, config, display=display))
+
+
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
@@ -91,8 +113,8 @@ def main(argv=None):
             archive(args.exp_dir, destination=args.dest or display.archive_destination,
                     include_work=args.include_work, prune=args.prune, yes=args.yes, dry_run=args.dry_run,
                     new_zip=args.new_zip)
-        elif args.command == 'status' and (message := archived_status(args.exp_dir)):
-            print(message)
+        elif args.command == 'status':
+            show_status(args, display)
         elif args.command == 'policy':
             from .policy.pipeline import command
             command(args, display=display)
@@ -107,23 +129,11 @@ def main(argv=None):
         elif args.command == 'show' and (args.exp_dir/'results').is_dir():
             from .summary import show
             print(show(args.exp_dir, args.stage))
-        elif args.command == 'status' and not (args.exp_dir/'experiment.yaml').exists():
-            from .summary import saved_status
-            saved = saved_status(args.exp_dir)
-            if saved is None:
-                raise FileNotFoundError(args.exp_dir/'experiment.yaml')
-            print(saved)
         else:
             config = load(args.exp_dir)
             if args.command == 'rehash':
                 from .pipeline import rehash
                 print(f'Rehashed {rehash(args.exp_dir, config)} completed stages')
-            elif args.command == 'status':
-                if args.watch:
-                    from .panel import watch
-                    watch(args.exp_dir, config, no_panel=args.no_panel, display=display)
-                else:
-                    print(status(args.exp_dir, config, display=display))
             elif args.command == 'show':
                 from .summary import show
                 print(show(args.exp_dir, args.stage))
@@ -143,7 +153,7 @@ def main(argv=None):
                 else:
                     run(args.exp_dir, config, no_panel=args.no_panel, display=display, **options)
         return 0
-    except (ConfigError, DisplayConfigError, PipelineError, ArchiveError, FileExistsError, FileNotFoundError) as exc:
+    except (ConfigError, DisplayConfigError, PipelineError, ArchiveError, FrozenTreeMismatch, FileExistsError, FileNotFoundError) as exc:
         print(f'survival: {exc}', file=sys.stderr)
         return 2
     except KeyboardInterrupt:
