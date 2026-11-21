@@ -137,6 +137,8 @@ class Measurements:
 
     def measure(self, index, sha, dead):
         path = self.exp/f'results/baseline-batches/{index}.json'
+        # The host publishes its aggregate beside the container's measurement.
+        path.parent.mkdir(parents=True, exist_ok=True)
         prior = read_json(path, {})
         current = prior.get('input_sha256') == self.digest and prior.get('sha') == sha
         old = {identity(t):t for t in prior.get('methods', [])} if current else {}
