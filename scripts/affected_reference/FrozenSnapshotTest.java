@@ -26,7 +26,8 @@ public class FrozenSnapshotTest {
                 try { return Path.of(s).toUri().toURL(); } catch (Exception ex) { throw new IllegalArgumentException(ex); }
             }).toArray(URL[]::new);
             ClassLoader previous = Thread.currentThread().getContextClassLoader();
-            try (var loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
+            try (var snapshot = new PerTestCoverageLoader(urls)) {
+                URLClassLoader loader = snapshot.loader();
                 Thread.currentThread().setContextClassLoader(loader);
                 evidence.add(p[0]+"\t"+loader.loadClass("FrozenRunner").getMethod("run",String.class).invoke(null,p[0]));
             } finally { Thread.currentThread().setContextClassLoader(previous); }

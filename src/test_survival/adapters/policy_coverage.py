@@ -53,7 +53,7 @@ def run(w, job):
     helper = work/'helper'; helper.mkdir()
     tool_helper = work/'tool-helper'; tool_helper.mkdir()
     helper_cp = cp+':'+str(cli)+':'+str(agent)
-    helper_sources = ['PerTestCoverage.java','SourceInventory.java','DependencySources.java','SnapshotCompiler.java']
+    helper_sources = ['PerTestCoverage.java','PerTestCoverageLoader.java','SourceInventory.java','DependencySources.java','SnapshotCompiler.java']
     production = job.get('coverage_universe') == 'production'
     if production:
         helper_sources.append('ProductionUniverse.java')

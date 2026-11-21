@@ -190,7 +190,7 @@ agent='/libs/org.jacoco.agent-0.8.14-runtime.jar'
 cp+=':/libs/org.jacoco.cli-0.8.14-nodeps.jar:'+agent
 def call(args): subprocess.run(args, check=True)
 call(['javac','-d','/out/production','/out/Production.java'])
-call(['javac','-cp',cp,'-d','/out/helper','/helpers/PerTestCoverage.java'])
+call(['javac','-cp',cp,'-d','/out/helper','/helpers/PerTestCoverage.java','/helpers/PerTestCoverageLoader.java'])
 call(['javac','-cp','/out/production:'+cp,'-d','/out/tests','/out/LifecycleTest.java'])
 Path('/out/selectors.tsv').write_text('fixture.LifecycleTest\n')
 runtime='/out/tests:/out/helper:/out/production:'+cp
@@ -209,6 +209,46 @@ call(['java','-javaagent:'+agent+'=output=none,dumponexit=false','-cp','/out/hel
         assert state == 'SUCCESSFUL', message
         hits = {int(row.split('\t')[1]) for row in (tmp_path/f'dumps/{serial}.tsv').read_text().splitlines() if row.endswith('\ttrue')}
         assert hits == ({4} if method == 'second' else set()), 'container teardown leaked into test coverage'
+
+
+@pytest.mark.java_integration
+def test_batch_loader_remains_open_until_group_ends(tmp_path, java_environment):
+    import shutil
+    image, libs = java_environment
+    root = Path(__file__).parents[1]
+    shutil.copytree(root/'tests/fixtures/classloader-close', tmp_path/'tests')
+    classes = tmp_path/'work/checkouts/0/target/classes'
+    classes.mkdir(parents=True)
+    (tmp_path/'Production.java').write_text('package fixture; public class Production { public static int hit() { return 1; } }')
+    (tmp_path/'classpath.txt').touch()
+    write_json(tmp_path/'results/builds/0.json', {'classpath': 'classpath.txt'})
+    methods = [dict(id=name, method=name, file=f'tests/{cls}.java', source_root='tests',
+                    file_hash=cls, **{'class': 'fixture.'+cls})
+               for cls, names in [('LoaderTest', ['autoClose', 'loadLater', 'explicitClose']), ('NextTest', ['nextGroup'])]
+               for name in names]
+    production = 'src/main/java/fixture/Production.java'
+    write_json(tmp_path/'job.json', dict(action='policy-survive', index=0, sha='anchor', experiment='/out',
+               module='.', methods=methods, scope_files=[production], scope_classes=['fixture.Production'],
+               work='batch', output='result.json', jvm=dict(javac='256m', jacoco='256m', launcher='256m'),
+               timeouts=dict(compile=60, build=60, test_class=60)))
+    container = ['docker', 'run', '--rm', '--network', 'none', '-v', f'{tmp_path}:/out',
+                 '-v', f'{Path(libs).resolve()}:/out/work/libs:ro', '-v', f'{root}/src/test_survival:/package:ro', image]
+    subprocess.run([*container, 'javac', '-g', '-d', '/out/work/checkouts/0/target/classes', '/out/Production.java'], check=True)
+    subprocess.run([*container, 'python3', '/package/adapters/java_worker.py', '/out/job.json'], check=True, timeout=180)
+    result = json.loads((tmp_path/'result.json').read_text())
+    run, = result['runs']
+    assert run['groups'] == 2
+    assert run['exit_code'] == 0, (tmp_path/run['log']).read_text()
+    assert result['coverage_status'] == 'complete'
+    assert {t['id']: (t['state'], t['lines']) for t in result['methods']} == {
+        t['id']: ('pass', [[production, 1]]) for t in methods}
+    for group, expected in enumerate([['autoClose', 'autoClose', 'loadLater', 'explicitClose'], ['nextGroup']]):
+        dumps = tmp_path/f'batch/{group}/dumps'
+        rows = [line.split('\t') for line in (dumps/'tests.tsv').read_text().splitlines()]
+        assert [row[2] for row in rows] == expected
+        for serial, _, _, state, _ in rows:
+            assert state == 'SUCCESSFUL'
+            assert f'{production}\t1\ttrue' in (dumps/f'{serial}.tsv').read_text().splitlines()
 
 
 @pytest.mark.java_integration
@@ -309,7 +349,7 @@ helpercp=cp+':'+cli+':'+agent
 Path('/out/production').mkdir();Path('/out/helper').mkdir()
 def call(args): subprocess.run(args,check=True,capture_output=True,text=True)
 call(['javac','-d','/out/production','/out/Production.java'])
-call(['javac','-cp',helpercp,'-d','/out/helper','/helpers/PerTestCoverage.java'])
+call(['javac','-cp',helpercp,'-d','/out/helper','/helpers/PerTestCoverage.java','/helpers/PerTestCoverageLoader.java'])
 manifest=[]
 for version in ['one','two','vintage']:
  classes=Path('/out')/version/'classes';classes.mkdir(parents=True)

@@ -151,7 +151,7 @@ def test_scope_universe_without_tests_or_probe_data(tmp_path,java_environment):
 import subprocess
 cp=':'.join(str(p) for p in Path('/libs').glob('*.jar') if 'jacoco' not in p.name or '0.8.14' in p.name)
 subprocess.run(['javac','-d','/out/classes','/out/A.java','/out/Other.java'],check=True)
-subprocess.run(['javac','-cp',cp,'-d','/out/helper','/helpers/PerTestCoverage.java'],check=True)
+subprocess.run(['javac','-cp',cp,'-d','/out/helper','/helpers/PerTestCoverage.java','/helpers/PerTestCoverageLoader.java'],check=True)
 subprocess.run(['java','-cp','/out/helper:'+cp,'PerTestCoverage','--universe','/out/classes','/out/lines.tsv','/out/scope.txt'],check=True)
 '''
     subprocess.run(['docker','run','--rm','--network','none','-v',str(root/'src/test_survival/adapters/java')+':/helpers:ro',
