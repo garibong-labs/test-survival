@@ -118,6 +118,13 @@ def survival_provenance_matches(previous, current):
 # These exact revisions only add opt-in production coverage. Preserve the
 # historical scope-mode record bytes. A later implementation gets its own hash.
 _SCOPE_EQUIVALENT = {
+    # Draining diagnostics preserves completed measurements.
+    # SnapshotCompiler.java
+    '2bc5f55af7dede1625f303ab4185ba1aca345d8a0834f2462f5befd56188c857':
+        'ac9eb8848fbba506a124c55b999a5b9a317f3302ad8735e59c7e6bde709a2f14',
+    # DependencySources.java
+    '659014c72e88f5ef05f49823264d5485f243295143ac0d9224cb1a63bf121237':
+        '451099988f6a247d3820ff0ca38b0ea68f01057a93e515c82e34b3236acfe836',
     # batch.py
     '6cbf7d5dcaa136f148e63dedb04f47618ab3ee4354e630e20b20dc36a1876997':
         'ca2b556f923a56a428fff5d93737df253bd8ac694cbdc9d4309988f6d7c4f86f',

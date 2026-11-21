@@ -14,8 +14,16 @@ class SnapshotCompiler {
             var options = Arrays.asList(Arrays.copyOfRange(args, 2, args.length));
             ok = compiler.getTask(null, files, diagnostics, options, null, sources).call();
         }
+        Files.write(Path.of(args[1]), formatDiagnostics(diagnostics));
+        System.exit(ok ? 0 : 1);
+    }
+
+    static List<String> formatDiagnostics(DiagnosticCollector<JavaFileObject> diagnostics) {
         List<String> errors = new ArrayList<>();
-        for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
+        var entries = diagnostics.getDiagnostics();
+        // Formatting can complete javac symbols and append more diagnostics.
+        for (int i = 0; i < entries.size(); i++) {
+            var diagnostic = entries.get(i);
             System.err.println(diagnostic);
             if (diagnostic.getKind() != Diagnostic.Kind.ERROR) continue;
             String source = diagnostic.getSource() == null ? "" : Path.of(diagnostic.getSource().toUri()).toAbsolutePath().normalize().toString();
@@ -23,7 +31,6 @@ class SnapshotCompiler {
             errors.add(encoder.encodeToString(source.getBytes(StandardCharsets.UTF_8)) + "\t"
                        + encoder.encodeToString(diagnostic.toString().getBytes(StandardCharsets.UTF_8)));
         }
-        Files.write(Path.of(args[1]), errors);
-        System.exit(ok ? 0 : 1);
+        return errors;
     }
 }

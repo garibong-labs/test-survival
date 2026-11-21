@@ -32,8 +32,12 @@ class DependencySources {
                 for (String name : names) System.out.println("C\t" + file + "\t" + name);
                 for (String name : identifiers) System.out.println("I\t" + file + "\t" + name);
             }
-            if (diagnostics.getDiagnostics().stream().anyMatch(d -> d.getKind() == Diagnostic.Kind.ERROR))
-                throw new IllegalStateException("Source dependency parse failed: " + diagnostics.getDiagnostics());
+            var entries = diagnostics.getDiagnostics();
+            if (entries.stream().anyMatch(d -> d.getKind() == Diagnostic.Kind.ERROR)) {
+                var messages = new StringJoiner(", ", "[", "]");
+                for (int i = 0; i < entries.size(); i++) messages.add(entries.get(i).toString());
+                throw new IllegalStateException("Source dependency parse failed: " + messages);
+            }
         }
     }
 }
