@@ -33,7 +33,8 @@ def worker_prepare(exp):
     helpers=root/'helpers';helper_classes=root/'helper-classes';helper_classes.mkdir()
     subprocess.run(['javac','-cp',cp,'-d',str(helper_classes),str(helpers/'FrozenRunner.java')],check=True)
     test_classes=root/'target/test-classes';test_classes.mkdir(parents=True)
-    subprocess.run(['javac','-cp',cp,'-d',str(test_classes),str(helpers/'FrozenSnapshotTest.java')],check=True)
+    subprocess.run(['javac','-cp',cp,'-d',str(test_classes),str(helpers/'FrozenSnapshotTest.java'),
+                    str(helpers/'PerTestCoverageLoader.java')],check=True)
     plugin_classes=root/'plugin-classes';plugin_classes.mkdir()
     maven_home=Path(shutil.which('mvn')).resolve().parents[1]
     subprocess.run(['javac','-cp',str(maven_home/'lib/*'),'-d',str(plugin_classes),str(helpers/'SnapshotCompileMojo.java')],check=True)
@@ -96,6 +97,7 @@ def reference(root,mode):
     shutil.copyfile(__file__,exp/'reference-worker.py')
     shutil.copytree(Path(__file__).with_name('affected_reference'),exp/'reference/helpers')
     adapter=measurement.adapter
+    shutil.copy2(adapter.helpers/'PerTestCoverageLoader.java',exp/'reference/helpers')
     with adapter.runner.session('reference'):
         if adapter.build(0,read_json(exp/'results/anchor.json')['sha'])['build']!='ok':raise RuntimeError('Reference production build failed')
         adapter.setup_runner()

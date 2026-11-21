@@ -401,7 +401,8 @@ public final class PerTestCoverage implements TestExecutionListener {
             int selector = 0;
             for (String selection : selections) {
                 ClassLoader prior = Thread.currentThread().getContextClassLoader();
-                try (URLClassLoader loader = new URLClassLoader(urls, ClassLoader.getPlatformClassLoader())) {
+                try (var snapshot = new PerTestCoverageLoader(urls)) {
+                    URLClassLoader loader = snapshot.loader();
                     Thread.currentThread().setContextClassLoader(loader);
                     String[] arguments = isolate ? new String[]{p[0], p[1], p[2], selection, Integer.toString(selector++)}
                                                  : new String[]{p[0], p[1], p[2]};
