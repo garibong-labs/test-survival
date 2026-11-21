@@ -22,6 +22,8 @@ def test_offline_author_round(tmp_path):
         '--entrypoint', 'python3', os.getenv('KTESTER_FIXTURE_IMAGE', 'ktester-replication:latest'),
         '/scripts/author_round.py'], check=True, timeout=180)
     archive = tmp_path/'generated/k/round1'
+    assert read_json(archive/'test-classpath.json')['replaced'] == [
+        dict(project_jar='byte-buddy-1.12.21.jar', runner_jar='byte-buddy-1.17.7.jar')]
     post = read_json(archive/'run.json')['post_process']
     assert (post['status'], post['visited'], post['total'], post['skipped']) == ('completed', 4, 4, 1)
     assert 'MultiIfc is already defined' in post['error']
@@ -58,8 +60,7 @@ def test_project_versions_precede_runner_fallbacks(tmp_path):
         assert version == '1.11.4'
         destination.touch()
     record = cp.configure(project, runner, supplemental, resolve)
-    assert set(record['added']) == {cp.CONSOLE+'-1.11.4.jar', 'mockito-junit-jupiter-5.24.0.jar',
-                                    'byte-buddy-1.17.7.jar', 'objenesis-3.3.jar'}
+    assert record['added'] == [cp.CONSOLE+'-1.11.4.jar'] and record['replaced'] == []
     assert {p.name for p in supplemental.glob('*.jar')} == set(record['added'])
     entries = (project/'dependencies.txt').read_text().split(os.pathsep)
     assert entries[0] == 'target/classes'
@@ -68,3 +69,27 @@ def test_project_versions_precede_runner_fallbacks(tmp_path):
     (libs/'junit-platform-engine-1.9.3.jar').touch()
     with pytest.raises(ValueError, match='Inconsistent project JUnit'):
         cp.configure(project, runner, supplemental, resolve)
+
+
+def test_supplied_mockito_records_all_displaced_versions_across_rounds(tmp_path):
+    project = tmp_path/'project'
+    libs = project/'libs'
+    libs.mkdir(parents=True)
+    runner = tmp_path/'runner'
+    runner.mkdir()
+    for item in read_json(Path(cp.__file__).with_name('java')/'classpath-artifacts.json'):
+        (runner/item['filename']).touch()
+    replacements = {
+        'byte-buddy-1.12.21.jar': 'byte-buddy-1.17.7.jar',
+        'byte-buddy-dep-1.12.21.jar': 'byte-buddy-1.17.7.jar',
+        'byte-buddy-agent-1.14.0.jar': 'byte-buddy-agent-1.17.7.jar',
+        'objenesis-2.6.jar': 'objenesis-3.3.jar',
+    }
+    for jar in replacements:
+        (libs/jar).touch()
+    supplement = project/'target/ktester-test-libs'
+    for _ in range(2):
+        receipt = cp.configure(project, runner, supplement, None)
+        assert {entry['project_jar']:entry['runner_jar'] for entry in receipt['replaced']} == replacements
+        assert not list(libs.glob('*.jar'))
+        assert all((supplement/jar).is_file() for jar in replacements.values())

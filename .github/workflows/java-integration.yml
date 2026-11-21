@@ -56,8 +56,13 @@ jobs:
           docker run --rm --network none "$SURVIVAL_JAVA_TEST_IMAGE" python3 --version
       - name: Download and verify pinned fixture libraries
         run: python ci/java_fixture.py libraries "$SURVIVAL_JAVA_TEST_LIBS"
+      - name: Resolve Mockito fixture projects
+        run: |
+          for profile in assertj project-mockito; do
+            mvn -B -q -f tests/fixtures/ktester/mockito/pom.xml -P"$profile" org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies -DincludeScope=test -DoutputDirectory="$SURVIVAL_JAVA_TEST_LIBS/$profile"
+          done
       - name: Run real Java fixtures
-        run: python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py tests/test_affected_selection.py --junitxml=java-results.xml
+        run: python -m pytest -q --strict-markers -m java_integration tests/test_junit4.py tests/test_compiler_session.py tests/test_dependency_context.py tests/test_batch_baseline.py tests/test_affected_selection.py tests/test_mockito_classpath.py --junitxml=java-results.xml
       - name: Require all fixtures to pass without skips
         if: ${{ !cancelled() }}
         run: python ci/java_fixture.py report java-results.xml

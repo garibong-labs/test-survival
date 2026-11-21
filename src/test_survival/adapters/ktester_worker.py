@@ -19,11 +19,11 @@ from typing import NamedTuple
 sys.dont_write_bytecode=True
 if __package__:
     from . import java_worker, ktester_classpath
-    from ..rules.ktester_round import fully_visited
+    from ..rules.ktester_round import reusable_round
     from ..rules.matching import renumber
 else:  # Direct worker invocation inside the KTester container.
     import java_worker, ktester_classpath
-    from rules.ktester_round import fully_visited
+    from rules.ktester_round import reusable_round
     from rules.matching import renumber
 execute, write_json = java_worker.execute, java_worker.write_json
 
@@ -374,7 +374,7 @@ def retire_round(out, destination):
     for path in (destination, out):
         if path.exists():
             record = java_worker.result_io.read_json(path/'run.json', {})
-            verified_copy = fully_visited(record) and (path == destination or not destination.exists())
+            verified_copy = reusable_round(path, record) and (path == destination or not destination.exists())
             if record.get('status') != 'completed' or verified_copy:
                 raise RuntimeError('Interrupted or unexpected KTester round; inspect '+str(path))
     for path, kind in ((out, 'worker'), (destination, 'generated')):
@@ -404,6 +404,15 @@ def generate():
     # Resolve dependencies before opening the model-call ledger.
     supplement = PROJECT/'target/ktester-test-libs'
     classpath = ktester_classpath.configure(PROJECT, EXP/'work/libs', supplement, resolve_console)
+    # Keep preflight failures retryable. A round directory denotes author work.
+    try:
+        probe_env = os.environ.copy()
+        probe_env.pop(JOB['env_key'], None)
+        ktester_classpath.smoke_test(PROJECT, supplement, env=probe_env)
+    except RuntimeError as exc:
+        write_json(RESULTS/f"{JOB['group']}-{label}.json",
+                   dict(status='failed', attempt_id=JOB.get('attempt_id'), preflight_error=str(exc), model_calls=0, classpath=classpath))
+        raise
     if out.exists() or destination.exists():
         retire_round(out, destination)
     out.mkdir(parents=True)

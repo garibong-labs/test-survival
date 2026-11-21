@@ -52,11 +52,11 @@ def import_experiment(exp, source, what, *, display=None):
                 # identify importable directories. Never execute that configuration.
                 source_config=yaml.load((source/'experiment.yaml').read_text(),Loader=UniqueLoader) if (source/'experiment.yaml').exists() else None
                 names={g['name'] for g in source_config['generators']} if source_config else {p.name for p in (source/'generated').iterdir() if p.is_dir()}
-                from .rules.ktester_round import fully_visited
+                from .rules.ktester_round import reusable_round
                 for g in config['generators']:
                     if g['method'] == 'ktester' and g['name'] in names:
                         for directory in rounds(source/'generated'/g['name'], g['rounds']['max']):
-                            if not fully_visited(read_json(directory/'run.json', {})):
+                            if not reusable_round(directory, read_json(directory/'run.json', {})):
                                 raise PipelineError(f'Cannot import an unverified KTester post-process: {directory}. Generate this group again.')
                 imported=[]
                 for g in config['generators']:

@@ -11,6 +11,8 @@ import xml.etree.ElementTree as ET
 
 MANIFEST = Path(__file__).resolve().parents[1]/'src/test_survival/adapters/java/classpath-artifacts.json'
 FIXTURES = {
+    'test_mockito_internal_and_batch_classpaths[assertj]',
+    'test_mockito_internal_and_batch_classpaths[project-mockito]',
     'test_snapshot_compiler_drains_late_diagnostics',
     'test_candidate_coverage_preserves_isolated_setup_and_initializer_lines',
     'test_real_iterative_compilation_and_dependency_graph',
