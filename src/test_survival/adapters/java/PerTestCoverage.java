@@ -337,49 +337,11 @@ public final class PerTestCoverage implements TestExecutionListener {
         if (listener.failure != null) throw new IllegalStateException("Per-test coverage failed", listener.failure);
     }
 
-    private static void resources(Path source) throws IOException {
-        // Each manifest row may come from a different frozen snapshot. The scratch
-        // src/test beneath the worker cwd is replaced as a whole by that snapshot's
-        // run-time test data: every folder except the Java sources (resources, suite,
-        // input, ...), so no folder of the previous snapshot survives the switch.
-        // Files are hard-linked to the snapshot's copy when the filesystem allows it,
-        // so a snapshot switch costs directory entries rather than a full copy of the
-        // resource tree (hundreds of megabytes for some projects, once per snapshot
-        // group and chunk); a filesystem without link() gets a plain copy.
-        Path scratch = Paths.get("src/test");
-        if (Files.exists(scratch)) {
-            try (var paths = Files.walk(scratch)) {
-                for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) {
-                    if (!path.equals(scratch)) Files.delete(path);
-                }
-            }
-        }
-        if (!Files.isDirectory(source)) return;
-        List<Path> roots;
-        try (var entries = Files.list(source)) {
-            roots = entries.filter(Files::isDirectory)
-                           .filter(path -> !path.getFileName().toString().equals("java"))
-                           .sorted().toList();
-        }
-        for (Path root : roots) {
-            Path target = scratch.resolve(root.getFileName().toString());
-            try (var paths = Files.walk(root)) {
-                for (Path path : paths.toList()) {
-                    Path destination = target.resolve(root.relativize(path).toString());
-                    if (Files.isDirectory(path)) Files.createDirectories(destination);
-                    else linkOrCopy(path, destination);
-                }
-            }
-        }
-    }
-
-    private static void linkOrCopy(Path source, Path destination) throws IOException {
-        try {
-            Files.createLink(destination, source);
-        } catch (UnsupportedOperationException | IOException e) {
-            Files.deleteIfExists(destination);
-            Files.copy(source, destination);
-        }
+    private static void resources(Path source) throws Exception {
+        // The Python worker holds the exclusive lease until this JVM exits.
+        var reset = new ProcessBuilder(System.getProperty("survival.python"),
+            System.getProperty("survival.stage"), source.toString()).inheritIO().start();
+        if (reset.waitFor() != 0) throw new IOException("Cannot stage test data from " + source);
     }
 
     /** Analyze only to enumerate executable scope lines, including empty groups.

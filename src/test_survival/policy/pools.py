@@ -4,11 +4,11 @@ from collections import defaultdict
 from copy import deepcopy
 import hashlib
 from pathlib import Path
-import shutil
 import threading
 
 from ..adapters.java_maven import JavaMavenAdapter
 from ..config import canonical_hash, generator_config
+from ..frozen_tree import copy_frozen_tree, frozen_resource_hash
 from ..io import read_csv, read_json, write_csv, write_json
 from ..rules.dev_denominator import denominator, frozen_method, identity
 from ..stages.generate import run as generate
@@ -71,8 +71,9 @@ def build_pool(b, point, dev_target):
     if adapter.build(0, point['sha'])['build'] != 'ok':
         raise RuntimeError(f'Planned pool build failed: {group}/{index}')
     test_source = adapter.folder(0)/'src/test'
-    if test_source.exists() and not (exp/'dev/src-test-t').exists():
-        shutil.copytree(test_source, exp/'dev/src-test-t')
+    if test_source.exists() and not (exp/'dev/src-test-t').exists() and not (exp/'dev/frozen-test-tree.json').exists():
+        copy_frozen_tree(test_source, exp/'dev/src-test-t')
+    frozen_resource_hash(exp/'dev/src-test-t')
     adapter.setup_runner()
     main = adapter.list_production_methods(0)
     tests = adapter.list_test_methods(exp/'dev/src-test-t/java')
@@ -251,7 +252,11 @@ def run(b, plan, step):
 
 def verified_pool(parent, root, members):
     """Old pools remain loadable; prune only snapshots with complete identities."""
-    from .artifacts import resource_tree_hash, tree_hash
+    from .artifacts import tree_hash
+    resources_by_root = {name:frozen_resource_hash(parent/name)
+                         for name in {m['resource_root'] for m in members if 'resource_root' in m}}
+    if not resources_by_root:
+        frozen_resource_hash(root/'dev/src-test-t')
     if not (root/'results/workspace-identities/0.json').is_file():
         return False
     for member in members:
@@ -259,7 +264,7 @@ def verified_pool(parent, root, members):
             return False
         source = parent/member['file']
         sources = tree_hash(parent/member['source_root'], '*.java')
-        resources = resource_tree_hash(parent/member['resource_root'])
+        resources = resources_by_root[member['resource_root']]
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
         execution = canonical_hash(dict(file=digest, sources=sources, resources=resources))
         if (digest, sources, resources, execution) != tuple(member[k] for k in ('file_hash','source_tree_hash','resource_tree_hash','execution_hash')):

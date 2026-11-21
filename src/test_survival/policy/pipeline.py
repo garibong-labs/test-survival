@@ -95,6 +95,9 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
     config.keep_work = keep_work
     b = Baseline(exp,config)  # Validate the read-only boundary before creating lock/state files.
     with run_lock(b.exp, lock_fd), run_session(b.exp), LiveProgress(b.exp, display=display) as progress:
+        from ..frozen_tree import verify_existing_tree
+        verify_existing_tree(b.path/'dev/src-test-t', record=False)
+        verify_existing_tree(b.exp/'results/policy/baseline-sources/dev/src-test-t')
         if force:
             root = b.exp/'results/policy'
             if root.exists():

@@ -503,7 +503,10 @@ def test_snapshot_uses_same_path_in_place(tmp_path, monkeypatch, method):
     assert actual['file'] == str(prefix/relative)
     assert actual['origin_id'] == 'original-id'
     assert (tmp_path/actual['source_root']/'Provider.java').exists()
-    assert before == {p:(p.read_bytes(), p.stat().st_mtime_ns) for p in source.rglob('*') if p.is_file()}
+    after = {p:(p.read_bytes(), p.stat().st_mtime_ns) for p in source.rglob('*') if p.is_file()}
+    assert read_json(source/'dev/frozen-test-tree.json')['resource_tree_hash'] == actual['resource_tree_hash']
+    del after[source/'dev/frozen-test-tree.json']
+    assert before == after
 
 
 def test_pool_failure_stops_new_work_before_waiting_for_earlier_pool(baseline, monkeypatch):

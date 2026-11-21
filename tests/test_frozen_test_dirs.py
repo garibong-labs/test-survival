@@ -1,6 +1,5 @@
 import pytest
 
-from test_survival.adapters import java_worker
 from test_survival.config import canonical_hash
 from test_survival.policy.artifacts import frozen_test_dirs, resource_tree_hash, tree_hash
 
@@ -15,6 +14,7 @@ def tree(root, names):
 def test_lists_every_folder_except_java_sources(tmp_path):
     root = tree(tmp_path/'src-test-t', ['java', 'resources', 'input', 'witness'])
     (root/'loopfs.sh').write_text('#!/bin/sh')
+    from test_survival.adapters import java_worker
     assert frozen_test_dirs(root) == ['input', 'resources', 'suite', 'witness']
     assert java_worker.frozen_test_dirs(root) == frozen_test_dirs(root)
 
@@ -69,42 +69,50 @@ def test_trees_with_other_data_folders_do_not_reuse_pre_change_records(tmp_path)
     assert adapter.screen_fingerprint(source, 1, provenance=earlier) not in adapter.screen_fingerprints(source, 1)
 
 
-def test_setup_restages_a_shared_runtime_from_an_earlier_layout(tmp_path, monkeypatch):
-    import hashlib
-    from test_survival.adapters.java_maven import JavaMavenAdapter
-    from test_survival.adapters.test_data import stage_test_data
-    from test_survival.config import validate
-    from test_survival.io import read_json, write_json
-    adapter = JavaMavenAdapter(tmp_path, validate({'name': 'x', 'anchor': 't', 'project': {'repo': '/repo'}}))
-    folder = adapter.folder(0); folder.mkdir(parents=True); (folder/'pom.xml').write_text('<project/>')
-    helpers = tmp_path/'helpers'; helpers.mkdir()
-    payload = b'runner jar'
-    records = [dict(filename='test.jar', sha256=hashlib.sha256(payload).hexdigest(), role='test')]
-    write_json(helpers/'classpath-artifacts.json', records)
-    adapter.helpers = helpers
-    libs = tmp_path/'work/libs'; libs.mkdir(parents=True); (libs/'test.jar').write_bytes(payload)
-    monkeypatch.setattr(adapter, 'ensure_anchor', lambda: None)
-    digest = hashlib.sha256(b'<project/>').hexdigest()
-    # Completed by main fa45856: dependencies current, runtime staged without input.
-    write_json(tmp_path/'results/runner-setup.json', {'status': 'completed', 'jars': records, 'project_dependencies': digest})
-    frozen = tree(tmp_path/'dev/src-test-t', ['java', 'resources', 'input'])
-    runtime = tmp_path/'work/runtime/src/test'
-    tree(runtime, ['resources', 'stale'])
-    calls = []
-    def setup(job):
-        # The runner-side setup worker owns the runtime; the host never deletes it.
-        assert job == {'action': 'setup'}
-        calls.append(job)
-        stage_test_data(frozen, tmp_path/'work/runtime')
-        write_json(tmp_path/'results/runner-setup.json', {'status': 'completed', 'jars': records, 'project_dependencies': digest})
-    monkeypatch.setattr(adapter, 'worker', setup)
-    adapter.setup_runner()
-    assert len(calls) == 1
-    assert sorted(p.name for p in runtime.iterdir()) == ['input', 'resources']
-    assert read_json(tmp_path/'results/runner-setup.json')['test_data']
-    # A second gate pass finds the staging current and runs nothing.
-    adapter.setup_runner()
-    assert len(calls) == 1
-    (frozen/'input/value').write_text('changed')
-    adapter.setup_runner()
-    assert len(calls) == 2 and (runtime/'input/value').read_text() == 'changed'
+def test_concurrent_leases_restore_only_dirty_files(tmp_path):
+    from test_survival.adapters.test_data_runtime import reset_runtime, runtime_slot
+    root = tree(tmp_path/'frozen', ['input', 'resources'])
+    pool = tmp_path/'slots'
+    with runtime_slot(pool) as first:
+        reset_runtime(root, first)
+        unchanged = first/'src/test/input/value'
+        unchanged_signature = unchanged.stat()
+        (first/'src/test/resources/value').write_text('damaged')
+        (first/'src/test/resources/added').touch()
+        (first/'outside').write_text('also private')
+        with runtime_slot(pool) as second:
+            reset_runtime(root, second)
+            assert first != second
+            assert (second/'src/test/resources/value').read_text() == 'resources'
+            assert not (second/'src/test/resources/added').exists()
+    with runtime_slot(pool) as again:
+        assert again == first
+        reset_runtime(root, again)
+        assert (again/'src/test/resources/value').read_text() == 'resources'
+        assert not (again/'src/test/resources/added').exists()
+        assert not (again/'outside').exists()
+        assert unchanged.stat().st_ino == unchanged_signature.st_ino
+        assert unchanged.stat().st_ctime_ns == unchanged_signature.st_ctime_ns
+    assert (root/'resources/value').read_text() == 'resources'
+
+
+def test_first_catalog_rejects_conflicting_legacy_evidence(tmp_path):
+    from test_survival.frozen_tree import frozen_resource_hash
+    from test_survival.io import write_json
+    root = tree(tmp_path/'dev/src-test-t', ['resources'])
+    write_json(tmp_path/'results/baseline-batches/0.json',
+               {'methods':[{'resource_tree_hash':resource_tree_hash(root)}]})
+    (root/'resources/value').write_text('modified before upgrade')
+    with pytest.raises(RuntimeError, match='differs from its recorded resource_tree_hash'):
+        frozen_resource_hash(root)
+    assert not (root.parent/'frozen-test-tree.json').exists()
+
+
+def test_catalog_pins_an_empty_resource_tree(tmp_path):
+    from test_survival.frozen_tree import frozen_resource_hash
+    root = tmp_path/'dev/src-test-t'
+    empty = frozen_resource_hash(root)
+    assert frozen_resource_hash(root) == empty
+    tree(root, ['resources'])
+    with pytest.raises(RuntimeError, match='added resources/value'):
+        frozen_resource_hash(root)

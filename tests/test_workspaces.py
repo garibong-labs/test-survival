@@ -304,7 +304,7 @@ def test_pool_cleanup_requires_verified_immutable_snapshots(tmp_path):
                 execution_hash=canonical_hash(dict(file=source_hash,sources=sources,resources=resources)))
     assert verified_pool(tmp_path,root,[member])
     source.write_text('class T { int changed; }')
-    with pytest.raises(RuntimeError,match='snapshot changed'):verified_pool(tmp_path,root,[member])
+    with pytest.raises(RuntimeError,match='changed java/T.java'):verified_pool(tmp_path,root,[member])
     assert source.exists()
 
 

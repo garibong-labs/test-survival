@@ -215,6 +215,8 @@ def run_session(exp):
 def _run(exp, config, *, selected, force=False, group=None, handlers=None):
     completed = []
     with run_session(exp):
+        from .frozen_tree import verify_existing_tree
+        verify_existing_tree(exp/'dev/src-test-t')
         for current in selected:
             path = exp / 'state' / f'{current}.json'
             digest = stage_hash(config, current)

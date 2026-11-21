@@ -40,6 +40,23 @@ class DockerRunner:
             value = re.sub(r'(^|[=:])'+re.escape(host)+r'(?=/|:|,|$)',lambda m:m.group(1)+container,value)
         return value
 
+    def volumes(self):
+        mounts = {target:(host, host in self.read_only) for host, target in self.mounts.items()}
+        # Trees are frozen after runner construction. Resolve them at container
+        # creation so direct file access is read-only in image and Compose jobs.
+        roots = [self.exp/'dev/src-test-t', self.exp/'results/policy/baseline-sources/dev/src-test-t']
+        roots.extend((self.exp/'results/policy/pools').glob('*/*/dev/src-test-t'))
+        for root in roots:
+            if root.is_dir():
+                for host, target in self.mounts.items():
+                    if root.is_relative_to(host):
+                        nested = str(Path(target)/root.relative_to(host))
+                        mounts[nested] = (str(root), True)
+        args = []
+        for target, (host, readonly) in mounts.items():
+            args += ['--volume', f'{host}:{target}' + (':ro' if readonly else '')]
+        return args
+
     def command(self, command, cwd):
         if self.container_id:
             return ['docker', 'exec', '--workdir', self.path(cwd), self.container_id, *[self.argument(v) for v in command]]
@@ -49,15 +66,13 @@ class DockerRunner:
             for file in d['compose_files']:
                 prefix += ['-f', file]
             prefix += ['run', '--rm', '--no-deps', '-T', '--workdir', self.path(cwd)]
-            for host, container in self.mounts.items():
-                prefix += ['--volume', f'{host}:{container}' + (':ro' if host in self.read_only else '')]
+            prefix += self.volumes()
             prefix += [d['service']]
         elif d['image']:
             prefix = ['docker', 'run', '--rm', '--workdir', self.path(cwd)]
             if not any('/root/.m2' == target or '/root/.m2'.startswith(target+'/') for target in self.mounts.values()):
                 prefix += ['--volume', d['m2_volume']+':/root/.m2']
-            for host, container in self.mounts.items():
-                prefix += ['--volume', f'{host}:{container}' + (':ro' if host in self.read_only else '')]
+            prefix += self.volumes()
             if d['env_file']:
                 prefix += ['--env-file', d['env_file']]
             prefix += [d['image']]

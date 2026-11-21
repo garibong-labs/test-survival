@@ -252,8 +252,10 @@ class JavaMavenAdapter:
     def baseline(self):
         folder = self.folder(0)
         frozen = self.exp/'dev/src-test-t'
-        if not frozen.exists():
-            shutil.copytree(folder/'src/test', frozen)
+        from ..frozen_tree import copy_frozen_tree, frozen_resource_hash
+        if not frozen.exists() and not (frozen.parent/'frozen-test-tree.json').exists():
+            copy_frozen_tree(folder/'src/test', frozen)
+        frozen_resource_hash(frozen)
         inventory = {'main': self.list_production_methods(0), 'test': self.list_test_methods(frozen/'java')}
         # Inventory paths for frozen tests are normalized to their anchor source location.
         for data in inventory['test']['classes'].values():
@@ -366,7 +368,14 @@ class JavaMavenAdapter:
         paths.append(Path(__file__).parents[1]/'selection.py')
         paths.extend(Path(__file__).with_name(name) for name in ('policy_coverage.py','snapshot_compile.py','compile_events.py','dependencies.py','selection_context.py'))
         result = {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in paths if p.is_file()}
-        from .run_reuse import scope_compatible_fingerprint
+        from .run_reuse import frozen_tree_fingerprint, scope_compatible_fingerprint
+        result = {name:frozen_tree_fingerprint(digest) for name,digest in result.items()}
+        # The staging module is new. Track future edits while preserving the
+        # existing keys for this exact, measurement-compatible implementation.
+        staging = Path(__file__).with_name('test_data_runtime.py')
+        staging_digest = frozen_tree_fingerprint(hashlib.sha256(staging.read_bytes()).hexdigest())
+        if staging_digest:
+            result[staging.name] = staging_digest
         if not production_coverage:
             result.pop('ProductionUniverse.java', None)
             result = {name:scope_compatible_fingerprint(digest) for name,digest in result.items()}
@@ -433,19 +442,10 @@ class JavaMavenAdapter:
         digest = hashlib.sha256((self.folder(0)/'pom.xml').read_bytes()).hexdigest()
         # Setup is the single-threaded gate before parallel workers; restore removed runner jars here, not in workers.
         present = all((self.exp/'work/libs'/r['filename']).is_file() for r in jars)
-        from .test_data import staging_identity
-        frozen = self.exp/'dev/src-test-t'
-        current = (record.get('status') == 'completed' and record.get('jars') == jars
-                   and record.get('project_dependencies') == digest and present)
-        if current and record.get('test_data') == staging_identity(frozen):
+        if (record.get('status') == 'completed' and record.get('jars') == jars
+                and record.get('project_dependencies') == digest and present):
             return
-        # A shared runtime staged by an earlier rule (no or another identity) is
-        # restaged by the setup worker inside the runner: files the runner created
-        # there may not be writable by the host coordinator (root Docker on Linux).
         self.worker({'action':'setup'})
-        record = read_json(self.exp/'results/runner-setup.json', {})
-        if record.get('status') == 'completed':
-            write_json(self.exp/'results/runner-setup.json', {**record, 'test_data': staging_identity(frozen)})
 
     def screen_fingerprint(self, source, repeats, *, provenance=None):
         return canonical_hash({'source':hashlib.sha256(source.read_bytes()).hexdigest(), 'repeats':repeats,
