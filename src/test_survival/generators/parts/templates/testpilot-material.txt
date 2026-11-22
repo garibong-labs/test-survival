@@ -1,0 +1,5 @@
+Complete the JUnit 4 test class below. Write exactly one @Test method that tests {display}. Return the complete test class in one ```java code block. Keep the package declaration and the class name exactly as given.
+
+```java
+{scaffold}
+```

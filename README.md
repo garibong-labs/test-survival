@@ -141,6 +141,24 @@ Set `anchor` to the starting tag or commit. Set `range.end` to a fixed endpoint 
 
 Choose your generator groups and model settings. The template includes KTester; configure its tool path and Compose override, or replace it with a supported native generator.
 
+For method-level Java generation, configure a native TestPilot group. Each round starts with the scoped signatures, adds available source and documentation in every combination, and retries each failing candidate once. These are the default parameter values.
+
+```yaml
+generators:
+  - name: testpilot
+    method: testpilot
+    impl: native
+    params:
+      temperature: 0
+      max_tokens: 16384
+      completions: 1
+      workers: 2
+      max_snippets: 3
+      snippet_lines: 20
+```
+
+The generator uses JUnit 4 and the runner's import hints. Every extra completion is a separate model request. The generation and screening records identify each candidate and its parent. [Prompt wording and output layout](docs/design.md#testpilot--native)
+
 Select the runner image you built:
 
 ```yaml
@@ -417,7 +435,7 @@ independent terminal writes cannot interfere with panel rendering.
 
 The estimate uses that stage's throughput in the current attempt. Cached records count toward completion but not toward the current attempt's throughput.
 
-The estimate is unknown until there is enough evidence or when the total is unknown. Adaptive KTester call totals remain unknown until generation stops.
+The estimate is unknown until there is enough evidence or when the total is unknown. Adaptive KTester and TestPilot call totals remain unknown until generation stops.
 
 ## 6. Stopping and resuming
 

@@ -134,7 +134,7 @@ runner:
     node_modules: lockfile-sha256
 ```
 
-Validation errors name the key and the allowed values. The implemented combinations in this work are `language: java` + `build: maven` with `test_framework` junit5 or junit4, generators `ktester/author-tool` and `ouedraogo/native`. Any other combination fails validation with "not implemented in this version of the tool" and the key.
+Validation errors name the key and the allowed values. The implemented combinations in this work are `language: java` + `build: maven` with `test_framework` junit5 or junit4, generators `ktester/author-tool`, `ouedraogo/native` and `testpilot/native`. Any other combination fails validation with "not implemented in this version of the tool" and the key.
 
 ## Stages, outputs, hash inputs
 
@@ -213,6 +213,64 @@ Omitting the setting or writing `false` preserves the original prompt bytes and 
 `postprocess.import_repair.enabled: true` runs after extraction and before screening, without model calls: compile each extracted file once; for every `cannot find symbol ... class X` where `X` resolves to exactly one type in the `t` source inventory (top-level or nested) or to exactly one type in `org.junit`, `org.junit.jupiter.api`, `org.mockito`, `org.mockito.stubbing`, `org.mockito.invocation`, `org.hamcrest`, add the import and compile again; at most `passes` passes; change nothing but import lines. Keep the pre-repair source as `<file>.pre-repair` beside the repaired file and record every added import per file in `round<N>/import-fixes.json`.
 
 Compile-failure classification (`results/<group>-round<N>-compile-failures.json`): for every file that failed to compile, categorize the first diagnostic into `missing-import`, `signature-mismatch`, `unknown-api`, `syntax`, `other`, following `audit_run2.py`'s categories where it has them.
+
+### `testpilot` / `native`
+
+This Java adaptation of TestPilot (Schäfer, Nadi, Eghbali and Tip, IEEE TSE 50(1), 2024) generates one JUnit 4 method per response. Each row of `population/methods.csv` supplies a scoped class, signature and source line. A parse-only JDK helper finds the corresponding declaration, strips annotations from the signature header, and preserves the original definition and raw Javadoc. An unmatched row stops generation before model calls.
+
+Each method starts with its signature. The body, Javadoc and documentation examples are independent additions. The generator requests every available combination, even after a test passes. With one completion, one optional material costs two material calls, two cost four, and three cost eight. Each extracted material candidate that fails parsing, compilation or stable execution receives one retry. This includes a timeout or a method absent from the launcher report. A retry is terminal. A response with no extractable test is recorded as `no-test`.
+
+The paper used completion-style generation. Here each request is a chat with one user message, with one response by default. The scaffold starts with package and import hints for the target class, includes the pinned JUnit 4 test imports, and ends immediately after the test method's opening brace. Every material line above the class opens with `// `. The order is numbered usage snippets, Javadoc, fully qualified class name, method header, then definition. The class name and header appear in every scaffold.
+
+The material request uses the following wording.
+
+````text
+Complete the JUnit 4 test class below. Write exactly one @Test method that tests {display}. Return the complete test class in one ```java code block. Keep the package declaration and the class name exactly as given.
+
+```java
+{scaffold}
+```
+````
+
+A retry includes the extracted source and the recorded compiler diagnostic or method failure message. Diagnostic lines keep their order and the screening limit of 4,000 characters. Experiment and work paths appear relative to the experiment.
+
+````text
+The test below fails. Return the fixed complete test class in one ```java code block. Keep the package declaration and the class name exactly as given.
+
+```java
+{failing test source}
+// the test above fails with the following error: {error}
+// fixed test
+```
+````
+
+Documentation comes from Git blobs at the generation commit. Markdown contributes Java and unlabeled fenced blocks. Java files under `example`, `examples`, `demo` and `samples` contribute a window around a matching call. Build output and experiment directories are excluded. Matching uses the method name, so overloads share examples and common names may match unrelated calls. Selection is ordered by file path and position. Long blocks are cropped around the call. Each selected snippet carries its text, file, first line and call line.
+
+| Parameter | Default | Meaning |
+| --- | ---: | --- |
+| `temperature` | 0 | Model sampling temperature |
+| `max_tokens` | 16384 | Response token budget |
+| `completions` | 1 | Separate requests per material prompt. Each has its own outcome and possible retry. |
+| `workers` | 2 | Concurrent focal methods |
+| `max_snippets` | 3 | Maximum examples per method. Zero disables usage prompts. |
+| `snippet_lines` | 20 | Maximum lines per example |
+
+Under `generated/<group>/round<N>/`, a signature-only candidate for the first method of class `Counter` uses these paths.
+
+```text
+prompts/Counter/Counter_add_1_S.txt
+runs/Counter/Counter_add_1_S/{request.json,raw-response.json,response.md,run.json}
+sources/Counter/sig/Counter_add_1_STest.java
+prompts/Counter/Counter_add_1_SR.txt
+sources/Counter/sig-retry/Counter_add_1_STest.java
+refinements/Counter/Counter_add_1.json
+```
+
+The class key becomes the fully qualified name when simple names collide. The position follows CSV order within the target class. Material codes append `B`, `D`, `U` to `S` in that order. Labels start at `sig` and append `-body`, `-doc`, `-usage` for the included materials. Retry IDs add `R` and retry labels add `-retry`. The original and the retry keep the same expected Java name in separate label directories. With multiple completions, the prompt text and Java name stay identical, IDs add `_c<n>`, and source paths insert `c<n>/` between the class key and label. A wrong public class name goes to javac as returned.
+
+All material prompts and import checks precede the first call. Resume verifies the stored chat request and reads its response. A recorded retry keeps its original prompt. Transport failures allow the same second attempt as native Ouédraogo. An interrupted request without a response ledger requires inspection. Each source path has its own validation slot. Generation and screening share the same single-file execution, keyed by source, stability runs, runner provenance and generation environment. Each refinement record links the materials, prompts, parent and retry IDs, calls, files and outcomes. `test-origins.json` groups producing prompts by test body ignoring comments. `generation.json` indexes candidates. `refinement-summary.json` reports availability, prompts, calls, extracted/compiled/passed candidates, unique tests, retries and empty extractions. `funnel.json` reports screening and deduplication by label.
+
+Policy regeneration uses the pool's commit for both the source checkout and the Git documentation lookup. A generated member's replacement unit is the fully qualified focal class and method signature, including parameter types.
 
 ## Rules
 

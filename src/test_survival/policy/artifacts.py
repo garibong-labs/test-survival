@@ -19,7 +19,7 @@ def unit(exp, group, test, method, scope):
         if len(candidates) != 1:
             raise ValueError('Cannot map KTester test to focal method: '+str(source))
         return candidates[0]['class']+'#'+candidates[0]['method-name']
-    # Ouedraogo records preserve the target class separately from the generated class.
+    # Native generation records identify the focal declaration for each generated file.
     for parent in source.parents:
         ledger = exp/parent/'generation.json'
         if ledger.exists():
@@ -27,11 +27,17 @@ def unit(exp, group, test, method, scope):
             if len(matches) == 1:
                 target = matches[0].get('target_class')
                 if target and any(c['class'] == target for c in scope):
+                    if method == 'testpilot':
+                        return target+'#'+matches[0]['target_signature']
                     return target
+                if method == 'testpilot':
+                    break
                 simple = matches[0].get('class_name', matches[0].get('class'))
                 candidates = [c['class'] for c in scope if c['class'].rsplit('.', 1)[-1] == simple]
                 if len(candidates) == 1:
                     return candidates[0]
+    if method == 'testpilot':
+        raise ValueError('Cannot map TestPilot test to focal method: '+str(source))
     # Folders use the full class name when two target classes share a simple name.
     candidates = [c['class'] for c in scope if c['class'] in source.parts or c['class'].rsplit('.', 1)[-1] in source.parts]
     if len(candidates) != 1:

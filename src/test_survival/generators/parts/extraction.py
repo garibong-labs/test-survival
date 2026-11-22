@@ -9,7 +9,7 @@ TECHS = ['ZSL', 'FSL', 'CoT', 'ToT', 'GToT']
 MARKER = re.compile(r'^\s*(?:\*\*|__|`)?###Test (START|END)#{2,3}(?:\*\*|__|`)?\s*$')
 
 
-def lexical_masks(text):
+def lexical_masks(text, *, text_blocks=False):
     """Mask comments, then comments and literals, preserving offsets."""
     comments, code = list(text), list(text)
     i = 0
@@ -24,13 +24,13 @@ def lexical_masks(text):
             i = len(text) if end < 0 else end + 2
             comment = True
         elif text[i] in '\"\'':
-            quote = text[i]
-            i += 1
+            quote = '"""' if text_blocks and text.startswith('"""', i) else text[i]
+            i += len(quote)
             while i < len(text):
                 if text[i] == '\\':
                     i += 2
-                elif text[i] == quote:
-                    i += 1
+                elif text.startswith(quote, i):
+                    i += len(quote)
                     break
                 else:
                     i += 1
