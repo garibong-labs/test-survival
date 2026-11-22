@@ -1,0 +1,26 @@
+Complete the JUnit 4 test class below. Write exactly one @Test method that tests p.Counter#add(int). Return the complete test class in one ```java code block. Keep the package declaration and the class name exactly as given.
+
+```java
+// Use this package and copy the imports your test needs.
+package p;
+// Write nested types as Outer.Inner. When several outer classes declare the same simple name, qualify it with the declaring outer class.
+import p.Counter;
+import org.junit.Test;
+import static org.junit.Assert.*;
+import org.hamcrest.Matchers;
+import static org.hamcrest.MatcherAssert.assertThat;
+import org.mockito.Mockito;
+
+// usage #1
+// Counter.add(2);
+// /** Add one. */
+// p.Counter
+// public static int add(int x)
+// public static int add(int x) {
+//     return x + 1;
+// }
+public class Counter_add_1_SBDUTest {
+
+    @Test
+    public void testAdd() {
+```

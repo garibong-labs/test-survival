@@ -94,6 +94,9 @@ def items(exp, stage, config, state):
                     sources = sorted(trees[0].glob('*.java')) if trees else sorted((directory/'sources').rglob('*.java'))
                     total += len(sources)
                     for number, source in enumerate(sources):
+                        if group['method'] == 'testpilot':
+                            from .generators.testpilot_native import validation_id
+                            number = validation_id(source, directory)
                         path = directory/f'validation/{number}.json'
                         record = read_json(path, {})
                         fingerprints = adapter.screen_fingerprints(source, config['screen']['stable_runs'], provenance=provenance)
@@ -102,14 +105,16 @@ def items(exp, stage, config, state):
                 continue
             manifest = read_json(root/'rounds.json', {})
             paths = {}
-            if group['method'] == 'ouedraogo':
+            if group['method'] in ('ouedraogo', 'testpilot'):
                 for directory in directories:
                     for path in directory.glob('runs/*/*/**/run.json'):
                         if read_json(path, {}).get('status'):
                             paths[str(path.relative_to(root))] = path
-                retries = sum('/attempt-2/' in key for key in paths)
-                planned = len(scope.get('classes', []))*len(group['params']['prompts'])*group['rounds']['max'] + retries
-                if not scope and not manifest.get('stopped'):
+                planned = len(paths)
+                if group['method'] == 'ouedraogo':
+                    retries = sum('/attempt-2/' in key for key in paths)
+                    planned = len(scope.get('classes', []))*len(group['params']['prompts'])*group['rounds']['max'] + retries
+                if (group['method'] == 'testpilot' or not scope) and not manifest.get('stopped'):
                     unknown = True
             else:
                 # KTester writes live calls under work/, then archives them.
@@ -292,6 +297,19 @@ def generation_progress(exp, config, state):
                         # events. They cannot establish which class is active.
                         repair_unknown = True
                     repairs.update(active)
+        elif group['method'] == 'testpilot':
+            population_file = exp/'population/methods.csv'
+            if population_file.exists():
+                total += len(csv_rows(population_file))*count
+            else:
+                known = False
+            for label, copies in directories.items():
+                for directory in copies:
+                    for path in directory.glob('runs/*/*/**/run.json'):
+                        if read_json(path, {}).get('status'):
+                            calls[name, label, str(path.relative_to(directory))] = path
+                    for path in directory.glob('refinements/*/*.json'):
+                        completed[name, label, path.parent.name, path.name] = [path]
         else:
             from .rules.naming import folder_keys
             rows = scope.get('classes', [])

@@ -3,6 +3,7 @@ from datetime import datetime,timezone
 from ..config import stage_hash,legacy_stage_hash
 from ..generators.ktester_tool import KTesterTool, verified_archives
 from ..generators.ouedraogo_native import OuedraogoNative
+from ..generators.testpilot_native import TestPilotNative
 from ..io import read_csv,read_json,write_json
 from ..pipeline import log
 from ..rules.stop import decision
@@ -35,9 +36,8 @@ def run(exp,config,group=None,force=False):
             summaries.append(g['name']+': already generated');continue
         history=[];entries=[];kept=[];round_no=1
         while True:
-            if g['method']=='ouedraogo':generator=OuedraogoNative(exp,config,g)
-            else:
-                generator=KTesterTool(exp,config,g)
+            implementation = {'ktester': KTesterTool, 'ouedraogo': OuedraogoNative, 'testpilot': TestPilotNative}
+            generator = implementation[g['method']](exp, config, g)
             result=generator.generate(round_no)
             label=f'round{round_no}'
             directory=exp/'generated'/g['name']/label

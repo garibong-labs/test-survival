@@ -232,13 +232,16 @@ SCHEMA = {
     },
 }
 PARAMS = {
+    'testpilot': {'temperature': Field(float, 0, minimum=0), 'max_tokens': integer(16384),
+                  'completions': integer(1), 'workers': integer(2),
+                  'max_snippets': integer(3, 0), 'snippet_lines': integer(20)},
     'ktester': {'fix_tries': integer(5, 0), 'temperature': Field(float, 0.5, minimum=0), 'workers': integer(8)},
     'ouedraogo': {'temperature': Field(float, 0.7, minimum=0), 'max_tokens': integer(16384),
                   'prompts': Field(list, ['ZSL', 'FSL', 'CoT', 'ToT', 'GToT']), 'workers': integer(2)},
 }
 # Execution-only parameters kept out of the validated config unless written,
 # so adding them does not change stage hashes of existing experiments.
-OPTIONAL_PARAMS = {'ouedraogo': ('workers',)}
+OPTIONAL_PARAMS = {'ouedraogo': ('workers',), 'testpilot': ('workers',)}
 
 
 def _validate(data, schema, prefix=''):
@@ -422,11 +425,15 @@ def validate(data):
         g = _validate(raw, GENERATOR, prefix)
         _group_name(g['name'],names,prefix)
         if g['docker'] is not None:g['docker']=_docker(g['docker'],prefix+'docker')
-        if (g['method'], g['impl']) not in (('ktester', 'author-tool'), ('ouedraogo', 'native')):
-            raise ConfigError(prefix + 'method/impl: not implemented in this version of the tool; implemented: ktester/author-tool, ouedraogo/native')
+        if (g['method'], g['impl']) not in (('ktester', 'author-tool'), ('ouedraogo', 'native'), ('testpilot', 'native')):
+            raise ConfigError(prefix + 'method/impl: not implemented in this version of the tool; implemented: ktester/author-tool, ouedraogo/native, testpilot/native')
         if g['impl'] == 'author-tool' and g['tool_path'] is None:
             raise ConfigError(prefix + 'tool_path: required for author-tool')
-        if g['prompt']['import_hints'] and g['method'] != 'ouedraogo':
+        if g['method'] == 'testpilot':
+            if 'import_hints' in raw.get('prompt', {}):
+                raise ConfigError(prefix+'prompt.import_hints: TestPilot always includes import hints')
+            del g['prompt']['import_hints']
+        elif g['prompt']['import_hints'] and g['method'] != 'ouedraogo':
             raise ConfigError(prefix+'prompt.import_hints: only supported for native Ouédraogo')
         g['display'] = g['display'] or g['name']
         given = set(g['params']) if isinstance(g['params'], dict) else set()
@@ -611,6 +618,8 @@ def stage_inputs(c, stage, group=None, *, legacy=False):
             data['model'] = c['model']
         if 'generators' in c:
             data['generators'] = selected
+    if index == 2 and any(g.get('method') == 'testpilot' for g in selected) and 'stable_runs' in c.get('screen', {}):
+        data['screen'] = {'stable_runs': c['screen']['stable_runs']}
     if index >= 3 and 'screen' in c:
         data['screen'] = c['screen']
     if index == 4 and c.get('survival', {}).get('execution') == 'batch':

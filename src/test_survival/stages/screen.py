@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 from ..adapters.java_maven import JavaMavenAdapter
+from ..generators import testpilot_native
 from ..importer import rounds
 from ..io import read_csv, read_json, write_csv, write_json, atomic_text
 from ..pipeline import log
@@ -42,27 +43,34 @@ def screen_round(exp,config,g,directory,prior=()):
         trees=sorted(directory.glob('*/test_classes'))
         sources=sorted(trees[0].glob('*.java')) if trees else sorted((directory/'sources').rglob('*.java'))
     else:sources=sorted((directory/'sources').rglob('*.java'))
+    pilot_screen = testpilot_native.CandidateScreen(adapter, directory, g['name']) if g['method'] == 'testpilot' else None
     def validate(pair):
         number,path=pair
-        record = adapter.screen_file(g['name'],directory.name,path,config['screen']['stable_runs'],number)
+        if pilot_screen:
+            record = pilot_screen.run(path)
+        else:
+            record = adapter.screen_file(g['name'],directory.name,path,config['screen']['stable_runs'],number)
         stage = 'screen' if read_json(exp/'state/screen.json', {}).get('status') == 'running' else 'generate'
         log(exp, f'{stage}: {g["name"]} {directory.name} screened {path.name}', config)
         return record
     with ThreadPoolExecutor(max_workers=config['runner']['workers']['build']) as pool:
         records=list(pool.map(validate,enumerate(sources)))
-    seen={r['body_hash'] for r in prior};kept=list(prior);stable=duplicate=0
+    seen={r.get('dedup_hash', r['body_hash']) for r in prior};kept=list(prior);stable=duplicate=0
     failures=[]
     for record in records:
         if not record.get('compile') or record['compile']['exit_code']:
             evidence=record.get('compile') or record['parse']
-            diagnostic=(exp/evidence['log']).read_text(errors='replace')
+            diagnostic = record['diagnostic'] if 'diagnostic' in record else (exp/evidence['log']).read_text(errors='replace')
             failures.append(dict(file=record['file'],category=classification(diagnostic),diagnostic=diagnostic[:4000]))
         for row in record['methods']:
+            if pilot_screen:
+                row['dedup_hash'] = record['testpilot_bodies'].get(row['body_hash'], row['body_hash'])
             if row['state']!='pass':continue
             stable+=1
-            if row['body_hash'] in seen:
+            body = row.get('dedup_hash', row['body_hash'])
+            if body in seen:
                 duplicate+=1;row['duplicate']=True;continue
-            seen.add(row['body_hash']);kept.append(row)
+            seen.add(body);kept.append(row)
     ndev=len(read_csv(exp/'dev/dev-denominator.csv'))
     excluded=read_json(exp/'results/anchor.json',{}).get('dev_unmapped_excluded',0)
     funnel=dict(group=g['name'],round=directory.name,files=len(sources),compiled=sum(bool(r['compile']) and r['compile']['exit_code']==0 for r in records),methods=sum(len(r['methods']) for r in records),stable_runs=config['screen']['stable_runs'],stable_passed=stable,duplicates=duplicate,kept_this_round=stable-duplicate,total_kept=len(kept),developer_denominator=ndev,ratio_to_dev=len(kept)/ndev if ndev else None,per_prompt={})
@@ -71,7 +79,11 @@ def screen_round(exp,config,g,directory,prior=()):
         if post is not None:
             funnel['post_process'] = post
     funnel.update(dev_unmapped_excluded=excluded,notes=[unmapped_note(excluded)] if excluded else [])
-    for tech in ['KTester'] if g['method']=='ktester' else ['ZSL','FSL','CoT','ToT','GToT']:
+    techniques = ['KTester'] if g['method']=='ktester' else ['ZSL','FSL','CoT','ToT','GToT']
+    if g['method'] == 'testpilot':
+        techniques = sorted({r['technique'] for r in read_json(directory/'generation.json', [])}
+                            | {Path(r['file']).parent.name for r in records})
+    for tech in techniques:
         selected=[r for r in records if g['method']=='ktester' or Path(r['file']).parent.name==tech]
         funnel['per_prompt'][tech]=dict(files=len(selected),compiled=sum(bool(r['compile']) and r['compile']['exit_code']==0 for r in selected),methods=sum(len(r['methods']) for r in selected),stable=sum(m['state']=='pass' for r in selected for m in r['methods']),duplicates=sum(m.get('duplicate',False) for r in selected for m in r['methods']),kept=sum(m['state']=='pass' and not m.get('duplicate',False) for r in selected for m in r['methods']))
     write_json(directory/'funnel.json',funnel)
