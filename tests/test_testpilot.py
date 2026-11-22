@@ -333,9 +333,16 @@ def test_testpilot_junit4_policy_pool(tmp_path, offline_java, monkeypatch):
         assert result['exit_code'] == 0
         jars = self.exp/'work/libs'
         jars.mkdir()
-        for jar in Path(libs).glob('*.jar'):
+        manifest = read_json(self.helpers/'classpath-artifacts.json')
+        for entry in manifest:
+            jar = Path(libs)/entry['filename']
+            assert sha256(jar.read_bytes()).hexdigest() == entry['sha256']
             shutil.copyfile(jar, jars/jar.name)
         atomic_text(self.exp/'work/cp.txt', '')
+        # setup_runner recognizes these verified fixture inputs. The JDK-only
+        # CI image has no Maven binary for its ordinary dependency prefetch.
+        write_json(self.exp/'results/runner-setup.json', dict(
+            status='completed', jars=manifest, project_dependencies=sha256((root/'pom.xml').read_bytes()).hexdigest()))
         build = dict(sha=sha, build='ok', classpath='work/cp.txt')
         write_json(self.exp/'results/builds/0.json', build)
         return build
