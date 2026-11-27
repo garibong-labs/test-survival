@@ -537,6 +537,8 @@ Use a normal run to process stale stages and their successors. Use `--until` to 
 survival run /absolute/path/to/target-fork/experiments/first-run --until scope
 ```
 
+A run through `prepare`, `scope`, `generate`, `screen`, or `control` resolves the entire configured range, builds the anchor, and runs or imports the developer baseline. Prepare progress counts the anchor build and shows the range builds as deferred. Resume with `survival run <exp-dir>` to build the saved range before `survive` and reuse the completed anchor stages. A fresh run through `survive` or later builds the range during prepare.
+
 Use `--stage` to run only one stage. Every earlier stage must already be completed with its current configuration:
 
 ```sh

@@ -22,6 +22,8 @@ def items(exp, stage, config, state):
     """
     historical = state.get('status') == 'completed' and read_json(exp/'state/report.json', {}).get('status') == 'completed'
     completed = []
+    if stage in ('survive', 'cover') and (exp/'state/range-builds.json').exists():
+        return [], None, UNITS[stage]
     if stage in ('control', 'survive') and config['survival'].get('execution') == 'batch':
         from .stages.batch import completed_items
         from .pipeline import PipelineError
@@ -36,25 +38,29 @@ def items(exp, stage, config, state):
             # measuring stage reports the actionable compatibility error.
             completed = []
         return completed, total, 'commits' if stage == 'survive' else 'items'
-    if stage == 'prepare':
+    if stage in ('prepare', 'range-builds'):
         from .adapters.java_maven import JavaMavenAdapter
         from .rules.commits import skip_reason
         adapter = JavaMavenAdapter(exp, config)
         resolution_path = exp/'state/resolved-range.json'
         resolution = read_json(resolution_path, {})
         resolution_hash = range_fingerprint(config)
+        anchor_only = stage == 'prepare' and (exp/'state/range-builds.json').exists()
         plan_paths = [exp/'results'/name for name in ('anchor.json', 'commits.csv', 'commit-paths.json')]
         # Prepare publishes these inputs after resolving the current range.
         # Until that finishes, old indices cannot describe the new work safely.
         if (resolution.get('config_hash') != resolution_hash or
                 any(not p.exists() or p.stat().st_mtime_ns < resolution_path.stat().st_mtime_ns for p in plan_paths)):
-            return [], None, 'builds'
+            return [], 1 if anchor_only else None, 'builds'
         anchor = read_json(exp/'results/anchor.json', {})
-        commits = csv_rows(exp/'results/commits.csv')
-        changes = read_json(exp/'results/commit-paths.json', {})
-        total = len(commits)+1
+        rows = [] if stage == 'range-builds' else [dict(index='0', sha=anchor.get('sha'))]
+        changes = {}
+        if not anchor_only:
+            rows.extend(csv_rows(exp/'results/commits.csv'))
+            changes = read_json(exp/'results/commit-paths.json', {})
+        total = len(rows)
         started = datetime.fromisoformat(state['started']).timestamp() if state.get('started') else None
-        for row in [dict(index='0', sha=anchor.get('sha')), *commits]:
+        for row in rows:
             index, sha = row['index'], row.get('sha')
             path = exp/f'results/builds/{index}.json'
             record = read_json(path, {})
@@ -221,15 +227,18 @@ def description(exp, stage, config, *, at=None):
         eta = (at+timedelta(seconds=elapsed*max(0, total-done)/fresh)).isoformat(timespec='seconds')
     hours, remainder = divmod(int(elapsed), 3600)
     minutes, seconds = divmod(remainder, 60)
-    return Description(f'elapsed {hours:02}:{minutes:02}:{seconds:02}; {done}/{total if total is not None else "?"} {unit}; estimated finish ', eta)
+    prefix = ''
+    if stage == 'prepare' and read_json(exp/'state/range-builds.json', {}).get('status') == 'deferred':
+        prefix = 'range builds deferred; '
+    return Description(f'{prefix}elapsed {hours:02}:{minutes:02}:{seconds:02}; {done}/{total if total is not None else "?"} {unit}; estimated finish ', eta)
 
 
 def describe(exp, stage, config, *, at=None, display=UTC_DISPLAY):
     return description(exp, stage, config, at=at).render(display)
 
 
-UNITS = dict(prepare='builds', scope='items', generate='methods', screen='files',
-             control='methods', survive='commits', cover='indices', report='tables')
+UNITS = {'prepare': 'builds', 'range-builds': 'builds', 'scope': 'items', 'generate': 'methods',
+         'screen': 'files', 'control': 'methods', 'survive': 'commits', 'cover': 'indices', 'report': 'tables'}
 
 
 def duration(seconds):

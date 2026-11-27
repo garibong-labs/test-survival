@@ -134,12 +134,17 @@ def timing(root):
     for mode in ('all','affected'):
         exp=root/'repo/experiments'/mode
         # Both comparison modes have one worker: event spans are non-overlapping.
-        build={};previous=None
-        for line in (root/f'{mode}-prepare-scope.log').read_text().splitlines():
-            if 'prepare:' not in line:continue
-            current=stamp(line);match=re.search(r'prepare: (?:build (\d+)/\d+|anchor build)',line)
-            if match:build[int(match[1] or 0)]=(current-previous).total_seconds()
-            previous=current
+        build = {}
+        for step, phase in (('prepare-scope', 'prepare'), ('survive', 'range-builds')):
+            previous = None
+            for line in (root/f'{mode}-{step}.log').read_text().splitlines():
+                if f'{phase}:' not in line:
+                    continue
+                current = stamp(line)
+                match = re.search(rf'{phase}: (?:build (\d+)/\d+|anchor build)', line)
+                if match:
+                    build[int(match[1] or 0)] = (current - previous).total_seconds()
+                previous = current
         spans={};previous=None
         for line in (root/f'{mode}-survive.log').read_text().splitlines():
             if 'survive: started' in line:previous=stamp(line)

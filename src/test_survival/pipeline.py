@@ -28,7 +28,7 @@ def log(exp, message, config=None, *, display=None):
     stamp = now()
     saved_message = shown_message = message
     stage = message.partition(':')[0]
-    if config is not None and stage in STAGES:
+    if config is not None and stage in (*STAGES, 'range-builds'):
         progress = description(exp, stage, config)
         saved_message += ' | ' + progress.render()
         shown_message += ' | ' + progress.render(display)
@@ -127,7 +127,7 @@ def _stop(exp, *, idle, wait, display):
     # Its signal is skipped, while stale experiment resources can be recovered.
     if pending and pending['run'].get('run_id') != record.get('run_id'):
         raise PipelineError('Run changed during stop cleanup; state retained')
-    stages = [*STAGES, *[p.stem for p in (exp/'state').glob('policy-*.json')]]
+    stages = [*STAGES, 'range-builds', *[p.stem for p in (exp/'state').glob('policy-*.json')]]
     pending = pending or dict(run=record, processes=[], stages={
         stage: state.get('started') for stage in stages
         if (state := read_json(exp/'state'/f'{stage}.json', {})).get('status') == 'running'})
@@ -161,7 +161,7 @@ def _stop(exp, *, idle, wait, display):
                 raise PipelineError('Run changed while stopping; new run state retained')
             cleanup_containers(exp, record)
             finished = now()
-            for stage in [*STAGES, *(p.stem for p in (exp/'state').glob('policy-*.json'))]:
+            for stage in [*STAGES, 'range-builds', *(p.stem for p in (exp/'state').glob('policy-*.json'))]:
                 path = exp/'state'/f'{stage}.json'
                 state = read_json(path, {})
                 if state.get('status') == 'running' or (stage in pending.get('stages', {}) and state.get('started') == pending['stages'][stage]):
@@ -244,6 +244,9 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None, resen
             path = exp / 'state' / f'{current}.json'
             digest = stage_hash(config, current)
             previous = read_json(path, {})
+            if current in ('survive', 'cover', 'report') and handlers is None:
+                from .stages.prepare import finish_deferred_builds
+                finish_deferred_builds(exp, config)
             batch_current = True
             if config['survival'].get('execution') == 'batch' and previous.get('status') == 'completed' and previous.get('config_hash') == digest and handlers is None:
                 from .stages.batch import stage_complete
@@ -280,6 +283,12 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None, resen
                 if group:
                     state['group'] = group
             write_json(path, state)
+            if current == 'prepare' and handlers is None:
+                range_state = exp/'state/range-builds.json'
+                if 'survive' in selected:
+                    range_state.unlink(missing_ok=True)
+                else:
+                    write_json(range_state, dict(status='deferred'))
             log(exp, f'{current}: started', config)
             try:
                 handler = handlers[current] if handlers is not None else default_handler(current)
@@ -367,6 +376,9 @@ def status(exp, config, *, display=None):
         if label == 'completed' and state.get('config_hash') != stage_hash(config, stage):
             label = 'stale'
         rows.append(f'{stage:10} {label} | {describe(exp, stage, config, display=display)}')
+    range_state = read_json(exp/'state/range-builds.json', {})
+    if range_state.get('status') in ('running', 'failed'):
+        rows.append(f'range-builds {range_state["status"]} | {describe(exp, "range-builds", config, display=display)}')
     active = read_json(exp / 'state/run.json', {})
     bg = read_json(exp / 'state/background.json', {})
     if active.get('status') == 'running':
