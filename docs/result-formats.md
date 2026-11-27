@@ -509,6 +509,11 @@ authorized run separately from reduced javac invocation counts.
 
 Native model-call directories contain `request.json` (model, temperature, max_tokens, messages), `raw-response.json`, `response.md`, `usage.json`, and `run.json`. The latter records `timestamp`, `latency`, `status`, `http_status`, `finish_reason`, `provider`, `model_requested`, `model_reported`, `request_id`, `usage`, `error_type`, `prompt_sha256`, and `response_sha256`. No authorization headers or credentials are saved.
 
+`survival stop <exp> --wait SECONDS` (default 300) gives in-flight native calls time to publish `run.json` and prevents new requests. `--no-wait` skips the wait. Stop reports the counts that finished and remained in flight at termination.
+
+When `request.json` exists without `run.json`, `survival run <exp> --resend-interrupted` or `survival policy run <exp> --resend-interrupted` archives that attempt before sending it again. A re-sent call may duplicate a request the provider already answered and charged. Without the option, the interrupted ledger stays in place for inspection.
+
+The archive path is `<exp>/interrupted-ledgers/<UTC timestamp>/<original experiment-relative path>`, including the pool path for policy runs. For an interrupted second attempt, the archived path ends in `attempt-2/` and the completed first attempt stays in place. Each entry in the `interrupted-ledgers/index.json` array contains `original_path` and `new_path` relative to the owning experiment, `request_sha256` over the exact original request file bytes, and `time` in UTC.
 
 ## Developer groups, skips, and environment retries
 

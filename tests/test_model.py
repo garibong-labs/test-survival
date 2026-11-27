@@ -67,3 +67,102 @@ def test_explicit_env_file_and_process_override(tmp_path, monkeypatch):
     assert _read(config) == 'file-key'
     monkeypatch.setenv('SURVIVAL_TEST_KEY', 'process-key')
     assert _read(config) == 'process-key'
+
+
+@pytest.mark.parametrize('nested', [False, True])
+def test_resend_archives_only_interrupted_attempts_and_keeps_index(tmp_path, monkeypatch, nested):
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import datetime, timedelta
+    from hashlib import sha256
+    from test_survival.io import read_json, write_json
+    from test_survival.pipeline import run_session
+
+    model = dict(name='fixture', env_key='TEST_MODEL_KEY')
+    params = dict(temperature=0, max_tokens=10)
+    monkeypatch.setenv('TEST_MODEL_KEY', 'offline-fake-key')
+    requests = []
+    def http(request, timeout):
+        requests.append(json.loads(request.data)['messages'][0]['content'])
+        return Response({'choices': [{'message': {'content': 'again'}}]})
+    monkeypatch.setattr('urllib.request.urlopen', http)
+    workspace = tmp_path/'results/policy/pools/native/1' if nested else tmp_path
+    with run_session(tmp_path, resend_interrupted=True) as run:
+        if nested:
+            write_json(workspace/'state/run-owner.json', dict(experiment=str(tmp_path), run_id=run['run_id']))
+        client = OpenRouter(model, exp=workspace)
+        runs = workspace/'generated/native/round1/runs'
+        completed = runs/'completed'
+        client.complete('saved', params, completed)
+        parent = runs/'retried'
+        write_json(parent/'request.json', client.request('retry', params))
+        write_json(parent/'run.json', dict(status='http-error'))
+        (parent/'response.md').write_text('failed')
+        preserved = {p:p.read_bytes() for folder in (completed, parent) for p in folder.iterdir()}
+        attempts = {runs/'interrupted':'first', parent/'attempt-2':'retry'}
+        for path, prompt in attempts.items():
+            write_json(path/'request.json', client.request(prompt, params))
+            (path/'partial').write_text(prompt)
+        with ThreadPoolExecutor(2) as pool:
+            futures = [pool.submit(client.complete, prompt, params, path) for path, prompt in attempts.items()]
+            for future in futures:
+                assert future.result()[1] == 'again'
+        client.complete('saved', params, completed)
+        assert sorted(requests) == ['first', 'retry', 'saved']
+        assert preserved == {p:p.read_bytes() for p in preserved}
+        history = read_json(tmp_path/'interrupted-ledgers/index.json')
+        assert len(history) == 2
+        assert {tmp_path/r['original_path'] for r in history} == set(attempts)
+        for entry in history:
+            path = tmp_path/entry['original_path']
+            archive = tmp_path/entry['new_path']
+            assert archive.relative_to(tmp_path).parts[0] == 'interrupted-ledgers'
+            assert archive.relative_to(tmp_path).parts[2:] == path.relative_to(tmp_path).parts
+            assert datetime.fromisoformat(entry['time']).utcoffset() == timedelta(0)
+            assert entry['request_sha256'] == sha256((archive/'request.json').read_bytes()).hexdigest()
+            assert (archive/'partial').read_text() == attempts[path]
+            assert not (archive/'run.json').exists() and not (path/'partial').exists()
+            assert read_json(path/'run.json')['status'] == 'ok'
+    with run_session(tmp_path):
+        client = OpenRouter(model, exp=tmp_path)
+        write_json(tmp_path/'other/request.json', client.request('other', params))
+        with pytest.raises(RuntimeError, match='unknown outcome.*--resend-interrupted'):
+            client.complete('other', params, tmp_path/'other')
+        assert len(requests) == 3
+
+
+def test_index_write_failure_is_recovered_before_http(tmp_path, monkeypatch):
+    from test_survival.io import read_json, write_json
+    from test_survival.model import calls
+    from test_survival.pipeline import run_session
+
+    model = dict(name='fixture', env_key='TEST_MODEL_KEY')
+    params = dict(temperature=0, max_tokens=10)
+    ledger = tmp_path/'generated/call'
+    monkeypatch.setenv('TEST_MODEL_KEY', 'offline-fake-key')
+    write_json(ledger/'request.json', OpenRouter(model).request('same prompt', params))
+    index = tmp_path/'interrupted-ledgers/index.json'
+    requests = []
+    def http(request, timeout):
+        assert len(read_json(index)) == 1
+        requests.append(request)
+        return Response({'choices': [{'message': {'content': 'done'}}]})
+    monkeypatch.setattr('urllib.request.urlopen', http)
+    def fail_index(path, value):
+        if path == index:
+            raise OSError('index unavailable')
+        write_json(path, value)
+    with run_session(tmp_path, resend_interrupted=True), monkeypatch.context() as patch:
+        patch.setattr(calls, 'write_json', fail_index)
+        with pytest.raises(OSError, match='index unavailable'):
+            OpenRouter(model, exp=tmp_path).complete('same prompt', params, ledger)
+    assert not requests and not ledger.exists()
+    with run_session(tmp_path):
+        with pytest.raises(RuntimeError, match='unknown outcome.*--resend-interrupted'):
+            OpenRouter(model, exp=tmp_path).complete('same prompt', params, ledger)
+    assert not requests and (ledger/'request.json').exists()
+    with run_session(tmp_path, resend_interrupted=True):
+        OpenRouter(model, exp=tmp_path).complete('same prompt', params, ledger)
+    entry, = read_json(index)
+    assert (tmp_path/entry['new_path']/'request.json').is_file()
+    assert not (tmp_path/'state/interrupted-ledger-move.json').exists()
+    assert len(requests) == 1

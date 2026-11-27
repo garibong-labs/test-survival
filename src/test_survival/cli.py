@@ -1,5 +1,6 @@
 """The survival command-line entry point."""
 import argparse
+import math
 import os
 from importlib.resources import files
 from pathlib import Path
@@ -7,10 +8,18 @@ import sys
 
 from .config import ConfigError, STAGES, load
 from .frozen_tree import FrozenTreeMismatch, verify_existing_tree
+from .model.openrouter import InterruptedModelCall
 from .io import read_json
 from .pipeline import PipelineError, background, run, run_lock, status, stop
 from .display import DisplayConfigError, UTC_DISPLAY, load_display_settings
 from .archive import ArchiveError, archive, archived_status
+
+
+def wait_seconds(value):
+    seconds = float(value)
+    if not math.isfinite(seconds) or seconds < 0:
+        raise argparse.ArgumentTypeError('expected a finite, nonnegative number of seconds')
+    return seconds
 
 
 def parser():
@@ -25,6 +34,8 @@ def parser():
     selection = execute.add_mutually_exclusive_group()
     selection.add_argument('--until', choices=STAGES)
     selection.add_argument('--stage', choices=STAGES)
+    resend_help = 'Archive and re-send interrupted native model requests (may incur duplicate charges)'
+    execute.add_argument('--resend-interrupted', action='store_true', help=resend_help)
     execute.add_argument('--force', action='store_true')
     execute.add_argument('--keep-work', action='store_true', help='Retain successful checkouts and stage scratch')
     execute.add_argument('--background', action='store_true')
@@ -44,6 +55,12 @@ def parser():
     for name in ('show', 'status', 'stop', 'rehash'):
         command = sub.add_parser(name)
         command.add_argument('exp_dir', type=Path)
+        if name == 'stop':
+            wait = command.add_mutually_exclusive_group()
+            wait.add_argument('--wait', type=wait_seconds, default=300, metavar='SECONDS',
+                              help='Wait for in-flight native model calls (default: 300 seconds)')
+            wait.add_argument('--no-wait', dest='wait', action='store_const', const=0,
+                              help='Stop immediately, interrupting in-flight requests')
         if name == 'show':
             command.add_argument('stage', choices=STAGES)
         if name == 'status':
@@ -61,6 +78,7 @@ def parser():
         if name == 'status':
             command.add_argument('--watch', action='store_true', help='Refresh policy progress every five seconds until the run stops')
         if name == 'run':
+            command.add_argument('--resend-interrupted', action='store_true', help=resend_help)
             command.add_argument('--background', action='store_true')
             command.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
             command.add_argument('--ready-fd', type=int, help=argparse.SUPPRESS)
@@ -125,7 +143,7 @@ def main(argv=None):
             from .importer import import_experiment
             import_experiment(args.exp_dir, args.source, args.what, display=display)
         elif args.command == 'stop':
-            stop(args.exp_dir, display=display)
+            stop(args.exp_dir, wait=args.wait, display=display)
         elif args.command == 'show' and (args.exp_dir/'results').is_dir():
             from .summary import show
             print(show(args.exp_dir, args.stage))
@@ -138,7 +156,7 @@ def main(argv=None):
                 from .summary import show
                 print(show(args.exp_dir, args.stage))
             else:
-                options = {key: getattr(args, key) for key in ('until', 'stage', 'force', 'group', 'keep_work')}
+                options = {key: getattr(args, key) for key in ('until', 'stage', 'force', 'group', 'keep_work', 'resend_interrupted')}
                 if args.background:
                     pid, log_path = background(args.exp_dir, **options)
                     print(f'PID {pid}; log {log_path}')
@@ -153,7 +171,7 @@ def main(argv=None):
                 else:
                     run(args.exp_dir, config, no_panel=args.no_panel, display=display, **options)
         return 0
-    except (ConfigError, DisplayConfigError, PipelineError, ArchiveError, FrozenTreeMismatch, FileExistsError, FileNotFoundError) as exc:
+    except (ConfigError, DisplayConfigError, PipelineError, InterruptedModelCall, ArchiveError, FrozenTreeMismatch, FileExistsError, FileNotFoundError) as exc:
         print(f'survival: {exc}', file=sys.stderr)
         return 2
     except KeyboardInterrupt:

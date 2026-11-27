@@ -178,7 +178,7 @@ class TestPilotNative:
         # Use the same runner and inputs as the subsequent screen stage, including
         # when the group selected a different image for material extraction.
         self.screen_adapter = JavaMavenAdapter(exp, config)
-        self.client = OpenRouter(config['model'])
+        self.client = OpenRouter(config['model'], exp=exp)
         self.params = generator['params']
 
     def prompt_path(self, candidate):

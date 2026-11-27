@@ -154,7 +154,8 @@ def test_background_forwarding(tmp_path,monkeypatch):
     from test_survival import pipeline
     calls=[]
     monkeypatch.setattr(pipeline,'launch_background',lambda exp,args: calls.append(args))
-    pipeline.background(tmp_path,keep_work=True)
+    pipeline.background(tmp_path,keep_work=True, resend_interrupted=True)
+    assert '--resend-interrupted' in calls[0]
     assert '--keep-work' in calls[0]
     from test_survival.cli import parser
     assert parser().parse_args(['run',str(tmp_path),'--keep-work']).keep_work

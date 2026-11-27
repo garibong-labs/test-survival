@@ -172,3 +172,28 @@ def test_stop_recovers_dead_run_and_rejects_own_pid(tmp_path):
     write_json(tmp_path/'state/run.json', {'status': 'running', 'pid': os.getpid()})
     with pytest.raises(PipelineError, match='invalid run PID'):
         stop(tmp_path)
+
+
+def test_cli_resend_option_is_scoped_to_run(tmp_path, monkeypatch, capsys):
+    from test_survival import pipeline
+    from test_survival.io import write_json
+    from test_survival.model.openrouter import OpenRouter
+    model = dict(name='fixture', env_key='FIXTURE_MODEL_KEY')
+    params = dict(temperature=0, max_tokens=10)
+    ledger = tmp_path/'generated/native/round1/runs/a'
+    write_json(tmp_path/'experiment.yaml', dict(name='fixture', anchor='t', project=dict(repo=str(tmp_path))))
+    write_json(ledger/'request.json', OpenRouter(model).request('saved', params))
+    def prepare(exp, config):
+        client = OpenRouter(model, exp=exp)
+        if client.resend_interrupted:
+            return 'resend enabled'
+        client.complete('saved', params, ledger)
+    monkeypatch.setattr(pipeline, 'default_handler', lambda stage: prepare)
+    args = ['run', str(tmp_path), '--until', 'prepare', '--no-panel']
+    assert main(args) == 2
+    assert 'unknown outcome' in capsys.readouterr().err
+    before = read_json(tmp_path/'state/prepare.json')['config_hash']
+    assert main([*args, '--resend-interrupted']) == 0
+    assert read_json(tmp_path/'state/prepare.json')['config_hash'] == before
+    assert main([*args, '--force']) == 2
+    assert '--resend-interrupted' in capsys.readouterr().err
