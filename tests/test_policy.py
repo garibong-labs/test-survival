@@ -475,6 +475,8 @@ def test_policy_background_uses_registered_handshake(baseline,monkeypatch):
     monkeypatch.setattr(pipeline,'launch_background',launch)
     assert pipeline.background(exp,config,'pools',False)[0]==123
     assert calls==[(exp,['policy','run',str(exp),'--until','pools'],'policy-background.log')]
+    pipeline.background(exp, config, 'pools', False, resend_interrupted=True)
+    assert calls[-1][1][-1] == '--resend-interrupted'
 
 
 @pytest.mark.parametrize('method', ['dev', 'ouedraogo'])

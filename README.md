@@ -445,7 +445,9 @@ Stop the recorded run:
 survival stop /absolute/path/to/target-fork/experiments/first-run
 ```
 
-Stop verifies the saved process identity and terminates the coordinator, its workers, and the run's Docker containers. It marks the running stage failed with `stopped by user` and permits resumption only after cleanup is confirmed.
+Stop verifies the saved process identity, blocks new native Ouédraogo and TestPilot model requests, and waits up to 300 seconds for in-flight calls to write `run.json`. Use `survival stop <exp> --wait SECONDS` to set the limit or `survival stop <exp> --no-wait` for immediate termination. The wait applies to native model calls, including those in policy pools. Builds, test executions and KTester proceed directly to termination once the native calls finish or the limit expires.
+
+Stop reports how many calls finished and how many were still in flight at termination. It terminates the coordinator and workers, confirms the run's Docker containers are gone, and marks the running stage failed with `stopped by user`. You can resume as soon as stop succeeds.
 
 `survival stop` uses SIGSTOP/SIGKILL, which prevents foreground panel cleanup.
 If you stop a foreground run from another terminal, run `reset` in the original
@@ -454,7 +456,7 @@ applies after an OOM or other hard kill. Ctrl+C and SIGTERM allow normal cleanup
 
 If cleanup fails, resumption stays blocked. Restore Docker access if needed and repeat the stop command to finish cleanup.
 
-A live run started by an older version may lack a saved process identity. Stop refuses to signal that PID because it cannot verify ownership.
+Draining requires the running coordinator to support native call tracking. A live run started by an older version may also lack a saved process identity. Stop refuses to signal that PID because it cannot verify ownership.
 
 Only one process may run an experiment at a time. Resume with the same run command:
 
@@ -475,7 +477,9 @@ Completed stages with matching configuration hashes are skipped. An interrupted 
 | cover | Per-commit coverage records remain, including anchor records when requested. Valid records are reused and coverage summaries are rebuilt. |
 | report | Written report files remain. Report generation reruns. |
 
-If a model call was interrupted before its response was recorded, inspect the call ledger before issuing another call. The tool does not automatically retry an unknown outcome.
+A native call with `request.json` and no `run.json` has an unknown outcome. Resume normally to keep that safeguard, or use `survival run <exp> --resend-interrupted` (also available on `survival policy run`) to send it again. **A re-sent call may duplicate a request the provider already answered and charged.**
+
+Before sending, the CLI moves the interrupted attempt to `<exp>/interrupted-ledgers/<UTC timestamp>/<original experiment-relative path>`. An interrupted second attempt moves only its `attempt-2/` directory. The JSON array in `interrupted-ledgers/index.json` records both relative paths, the SHA-256 of the original `request.json` bytes and the UTC time. Completed calls are reused. The flag applies to that invocation and preserves stage hashes.
 
 Stage exceptions are saved in `state/<stage>-error.txt`. The failure log line names the file, including when no other evidence exists yet.
 

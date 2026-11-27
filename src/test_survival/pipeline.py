@@ -12,6 +12,7 @@ from uuid import uuid4
 from .config import STAGES, stage_hash, legacy_stage_hash
 from .frozen_tree import verify_existing_tree
 from .io import atomic_text, now, read_json, write_json
+from .model.calls import active_calls, admission_lock
 from .progress import describe, description
 from .display import load_display_settings
 from .lifecycle import process_identity, freeze_workers, terminate_workers, cleanup_containers
@@ -86,7 +87,7 @@ def invalidate(exp, start):
             write_json(path, record)
 
 
-def stop(exp, *, display=None):
+def stop(exp, *, wait=300, display=None):
     display = display or load_display_settings()
     exp = Path(exp).resolve()
     if not (exp/'state/run.json').exists():
@@ -104,10 +105,10 @@ def stop(exp, *, display=None):
                 idle = True
             except BlockingIOError:
                 idle = False
-            return _stop(exp, idle=idle, display=display)
+            return _stop(exp, idle=idle, wait=wait, display=display)
 
 
-def _stop(exp, *, idle, display):
+def _stop(exp, *, idle, wait, display):
     run_path = exp/'state/run.json'
     record = read_json(run_path, {})
     pending_path = exp/'state/stopping.json'
@@ -130,10 +131,28 @@ def _stop(exp, *, idle, display):
     pending = pending or dict(run=record, processes=[], stages={
         stage: state.get('started') for stage in stages
         if (state := read_json(exp/'state'/f'{stage}.json', {})).get('status') == 'running'})
-    write_json(pending_path, pending)
+    # A retry may find workers already frozen, including one holding the
+    # model lock. The durable barrier already closed admission in that case.
+    freezing = bool(pending['processes'])
+    with nullcontext() if freezing else admission_lock(exp):
+        if read_json(run_path, {}).get('run_id') != record.get('run_id'):
+            raise PipelineError('Run changed before stop; new run state retained')
+        write_json(pending_path, pending)
+        ledgers = active_calls(exp, record.get('run_id'))
     try:
+        if ledgers and wait and not freezing and live and live == record.get('identity'):
+            deadline = time.monotonic() + wait
+            log(exp, f'Waiting up to {wait:g}s for {len(ledgers)} in-flight native model call(s)', display=display)
+            while any(not (path/'run.json').is_file() for path in ledgers):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or process_identity(pid) != live:
+                    break
+                time.sleep(min(.1, remaining))
         targets = freeze_workers(exp, record, pending)
         terminate_workers(targets)
+        finished_calls = sum((path/'run.json').is_file() for path in ledgers)
+        log(exp, f'Native model calls: {finished_calls} finished during stop, '
+                 f'{len(ledgers) - finished_calls} still in flight at termination', display=display)
         # Keep a durable resume barrier until both host workers and containers
         # are confirmed gone, even after the coordinator releases its flock.
         with nullcontext() if idle else run_lock(exp, stopping=True):
@@ -142,7 +161,7 @@ def _stop(exp, *, idle, display):
                 raise PipelineError('Run changed while stopping; new run state retained')
             cleanup_containers(exp, record)
             finished = now()
-            for stage in stages:
+            for stage in [*STAGES, *(p.stem for p in (exp/'state').glob('policy-*.json'))]:
                 path = exp/'state'/f'{stage}.json'
                 state = read_json(path, {})
                 if state.get('status') == 'running' or (stage in pending.get('stages', {}) and state.get('started') == pending['stages'][stage]):
@@ -161,13 +180,13 @@ def default_handler(stage):
     return importlib.import_module(f'test_survival.stages.{stage}').run
 
 
-def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False, display=None, keep_work=False):
+def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False, display=None, keep_work=False, resend_interrupted=False):
     config.keep_work = keep_work
     display = display or load_display_settings()
     exp = Path(exp).resolve()
     if not locked:
         with run_lock(exp):
-            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel, display=display, keep_work=keep_work)
+            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel, display=display, keep_work=keep_work, resend_interrupted=resend_interrupted)
     if stage and until:
         raise PipelineError('--stage and --until are mutually exclusive')
     if group and stage != 'generate':
@@ -187,11 +206,11 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
                 raise PipelineError(f'{stage} requires completed, current stage {earlier}')
     from .panel import LiveProgress
     with LiveProgress(exp, config, disabled=no_panel, display=display):
-        return _run(exp, config, selected=selected, force=force, group=group, handlers=handlers)
+        return _run(exp, config, selected=selected, force=force, group=group, handlers=handlers, resend_interrupted=resend_interrupted)
 
 
 @contextmanager
-def run_session(exp):
+def run_session(exp, *, resend_interrupted=False):
     """Publish the coordinator identity shared by ordinary and policy stages."""
     run_path = exp / 'state/run.json'
     record = read_json(run_path, {})
@@ -201,6 +220,10 @@ def run_session(exp):
         raise PipelineError('Could not establish the run process identity')
     same_run = record.get('pid') == os.getpid() and record.get('identity') == identity and record.get('status') == 'running'
     run_id = (record.get('run_id') if same_run else None) or uuid4().hex
+    if resend_interrupted:
+        record['resend_interrupted'] = True
+    else:
+        record.pop('resend_interrupted', None)
     record.update(pid=os.getpid(), identity=identity, run_id=run_id, log=log_path, status='running', started=now(), finished=None)
     write_json(run_path, record)
     try:
@@ -213,9 +236,9 @@ def run_session(exp):
         write_json(run_path, record)
 
 
-def _run(exp, config, *, selected, force=False, group=None, handlers=None):
+def _run(exp, config, *, selected, force=False, group=None, handlers=None, resend_interrupted=False):
     completed = []
-    with run_session(exp):
+    with run_session(exp, resend_interrupted=resend_interrupted):
         verify_existing_tree(exp/'dev/src-test-t')
         for current in selected:
             path = exp / 'state' / f'{current}.json'
@@ -294,7 +317,7 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None):
         return completed
 
 
-def background(exp, *, until=None, stage=None, force=False, group=None, keep_work=False):
+def background(exp, *, until=None, stage=None, force=False, group=None, keep_work=False, resend_interrupted=False):
     exp = Path(exp).resolve()
     verify_existing_tree(exp/'dev/src-test-t', record=False)
     arguments = ['run', str(exp)]
@@ -305,6 +328,8 @@ def background(exp, *, until=None, stage=None, force=False, group=None, keep_wor
         arguments.append('--force')
     if keep_work:
         arguments.append('--keep-work')
+    if resend_interrupted:
+        arguments.append('--resend-interrupted')
     return launch_background(exp, arguments)
 
 

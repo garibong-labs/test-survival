@@ -97,10 +97,10 @@ def verify_baseline_trees(baseline, *, record):
     verify_existing_tree(baseline.exp/'results/policy/baseline-sources/dev/src-test-t', record=record)
 
 
-def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_DISPLAY, keep_work=False):
+def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_DISPLAY, keep_work=False, resend_interrupted=False):
     config.keep_work = keep_work
     b = Baseline(exp,config)  # Validate the read-only boundary before creating lock/state files.
-    with run_lock(b.exp, lock_fd), run_session(b.exp), LiveProgress(b.exp, display=display) as progress:
+    with run_lock(b.exp, lock_fd), run_session(b.exp, resend_interrupted=resend_interrupted), LiveProgress(b.exp, display=display) as progress:
         verify_baseline_trees(b, record=True)
         if force:
             root = b.exp/'results/policy'
@@ -155,7 +155,7 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
         finish_work(b.exp, b.execution_config)
 
 
-def background(exp, config, until, force, keep_work=False):
+def background(exp, config, until, force, keep_work=False, resend_interrupted=False):
     b = Baseline(exp,config)
     verify_baseline_trees(b, record=False)
     arguments = ['policy','run',str(b.exp),'--until',until]
@@ -163,6 +163,8 @@ def background(exp, config, until, force, keep_work=False):
         arguments.append('--force')
     if keep_work:
         arguments.append('--keep-work')
+    if resend_interrupted:
+        arguments.append('--resend-interrupted')
     return launch_background(b.exp, arguments, log_name='policy-background.log')
 
 
@@ -217,7 +219,8 @@ def command(args, *, display=UTC_DISPLAY):
         else:
             print(status(args.exp_dir,config,display=display))
     elif args.background:
-        pid,log = background(args.exp_dir,config,args.until,args.force,getattr(args,'keep_work',False))
+        pid, log = background(args.exp_dir, config, args.until, args.force, keep_work=args.keep_work,
+                              resend_interrupted=args.resend_interrupted)
         print(f'PID {pid}; log {log}')
     else:
         if args.ready_fd is not None:
@@ -226,4 +229,5 @@ def command(args, *, display=UTC_DISPLAY):
                     raise PipelineError('Background startup was interrupted')
             finally:
                 os.close(args.ready_fd)
-        run(args.exp_dir,config,args.until,args.force,args.lock_fd,display=display,keep_work=getattr(args,'keep_work',False))
+        run(args.exp_dir, config, args.until, args.force, args.lock_fd, display=display,
+            keep_work=args.keep_work, resend_interrupted=args.resend_interrupted)

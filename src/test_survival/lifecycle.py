@@ -166,24 +166,34 @@ def cleanup_containers(exp, record):
 
     def docker(*args):
         result = subprocess.run(['docker', *args], capture_output=True, text=True, timeout=30)
-        if result.returncode:
+        if result.returncode and args[0] != 'rm':
             raise RuntimeError('Docker cleanup failed: '+result.stderr.strip())
-        return result.stdout.strip().splitlines()
+        return result
 
     def owned():
         # Container IDs are immutable. Legacy session records provide their IDs;
         # new runs also label every one-shot, Compose and detached container.
-        ids = set(docker('ps', '-aq', '--no-trunc', '--filter', 'label=test-survival.run='+run_id)) if run_id else set()
+        ids = set(docker('ps', '-aq', '--no-trunc', '--filter', 'label=test-survival.run='+run_id).stdout.splitlines()) if run_id else set()
         for path in legacy:
             ident = read_json(path)['container']
-            ids.update(docker('ps', '-aq', '--no-trunc', '--filter', 'id='+ident))
+            ids.update(docker('ps', '-aq', '--no-trunc', '--filter', 'id='+ident).stdout.splitlines())
         return ids
 
     containers = owned()
     if containers:
-        docker('rm', '--force', *sorted(containers))
-    if owned():
-        raise RuntimeError('Experiment containers remain after cleanup')
+        # --rm can win the race with rm --force (already removing / no such
+        # container). The ownership query is authoritative for the entire batch.
+        try:
+            error = docker('rm', '--force', *sorted(containers)).stderr.strip()
+        except subprocess.TimeoutExpired:
+            error = 'docker rm --force timed out'
+        deadline = time.monotonic() + 30
+        while remaining := owned():
+            delay = deadline - time.monotonic()
+            if delay <= 0:
+                detail = error or ', '.join(sorted(remaining))
+                raise RuntimeError('Experiment containers remain after cleanup: '+detail)
+            time.sleep(min(.25, delay))
     for path in legacy:
         state = read_json(path)
         state.update(status='stopped', finished=now())

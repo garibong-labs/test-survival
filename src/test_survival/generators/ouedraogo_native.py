@@ -63,7 +63,7 @@ class OuedraogoNative:
         if hints_enabled:
             check['import_hints_checked'] = hints_checked
         write_json(directory/'prompts/pre-call-check.json', check)
-        client=OpenRouter(self.config['model'])
+        client=OpenRouter(self.config['model'], exp=self.exp)
         records=read_json(directory/'generation.json')
         if records is not None:
             # Model work is committed before import repair; check its inputs but

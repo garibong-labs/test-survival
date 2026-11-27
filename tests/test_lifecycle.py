@@ -201,6 +201,8 @@ def test_container_cleanup_is_scoped_and_verifies_removal(tmp_path, monkeypatch,
         return subprocess.CompletedProcess(command, 0, '', '')
     monkeypatch.setattr(lifecycle.subprocess, 'run', docker)
     if remains:
+        clock = iter([0, 30])
+        monkeypatch.setattr(lifecycle.time, 'monotonic', lambda: next(clock))
         with pytest.raises(RuntimeError, match='remain after cleanup'):
             lifecycle.cleanup_containers(tmp_path, {'run_id': 'owner'})
     else:
@@ -274,3 +276,99 @@ def test_nested_pool_owns_workers_and_containers_at_coordinator(tmp_path):
         (root/'state/stopping.json').unlink()
     with pytest.raises(RuntimeError,match='inactive run'):
         lifecycle.container_options(nested)
+
+
+@pytest.mark.parametrize('message', ['removal of container one is already in progress', 'No such container: one'])
+def test_cleanup_polls_until_auto_removed_container_disappears(tmp_path, monkeypatch, message):
+    write_json(tmp_path/'state/containers/one.json', dict(run_id='owner'))
+    listings = iter(['one', 'one', ''])
+    def docker(command, **kwargs):
+        if command[1] == 'ps':
+            assert command[-1] == 'label=test-survival.run=owner'
+            return subprocess.CompletedProcess(command, 0, next(listings), '')
+        assert command == ['docker', 'rm', '--force', 'one']
+        return subprocess.CompletedProcess(command, 1, '', 'Error response from daemon: '+message)
+    monkeypatch.setattr(lifecycle.subprocess, 'run', docker)
+    monkeypatch.setattr(lifecycle.time, 'sleep', lambda seconds: None)
+    lifecycle.cleanup_containers(tmp_path, dict(run_id='owner'))
+    assert list(listings) == []
+
+
+def run_model_workers(exp, workspace, drain):
+    from concurrent.futures import ThreadPoolExecutor
+    from io import BytesIO
+    from unittest.mock import patch
+    from test_survival.model.openrouter import OpenRouter
+
+    with pipeline.run_lock(exp), pipeline.run_session(exp) as run:
+        if workspace != exp:
+            write_json(workspace/'state/run-owner.json', dict(experiment=str(exp), run_id=run['run_id']))
+        write_json(exp/'state/generate.json', dict(status='running'))
+        os.environ['TEST_MODEL_KEY'] = 'fake-offline-test-key'
+        client = OpenRouter(dict(name='test', env_key='TEST_MODEL_KEY'), exp=workspace)
+        params = dict(temperature=0, max_tokens=10)
+        def http(request, timeout):
+            assert not (exp/'http-started').exists(), 'Late call reached HTTP'
+            (exp/'http-started').touch()
+            if drain:
+                wait_for(lambda: (exp/'late-blocked').exists())
+            else:
+                time.sleep(60)
+            result = BytesIO(b'{"choices":[{"message":{"content":"done"}}]}')
+            result.status = 200
+            return result
+        def late():
+            wait_for(lambda: (exp/'state/stopping.json').exists())
+            with pytest.raises(RuntimeError, match='stopped by user'):
+                client.complete('late', params, workspace/'late')
+            (exp/'late-blocked').touch()
+        with patch('urllib.request.urlopen', http), ThreadPoolExecutor(2) as pool:
+            first = pool.submit(client.complete, 'first', params, workspace/'first')
+            if drain:
+                pool.submit(late).result()
+            first.result()
+        time.sleep(60)  # Other stage work must not delay stop.
+
+
+@pytest.mark.parametrize(('options', 'policy_pool'), [([], False), ([], True), (['--wait', '0.1'], False),
+                                                      (['--no-wait'], False)])
+def test_cli_stops_threaded_native_calls_and_can_immediately_resume(tmp_path, options, policy_pool, monkeypatch, capsys):
+    import multiprocessing
+    from test_survival.cli import main
+    workspace = tmp_path/'results/policy/pools/native/1' if policy_pool else tmp_path
+    drain = not options
+    child = multiprocessing.get_context('spawn').Process(target=run_model_workers, args=(tmp_path, workspace, drain))
+    child.start()
+    try:
+        wait_for(lambda: (tmp_path/'http-started').exists())
+        assert main(['stop', str(tmp_path), *options]) == 0
+        child.join(5)
+        assert child.exitcode is not None
+        output = capsys.readouterr().out
+        if drain:
+            assert 'Waiting up to 300s for 1' in output
+            assert '1 finished during stop, 0 still in flight' in output
+            assert read_json(workspace/'first/run.json')['status'] == 'ok'
+            assert (tmp_path/'late-blocked').is_file()
+            assert not (workspace/'late').exists()
+        else:
+            assert '0 finished during stop, 1 still in flight' in output
+            assert ('Waiting up to' in output) == ('--wait' in options)
+            assert [p.name for p in (workspace/'first').iterdir()] == ['request.json']
+        assert read_json(tmp_path/'state/generate.json')['notes'] == 'stopped by user'
+        write_json(tmp_path/'experiment.yaml', dict(name='fixture', anchor='t', project=dict(repo=str(tmp_path))))
+        monkeypatch.setattr(pipeline, 'default_handler', lambda stage: lambda exp, config: 'resumed')
+        assert main(['run', str(tmp_path), '--until', 'prepare', '--no-panel']) == 0
+        assert read_json(tmp_path/'state/prepare.json')['notes'] == 'resumed'
+    finally:
+        if child.is_alive():
+            child.kill()
+        child.join()
+
+
+@pytest.mark.parametrize('options', [['--wait', '-1'], ['--wait', 'nan'], ['--wait', 'inf'],
+                                     ['--wait', '5', '--no-wait']])
+def test_stop_rejects_invalid_wait(options):
+    from test_survival.cli import parser
+    with pytest.raises(SystemExit):
+        parser().parse_args(['stop', 'experiment', *options])

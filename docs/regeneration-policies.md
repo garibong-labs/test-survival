@@ -228,7 +228,12 @@ reflect the repaired evidence. Force archives policy artifacts under
 `work/policy-history/` before rebuilding. Foreground and background policy runs
 share the experiment's exclusive lock and run lifecycle with ordinary stages.
 `survival stop <exp>` stops the coordinator and its nested pool workers/containers,
-including cleanup after the coordinator dies. Worker ownership is recorded at the
+including cleanup after the coordinator dies. Before termination, stop allows
+up to 300 seconds for native model calls across the active pools to finish.
+Use `--wait SECONDS` to change this or `--no-wait` to stop immediately.
+`survival policy run <exp> --resend-interrupted` archives interrupted native
+attempts under the policy experiment's `interrupted-ledgers/` and sends them
+again. The provider may already have answered and charged for the original request. Worker ownership is recorded at the
 parent experiment; background startup publishes that identity before releasing
 the child. Policy evidence uses schema version 3; earlier policy caches require
 `--force` to rebuild snapshot dependencies and isolate container teardown coverage. Status reports
