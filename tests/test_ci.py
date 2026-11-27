@@ -50,6 +50,74 @@ def test_fixture_checksum_mismatch_does_not_publish(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+def http_error(code, retry_after=None):
+    from email.message import Message
+    from urllib.error import HTTPError
+    headers = Message()
+    if retry_after is not None:
+        headers['Retry-After'] = retry_after
+    return HTTPError('https://repo.example/x.jar', code, 'error', headers, None)
+
+
+@pytest.mark.parametrize('failure', ['429', '503', 'network'])
+def test_fixture_download_retries_transient_failures(tmp_path, monkeypatch, failure):
+    from urllib.error import URLError
+    payload = b'verified jar'
+    record = dict(filename='sample.jar', coordinate='org.example:sample:1.0',
+                  sha256=hashlib.sha256(payload).hexdigest())
+    errors = {'429': http_error(429, '7'), '503': http_error(503),
+              'network': URLError(OSError(101, 'Network is unreachable'))}
+    calls, delays = [], []
+    def download(url, timeout):
+        calls.append(url)
+        if len(calls) < 3:
+            raise errors[failure]
+        return io.BytesIO(payload)
+    monkeypatch.setattr(fixture, 'urlopen', download)
+    monkeypatch.setattr(fixture.time, 'sleep', delays.append)
+    fixture.prepare_libraries(tmp_path, [record])
+    assert (tmp_path/'sample.jar').read_bytes() == payload
+    assert len(calls) == 3
+    assert delays == ([7, 10] if failure == '429' else [5, 10])
+    assert not list(tmp_path.glob('*.download'))
+
+
+def test_fixture_download_fails_fast_on_missing_artifact(tmp_path, monkeypatch):
+    from urllib.error import HTTPError
+    record = dict(filename='sample.jar', coordinate='org.example:sample:1.0', sha256='0'*64)
+    calls = []
+    def missing(url, timeout):
+        calls.append(url)
+        raise http_error(404)
+    monkeypatch.setattr(fixture, 'urlopen', missing)
+    monkeypatch.setattr(fixture.time, 'sleep', lambda delay: pytest.fail('404 must not be retried'))
+    with pytest.raises(HTTPError):
+        fixture.prepare_libraries(tmp_path, [record])
+    assert len(calls) == 1
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fixture_download_gives_up_after_bounded_attempts(tmp_path, monkeypatch):
+    from urllib.error import URLError
+    record = dict(filename='sample.jar', coordinate='org.example:sample:1.0', sha256='0'*64)
+    calls, delays = [], []
+    def unreachable(url, timeout):
+        calls.append(url)
+        raise URLError(OSError(101, 'Network is unreachable'))
+    monkeypatch.setattr(fixture, 'urlopen', unreachable)
+    monkeypatch.setattr(fixture.time, 'sleep', delays.append)
+    with pytest.raises(URLError):
+        fixture.prepare_libraries(tmp_path, [record])
+    assert len(calls) == fixture.ATTEMPTS
+    assert delays == [5, 10, 20, 40]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_missing_integration_report_names_the_earlier_failure(tmp_path):
+    with pytest.raises(SystemExit, match='did not run because an earlier step failed'):
+        fixture.verify_report(tmp_path/'java-results.xml')
+
+
 @pytest.mark.parametrize('problem', ['skipped', 'failure', 'error', 'missing', 'duplicate', 'extra', 'unexpected', None])
 def test_integration_report_requires_all_successful_fixtures(tmp_path, problem):
     names = sorted(fixture.FIXTURES)

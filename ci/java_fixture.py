@@ -4,7 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import sys
 import tempfile
+import time
+from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 
@@ -49,6 +52,46 @@ FIXTURES = {
 }
 
 
+# Maven Central occasionally answers CI runners with 429 or 5xx, and runner
+# networking can fail transiently. Other HTTP errors (for example 404) fail fast.
+ATTEMPTS = 5
+BACKOFF_SECONDS = 5
+RETRY_STATUS = {429, 500, 502, 503, 504}
+
+
+def retry_delay(error, attempt):
+    delay = BACKOFF_SECONDS * 2 ** (attempt - 1)
+    if isinstance(error, HTTPError) and error.headers is not None:
+        try:
+            delay = max(delay, min(float(error.headers.get('Retry-After', '')), 120))
+        except ValueError:
+            pass
+    return delay
+
+
+def download(url, stream, *, attempts=ATTEMPTS, sleep=None):
+    """Copy url into stream, retrying transient network and server errors."""
+    for attempt in range(1, attempts + 1):
+        stream.seek(0)
+        stream.truncate()
+        try:
+            with urlopen(url, timeout=60) as response:
+                shutil.copyfileobj(response, stream)
+            stream.flush()
+            return
+        except HTTPError as error:
+            if error.code not in RETRY_STATUS or attempt == attempts:
+                raise
+            last = error
+        except (URLError, OSError) as error:
+            if attempt == attempts:
+                raise
+            last = error
+        delay = retry_delay(last, attempt)
+        print(f'Download failed ({last}); retry {attempt}/{attempts - 1} in {delay:g}s: {url}', file=sys.stderr)
+        (sleep or time.sleep)(delay)
+
+
 def checksum(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -71,9 +114,7 @@ def prepare_libraries(destination, records=None):
         with tempfile.NamedTemporaryFile(dir=destination, suffix='.download', delete=False) as stream:
             temporary = Path(stream.name)
             try:
-                with urlopen(url, timeout=60) as response:
-                    shutil.copyfileobj(response, stream)
-                stream.flush()
+                download(url, stream)
                 if checksum(temporary) != record['sha256']:
                     raise ValueError('Checksum mismatch: '+name)
                 temporary.replace(target)
@@ -83,6 +124,8 @@ def prepare_libraries(destination, records=None):
 
 
 def verify_report(path):
+    if not path.is_file():
+        raise SystemExit(f'{path} not found: the Java fixtures did not run because an earlier step failed')
     cases = list(ET.parse(path).getroot().iter('testcase'))
     if len(cases) != len(FIXTURES) or {case.get('name') for case in cases} != FIXTURES:
         raise ValueError('Expected all real Java fixtures in the report')
