@@ -80,12 +80,14 @@ def run(exp, config):
         log(exp, 'prepare: '+note, config)
     adapter.setup_runner()
     summary = f'{len(commits)} commits; anchor {anchor_sha}'
-    if (exp/'state/range-builds.json').exists():
+    range_state = exp/'state/range-builds.json'
+    if read_json(range_state, {}).get('status') == 'deferred':
         # An older plan may have left a summary for a different range.
         (exp/'results/commits-check.md').unlink(missing_ok=True)
         summary += '; anchor prepared'
     else:
         build_range(exp, config, adapter, commits, touches)
+        range_state.unlink(missing_ok=True)
         summary += '; builds recorded'
     return summary + ('; '+note if note else '')
 

@@ -38,12 +38,12 @@ def project(tmp_path, monkeypatch):
         events.append((adapter.exp.name, index))
         record = dict(index=index, sha=sha, build='ok', input_sha256=adapter.build_fingerprint(sha))
         write_json(adapter.exp/f'results/builds/{index}.json', record)
-        (adapter.folder(index)/'target/classes').mkdir(parents=True)
+        (adapter.folder(index)/'target/classes').mkdir(parents=True, exist_ok=True)
         return record
     def baseline(adapter):
         events.append((adapter.exp.name, 'baseline'))
         test = adapter.exp/'dev/src-test-t/java/ATest.java'
-        test.parent.mkdir(parents=True)
+        test.parent.mkdir(parents=True, exist_ok=True)
         test.write_text('class ATest {}')
         row = {'class':'ATest', 'method':'works', 'kind':'plain', 'stable':'yes'}
         write_csv(adapter.exp/'dev/dev-methods-all.csv', [row], row)
@@ -79,14 +79,15 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(JavaMavenAdapter, 'worker', worker)
     monkeypatch.setattr(DockerRunner, 'execute', execute)
     monkeypatch.setattr(DockerRunner, 'session', lambda *args: nullcontext())
-    return repo, events
+    config = dict(name='fixture', project=dict(repo=str(repo)), anchor='anchor',
+                  range=dict(branch='main', skip_untouched='main-sources'),
+                  scope=dict(rule='explicit', classes=['A'], min_classes=1), dev=dict(denominator='project'))
+    return config, events
 
 
 @pytest.mark.parametrize('mode', ['legacy', 'batch'])
 def test_defer_resume_matches_full_run(tmp_path, project, mode, capsys):
-    repo, events = project
-    config = dict(name='fixture', project=dict(repo=str(repo)), anchor='anchor', range=dict(branch='main', skip_untouched='main-sources'),
-                  scope=dict(rule='explicit', classes=['A'], min_classes=1), dev=dict(denominator='project'))
+    config, events = project
     if mode == 'batch':
         config['survival'] = dict(execution='batch')
     split, full = tmp_path/'split', tmp_path/'full'
@@ -106,7 +107,9 @@ def test_defer_resume_matches_full_run(tmp_path, project, mode, capsys):
         assert 'range builds deferred' in panel[0]
         assert all(len(line) < width for line in panel)
         assert all(stage in panel[1] for stage in STAGES)
+    screen_states = {s:(split/f'state/{s}.json').read_bytes() for s in STAGES[:4]}
     assert main([*split_args, '--until', 'control']) == 0
+    assert all((split/f'state/{s}.json').read_bytes() == data for s,data in screen_states.items())
     anchor_states = {s:(split/f'state/{s}.json').read_bytes() for s in STAGES[:5]}
     assert main(split_args) == 0
     assert all((split/f'state/{s}.json').read_bytes() == data for s,data in anchor_states.items())
@@ -144,11 +147,9 @@ def test_policy_commands_name_the_experiment_to_resume(tmp_path, capsys, deferre
 
 
 def test_failed_range_build_retries_only_range_before_single_stage(tmp_path, project, monkeypatch):
-    repo, events = project
+    config, events = project
     exp = tmp_path/'retry'
-    write_json(exp/'experiment.yaml', dict(name='fixture', project=dict(repo=str(repo)), anchor='anchor',
-               range=dict(branch='main', skip_untouched='main-sources'),
-               scope=dict(rule='explicit', classes=['A'], min_classes=1), dev=dict(denominator='project')))
+    write_json(exp/'experiment.yaml', config)
     args = ['run', str(exp), '--no-panel']
     assert main([*args, '--until', 'control']) == 0
     states = {s:(exp/f'state/{s}.json').read_bytes() for s in STAGES[:5]}
@@ -167,3 +168,24 @@ def test_failed_range_build_retries_only_range_before_single_stage(tmp_path, pro
     assert main([*args, '--stage', 'survive']) == 0
     assert all((exp/f'state/{s}.json').read_bytes() == data for s,data in states.items())
     assert ('retry', 'measure-1') in events
+
+
+def test_eager_prepare_retry_keeps_policy_guard_until_range_is_published(tmp_path, project, monkeypatch, capsys):
+    config, _ = project
+    exp = tmp_path/'retry'
+    write_json(exp/'experiment.yaml', config)
+    args = ['run', str(exp), '--no-panel']
+    assert main([*args, '--until', 'prepare']) == 0
+    build = JavaMavenAdapter.build
+    def interrupted(adapter, index, sha):
+        if index:
+            raise RuntimeError('interrupted eager build')
+        return build(adapter, index, sha)
+    with monkeypatch.context() as patch:
+        patch.setattr(JavaMavenAdapter, 'build', interrupted)
+        assert main([*args, '--force', '--until', 'survive']) == 1
+    assert main(['policy', 'plan', str(exp)]) == 2
+    assert f'survival run {exp}' in capsys.readouterr().err
+    assert main([*args, '--until', 'survive']) == 0
+    assert (exp/'results/commits-check.md').exists()
+    assert not (exp/'state/range-builds.json').exists()

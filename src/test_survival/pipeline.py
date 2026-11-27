@@ -285,10 +285,11 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None, resen
             write_json(path, state)
             if current == 'prepare' and handlers is None:
                 range_state = exp/'state/range-builds.json'
-                if 'survive' in selected:
-                    range_state.unlink(missing_ok=True)
-                else:
+                if 'survive' not in selected:
                     write_json(range_state, dict(status='deferred'))
+                elif range_state.exists():
+                    # Keep policy readers gated if an eager prepare retry fails.
+                    write_json(range_state, dict(status='in-prepare'))
             log(exp, f'{current}: started', config)
             try:
                 handler = handlers[current] if handlers is not None else default_handler(current)

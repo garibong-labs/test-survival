@@ -45,7 +45,8 @@ def items(exp, stage, config, state):
         resolution_path = exp/'state/resolved-range.json'
         resolution = read_json(resolution_path, {})
         resolution_hash = range_fingerprint(config)
-        anchor_only = stage == 'prepare' and (exp/'state/range-builds.json').exists()
+        range_state = read_json(exp/'state/range-builds.json', {})
+        anchor_only = stage == 'prepare' and range_state.get('status') in ('deferred', 'running', 'failed')
         plan_paths = [exp/'results'/name for name in ('anchor.json', 'commits.csv', 'commit-paths.json')]
         # Prepare publishes these inputs after resolving the current range.
         # Until that finishes, old indices cannot describe the new work safely.
