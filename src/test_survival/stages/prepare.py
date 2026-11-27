@@ -1,7 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 
 from ..adapters.java_maven import JavaMavenAdapter
-from ..io import read_json, write_json, write_csv, atomic_text, now
+from ..io import read_csv, read_json, write_json, write_csv, atomic_text, now
 from ..pipeline import log
 from ..config import range_fingerprint
 from ..rules.commits import skip_reason
@@ -78,18 +78,56 @@ def run(exp, config):
     note = refresh_unmapped_metadata(exp)
     if note:
         log(exp, 'prepare: '+note, config)
-    def build(row):
-        reason=skip_reason(touches[str(row['index'])],config['project']['module'],config['range']['skip_untouched'])
-        if reason:
-            result=dict(index=row['index'],sha=row['sha'],build='skipped-untouched',attempts=[],reason=reason)
-            write_json(exp/f'results/builds/{row["index"]}.json',result)
-            log(exp, f'prepare: build {row["index"]}/{len(commits)} skipped-untouched', config)
-            return result
-        result = adapter.build(row['index'], row['sha'])
-        log(exp, f'prepare: build {row["index"]}/{len(commits)} {result["build"]}', config)
-        return result
     adapter.setup_runner()
+    summary = f'{len(commits)} commits; anchor {anchor_sha}'
+    range_state = exp/'state/range-builds.json'
+    if read_json(range_state, {}).get('status') == 'deferred':
+        # An older plan may have left a summary for a different range.
+        (exp/'results/commits-check.md').unlink(missing_ok=True)
+        summary += '; anchor prepared'
+    else:
+        build_range(exp, config, adapter, commits, touches)
+        range_state.unlink(missing_ok=True)
+        summary += '; builds recorded'
+    return summary + ('; '+note if note else '')
+
+
+def build_range(exp, config, adapter, commits, touches, *, phase='prepare'):
+    def build(row):
+        index, sha = int(row['index']), row['sha']
+        reason = skip_reason(touches[str(index)], config['project']['module'], config['range']['skip_untouched'])
+        if reason:
+            result = dict(index=index, sha=sha, build='skipped-untouched', attempts=[], reason=reason)
+            write_json(exp/f'results/builds/{index}.json', result)
+        else:
+            result = adapter.build(index, sha)
+        log(exp, f'{phase}: build {index}/{len(commits)} {result["build"]}', config)
+        return result
+
     with ThreadPoolExecutor(max_workers=config['runner']['workers']['build']) as pool:
         builds = list(pool.map(build, commits))
     atomic_text(exp/'results/commits-check.md', '# Complete range build check\n\n'+f'{len(commits)} first-parent commits; {sum(r["build"]=="ok" for r in builds)} built successfully. Build failures carry forward survival and are excluded from evaluation.\n')
-    return f'{len(commits)} commits; anchor {anchor_sha}; builds recorded'+('; '+note if note else '')
+
+
+def finish_deferred_builds(exp, config):
+    """Consume the saved plan under the run lock, without reopening prepare."""
+    path = exp/'state/range-builds.json'
+    if not path.exists():
+        return
+    state = dict(status='running', started=now())
+    write_json(path, state)
+    try:
+        log(exp, 'range-builds: starting deferred range builds', config)
+        commits = read_csv(exp/'results/commits.csv')
+        touches = read_json(exp/'results/commit-paths.json')
+        adapter = JavaMavenAdapter(exp, config)
+        adapter.setup_runner()
+        build_range(exp, config, adapter, commits, touches, phase='range-builds')
+    except BaseException as exc:
+        error = exp/'state/range-builds-error.txt'
+        atomic_text(error, f'{type(exc).__name__}: {exc}\n')
+        write_json(path, {**state, 'status': 'failed', 'finished': now()})
+        log(exp, f'range-builds: failed ({type(exc).__name__}); see {error}', config)
+        raise
+    path.unlink()
+    log(exp, 'range-builds: completed deferred range builds')

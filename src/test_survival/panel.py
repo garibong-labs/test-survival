@@ -22,6 +22,10 @@ def panel_lines(exp, config, width=160, *, display=None):
     if current is None:
         current = max((s for s in STAGES if states[s].get('started')), default=STAGES[0],
                       key=lambda s: states[s].get('started', ''))
+    range_state = read_json(Path(exp)/'state/range-builds.json', {})
+    if range_state.get('status') == 'running':
+        current = 'range-builds'
+    label = f'{current} (range builds deferred)' if range_state.get('status') == 'deferred' else current
     p = snapshot(exp, current, config)
     shown_eta = display.timestamp(p['eta'], timespec='seconds')
     done, total = p['done'], p['total']
@@ -30,7 +34,7 @@ def panel_lines(exp, config, width=160, *, display=None):
     percent = f'{100*fraction:.0f}%' if fraction is not None else '?%'
     secondary = f'; calls {p["calls"]}' if p.get('calls') is not None else ''
     repair = ','.join(name.rsplit('.', 1)[-1] for name in p.get('repair', '').split(', ')) if p.get('repair') else ''
-    first = (f'{current} [{bar}] {percent} {done}/{total if total is not None else "?"} {p["unit"]}'
+    first = (f'{label} [{bar}] {percent} {done}/{total if total is not None else "?"} {p["unit"]}'
              f'{secondary}; remaining {duration(p["remaining"])}; elapsed {duration(p["elapsed"])}; '
              f'estimated finish {shown_eta}')
     if len(first) >= width:
@@ -42,7 +46,7 @@ def panel_lines(exp, config, width=160, *, display=None):
         bar = '#' * int(5*fraction) + '-' * (5-int(5*fraction)) if fraction is not None else '?'*5
         eta = display.timestamp(p['eta'], timespec='minutes') if p['eta'] != 'unknown' else '?'
         secondary = f' calls:{p["calls"]}' if p.get('calls') is not None else ''
-        first = (f'{current} [{bar}] {percent} {done}/{total if total is not None else "?"} {p["unit"]}'
+        first = (f'{label} [{bar}] {percent} {done}/{total if total is not None else "?"} {p["unit"]}'
                  f'{secondary} rem {short(p["remaining"])} elapsed {short(p["elapsed"])} ETA {eta}')
         if len(first) >= width:
             # Keep a complete date and offset; never show a clipped clock value.
@@ -50,10 +54,10 @@ def panel_lines(exp, config, width=160, *, display=None):
             unit_short = {'methods': 'm', 'builds': 'b', 'calls': 'c', 'files': 'f',
                           'commits': 'c', 'indices': 'i', 'tables': 't', 'items': 'i'}[p['unit']]
             calls = f' c{p["calls"]}' if p.get('calls') is not None else ''
-            first = (f'{current} [{small_bar}] {percent} {done}/{total if total is not None else "?"}{unit_short}'
+            first = (f'{label} [{small_bar}] {percent} {done}/{total if total is not None else "?"}{unit_short}'
                      f'{calls} r{short(p["remaining"])} e{short(p["elapsed"])} ETA {eta}')
             if len(first) >= width:
-                first = f'{current} {percent} ETA {eta}'
+                first = f'{label} {percent} ETA {eta}'
             if len(first) >= width:
                 first = f'ETA {eta}'
             if len(first) >= width:

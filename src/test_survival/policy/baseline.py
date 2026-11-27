@@ -1,6 +1,7 @@
 """Read-only baseline access, including pre-framework evidence."""
 from ..denominators import frozen_after_control
 from pathlib import Path
+from shlex import quote
 import subprocess
 
 from ..config import ConfigError, as_written, load, validate
@@ -8,15 +9,22 @@ from ..io import result_exists, read_csv, read_json
 from .config import merge
 
 
+def require_range_builds(directory):
+    if (directory/'state/range-builds.json').is_file():
+        raise ConfigError(f'Deferred range builds must finish first. Run `survival run {quote(str(directory))}` before retrying policy.')
+
+
 class Baseline:
     def __init__(self, exp, config):
         self.exp = Path(exp).resolve()
+        require_range_builds(self.exp)
         self.options = config.get('policies')
         if not self.options:
             raise ConfigError('policies: configuration required')
         repo = Path(config['project']['repo']).expanduser().resolve()
         self.path = self.resolve(self.options['baseline'], repo)
         self.guard(self.exp)
+        require_range_builds(self.path)
         # Reject symlinked output trees, including links buried in resumed jobs.
         if self.exp.exists():
             for path in self.exp.rglob('*'):
