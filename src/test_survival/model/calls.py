@@ -1,7 +1,9 @@
 """Coordinate native request publication with stop and retain interrupted attempts."""
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import fcntl
 from hashlib import sha256
+from pathlib import Path
 
 from ..io import now, read_json, write_json
 
@@ -40,17 +42,32 @@ def register(exp, directory, run_id):
     return marker
 
 
+def archive_path(exp, relative, timestamp):
+    if relative.is_absolute() or not relative.parts or '..' in relative.parts:
+        raise RuntimeError('Invalid experiment-relative ledger path')
+    stamp = datetime.fromisoformat(timestamp).astimezone(timezone.utc).strftime('%Y-%m-%dT%H-%M-%S.%fZ')
+    path = exp/'interrupted-ledgers'/stamp/relative
+    if path != path.resolve() or exp/relative != (exp/relative).resolve():
+        raise RuntimeError('Cannot move a symlinked call ledger')
+    return path
+
+
 def recover_archive(exp):
     """Roll back a move that never reached its index commit point."""
     journal = exp/'state/interrupted-ledger-move.json'
     entry = read_json(journal)
     if entry is None:
         return
-    original = exp/entry['original_path']
-    moved = exp/entry['new_path']
+    relative = Path(entry['original_path'])
+    original = exp/relative
+    moved = archive_path(exp, relative, entry['time'])
+    if entry['new_path'] != moved.relative_to(exp).as_posix():
+        raise RuntimeError('Interrupted ledger move has an inconsistent archive path')
     if moved.is_dir():
         history = read_json(exp/'interrupted-ledgers/index.json', [])
         if not history or history[-1] != entry:
+            if original.exists():
+                raise RuntimeError('Cannot restore interrupted ledger over an existing path')
             moved.rename(original)
     elif not (original/'request.json').is_file():
         raise RuntimeError('Interrupted ledger missing from both original and archive paths')
@@ -62,9 +79,8 @@ def archive_interrupted(exp, directory):
         raise RuntimeError(f'Cannot archive a symlinked call ledger: {directory}')
     original = directory.resolve().relative_to(exp)
     timestamp = now()
-    stamp = timestamp.replace('+00:00', 'Z').replace(':', '-')
-    dest = exp/'interrupted-ledgers'/stamp/original
-    if dest.resolve() != dest or dest.exists():
+    dest = archive_path(exp, original, timestamp)
+    if dest.exists():
         raise RuntimeError(f'Interrupted ledger destination is already in use: {dest}')
     dest.parent.mkdir(parents=True, exist_ok=True)
     entry = dict(original_path=original.as_posix(), new_path=dest.relative_to(exp).as_posix(),

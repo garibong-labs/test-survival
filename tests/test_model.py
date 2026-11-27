@@ -166,3 +166,15 @@ def test_index_write_failure_is_recovered_before_http(tmp_path, monkeypatch):
     assert (tmp_path/entry['new_path']/'request.json').is_file()
     assert not (tmp_path/'state/interrupted-ledger-move.json').exists()
     assert len(requests) == 1
+
+
+def test_move_recovery_requires_consistent_experiment_paths(tmp_path):
+    from test_survival.model.calls import recover_archive
+    from test_survival.io import now, write_json
+    write_json(tmp_path/'state/interrupted-ledger-move.json', dict(
+        original_path='generated/round1/call', new_path='generated/round2/call', time=now()))
+    saved = tmp_path/'generated/round2/call/run.json'
+    write_json(saved, {'status': 'ok'})
+    with pytest.raises(RuntimeError, match='inconsistent archive path'):
+        recover_archive(tmp_path)
+    assert saved.is_file()
