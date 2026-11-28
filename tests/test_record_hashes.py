@@ -8,6 +8,17 @@ from test_survival.config import as_written, canonical_hash, validate
 from test_survival.io import write_json
 
 
+@pytest.mark.parametrize('production,expected', [
+    (False, 'ec2c464726b103f73da5fe8d8e5d62a60e0419a9dd2bfd8877b2446fab3fdbaa'),
+    (True, 'b22a9dfa56fad480fbb7b6380b6cd5e50813ba78401ccb8bac99285056814981'),
+])
+def test_parallel_workers_preserve_base_provenance(tmp_path, production, expected):
+    # Canonical hashes of the complete mappings reported by main at 76b4cc7.
+    config = validate(dict(name='resume', project={'repo': '/unused'}, anchor='t'))
+    actual = JavaMavenAdapter(tmp_path, config).provenance(production_coverage=production)
+    assert canonical_hash(actual) == expected
+
+
 def test_operational_changes_reuse_build_run_and_method_coverage(tmp_path, monkeypatch):
     config = validate(dict(name='resume', project={'repo': '/unused'}, anchor='t'))
     method = {'file': 'T.java', 'class': 'T', 'method': 'test', 'id': 'one'}

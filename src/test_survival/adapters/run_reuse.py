@@ -146,6 +146,18 @@ def scope_compatible_fingerprint(digest):
 # Frozen-tree isolation preserves the original measurement keys for these exact
 # revisions. Further changes must be evaluated independently in both universes.
 _FROZEN_TREE_EQUIVALENT = {
+    # policy_coverage.py — parallel scheduling and synchronization only.
+    'b0782d0798a139534c178e78cfe8f26b2f1c7fe3796baff1f7daaa7e12ca9050':
+        'fa05a373e8f93798d2884f924b883dcf667ddcca6a1274c7606e483f29d7004d',
+    # dependencies.py — parallel scheduling and synchronization only.
+    '542162a17b70c427694a0c2fceedee196aa221fc4e40e0645b02db0391ada23e':
+        '36b044c0989f75ebea73f00cc87767322211cd6d5a70f5cd0f4670087122f4da',
+    # cache.py — parallel scheduling and synchronization only.
+    '9094d087a5902e3cc64a4135a3e078b93dfca1d0e3121234e29b1816541fe099':
+        '50a8048fb25ffa0d66b2a15b075ffc4aa9ef07f263bf775d33713f7fb4ef00e8',
+    # maven_dependencies.py — parallel scheduling and synchronization only.
+    '0b3b12b06ef332ae9ccaca7916cc167c2fcbe09e7de080b293098de048f2b6c2':
+        'e1d40e13d54a3fbedd070cb862a0c03845c52daa9d3bcb719b7ca4d423e2518a',
     # java_maven.py
     '0b202e9452a6b884258a4750f22e8b399de1baa6b3b9cf8725e66d009da6637e':
         '28f4a4ad6145ec377513bf2cb128263d71e918bd40065daba3433842d22d792d',

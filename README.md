@@ -48,6 +48,10 @@ Image mode mounts the named Docker volume `survival-m2` at `/root/.m2` by defaul
 
 Runner setup resolves the anchor project's dependencies after the runner jars. New POM digests also run `dependency:go-offline`, first offline and then online if needed, with retries for HTTP 429 and transfer failures. Classpath entries are checked inside the container before compilation, test execution, coverage, and import repair. Missing entries trigger `dependency:build-classpath`; only a validated replacement is published to `work/classpaths/`.
 
+During prepare, up to `runner.workers.build` builds can resolve distinct classpath
+cache files concurrently. Offline dependency goals can overlap. Online dependency
+retries run one at a time per shared Maven local repository.
+
 An explicit bind mount at `/root/.m2` or a parent directory takes precedence over the named volume.
 
 All Java builds, inventories, test launches, and JaCoCo runs execute inside Docker. The CLI and native model client run on the host.
@@ -338,9 +342,11 @@ settings in any repository POM change. Missing or unbounded evidence executes
 conservatively. Control at t can seed the first segment. Carried methods retain
 state and scope lines, with their actual execution index recorded in raw results.
 
-Affected commit indices run in order; up to `runner.workers.survive` JVM chunks
-at one index run concurrently. Only roots with execution demand compile. Their
-compile set is selected test files plus non-test helpers, with referenced sources
+Affected commit indices run in order. Within each index, the worker compiles
+source roots, runs test JVM chunks, then lists dependency sources for the
+measured tests. Each phase runs up to `runner.workers.survive` tasks at once.
+Only roots with execution demand compile. Their compile set includes the
+selected test files plus non-test helpers, with referenced sources
 available to javac; `all` compiles the full eligible root. Both use iterative
 error-file removal. Raw records and final summaries include executed/carried
 counts, and JVM run evidence includes peak RSS and heap-pool peaks. See
