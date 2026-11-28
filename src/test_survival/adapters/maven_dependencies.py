@@ -1,9 +1,11 @@
 """Validate and repair project classpaths inside the Maven volume's container."""
+from contextlib import contextmanager, nullcontext
 import fcntl
 from pathlib import Path, PurePosixPath
 import time
 from uuid import uuid4
 
+LOCAL_REPOSITORY = Path.home()/'.m2/repository'
 RETRIES = 3
 BACKOFF_SECONDS = 60
 TRANSIENT_PATTERNS = ('429', 'Could not transfer')
@@ -51,6 +53,14 @@ def valid(cache):
     return cache.is_file() and all(p.exists() for p in entries(cache))
 
 
+@contextmanager
+def exclusive_lock(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
 def maven(goal, folder, logs, timeout, execute, wait=time.sleep, options=(), verify=None, module='.'):
     """Try offline first, then online with bounded transfer/429 retries."""
     logs = logs / (goal.split(':')[-1]+'-'+uuid4().hex)
@@ -59,7 +69,8 @@ def maven(goal, folder, logs, timeout, execute, wait=time.sleep, options=(), ver
         offline = number == 0
         log = logs / f'{number + 1}.txt'
         args, cwd = command(goal, folder, module, offline=offline, refresh=not offline, options=options)
-        result = execute(args, cwd, log, timeout)
+        with nullcontext() if offline else exclusive_lock(LOCAL_REPOSITORY/'.survival-online.lock'):
+            result = execute(args, cwd, log, timeout)
         attempts.append(result)
         if result['exit_code'] == 0 and (verify is None or verify()):
             return attempts
@@ -75,11 +86,9 @@ def maven(goal, folder, logs, timeout, execute, wait=time.sleep, options=(), ver
 
 def resolve(folder, cache, logs, timeout, execute, *, prefetch=False, force=False, wait=time.sleep, module='.'):
     """Publish only a successful classpath whose entries exist in this container."""
-    cache.parent.mkdir(parents=True, exist_ok=True)
     attempts = []
     # Multiple worker processes may discover the same stale pom digest together.
-    with cache.with_suffix('.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with exclusive_lock(cache.with_suffix('.lock')):
         if prefetch or not cache.exists():
             attempts.extend(maven('dependency:go-offline', folder, logs, timeout, execute, wait, module=module))
         if force or not valid(cache):

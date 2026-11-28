@@ -220,6 +220,11 @@ artifact, version, classifier and type. Project output directories are excluded.
 Affected preparation bypasses the module-POM-only classpath cache and resolves
 per built commit. Unresolved coordinates force execution.
 
+Up to `runner.workers.build` builds can resolve separate
+classpath files concurrently. Writers to the same cache file are serialized.
+Offline dependency goals for different files can run together. Online retries
+take turns across containers sharing a Maven local repository.
+
 Affected mode measures indices in order. At each index, the worker compiles
 each distinct source root, runs the test JVM chunks, then lists dependency
 sources for the measured tests. Each phase runs up to `runner.workers.survive`

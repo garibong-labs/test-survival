@@ -144,3 +144,90 @@ def test_record_fingerprints_preserve_home_spelling(tmp_path, monkeypatch):
     assert fingerprints[0] == fingerprints[1]
     config['range']['limit'] = 12
     assert range_fingerprint(config) != fingerprints[-1][1]
+
+
+@pytest.mark.parametrize('mode', ['different', 'first', 'warm'])
+def test_classpath_host_lock_scope(tmp_path, mode):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Event
+    from test_survival.io import read_json, write_json
+
+    entered, release, started_second = Event(), Event(), Event()
+    together = Barrier(2, timeout=5)
+    folders = [tmp_path/f'project-{i}' for i in range(3)]
+    jobs = {}
+
+    class Runner:
+        path = staticmethod(str)
+
+        def execute(self, command, cwd, log, timeout):
+            job = read_json(command[-1])
+            jobs[cwd] = (command[-1], job['output'], log)
+            if cwd == folders[1]:
+                entered.set()
+            if cwd != folders[0]:
+                if mode == 'first':
+                    if cwd == folders[1]:
+                        assert release.wait(5)
+                else:
+                    together.wait()
+            (tmp_path/job['cache']).touch()
+            write_json(tmp_path/job['output'], dict(attempts=[cwd.name]))
+            return dict(exit_code=0)
+
+    config = validate(dict(name='cache', anchor='t', project=dict(repo=str(tmp_path))))
+    cache = ClasspathCache(tmp_path, config, Runner())
+    for i, folder in enumerate(folders):
+        folder.mkdir()
+        (folder/'pom.xml').write_text(str(i) if mode == 'different' else 'same pom')
+
+    if mode == 'warm':
+        cache.resolve(folders[0], 0)
+
+    def second_call():
+        started_second.set()
+        return ClasspathCache(tmp_path, config, Runner()).resolve(folders[2], 1)
+
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(cache.resolve, folders[1], 1)
+        assert entered.wait(5)
+        second = pool.submit(second_call)
+        assert started_second.wait(5)
+        if mode == 'first':
+            # The first worker has not created its cache yet.
+            try:
+                with pytest.raises(TimeoutError):
+                    second.result(timeout=0.2)
+                assert folders[2] not in jobs
+            finally:
+                release.set()
+        assert first.result()[2] == [folders[1].name]
+        assert second.result()[2] == [folders[2].name]
+
+    if mode != 'first':
+        # Both calls use index 1. Concurrent workers need separate requests and responses.
+        assert all(a != b for a, b in zip(jobs[folders[1]], jobs[folders[2]]))
+
+
+def test_interrupted_reuse_copy_never_publishes_partial_cache(tmp_path, monkeypatch):
+    import hashlib
+    from test_survival.runner import cache as cache_module
+
+    reuse = tmp_path/'reuse'; reuse.mkdir()
+    folder = tmp_path/'project'; folder.mkdir()
+    pom = folder/'pom.xml'; pom.write_text('<project/>')
+    name = hashlib.sha256(pom.read_bytes()).hexdigest()+'.txt'
+    (reuse/name).write_text('complete')
+    config = validate(dict(name='cache', anchor='t', project=dict(repo=str(folder)),
+                           runner=dict(reuse=dict(classpath_cache=str(reuse)))))
+
+    def interrupted(source, destination):
+        assert source == reuse/name
+        Path(destination).write_text('partial')
+        raise InterruptedError
+
+    monkeypatch.setattr(cache_module.shutil, 'copy2', interrupted)
+    with pytest.raises(InterruptedError):
+        ClasspathCache(tmp_path, config, None).resolve(folder, 0)
+    assert not (tmp_path/'work/classpaths'/name).exists()
+    assert not list((tmp_path/'work/classpaths').glob('*.tmp'))

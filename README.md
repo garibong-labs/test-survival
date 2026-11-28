@@ -48,6 +48,10 @@ Image mode mounts the named Docker volume `survival-m2` at `/root/.m2` by defaul
 
 Runner setup resolves the anchor project's dependencies after the runner jars. New POM digests also run `dependency:go-offline`, first offline and then online if needed, with retries for HTTP 429 and transfer failures. Classpath entries are checked inside the container before compilation, test execution, coverage, and import repair. Missing entries trigger `dependency:build-classpath`; only a validated replacement is published to `work/classpaths/`.
 
+During prepare, up to `runner.workers.build` builds can resolve distinct classpath
+cache files concurrently. Offline dependency goals can overlap. Online dependency
+retries run one at a time per shared Maven local repository.
+
 An explicit bind mount at `/root/.m2` or a parent directory takes precedence over the named volume.
 
 All Java builds, inventories, test launches, and JaCoCo runs execute inside Docker. The CLI and native model client run on the host.

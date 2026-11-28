@@ -8,6 +8,11 @@ from test_survival.io import read_json, write_json
 from test_survival.config import validate as validate_config
 
 
+@pytest.fixture(autouse=True)
+def isolate_maven_repository(tmp_path, monkeypatch):
+    monkeypatch.setattr(dependencies, 'LOCAL_REPOSITORY', tmp_path/'m2/repository')
+
+
 @pytest.mark.parametrize('cached', [False, True])
 def test_resolve_recovers_volume_and_retries_429(tmp_path, cached):
     cache = tmp_path/'classpaths/pom.txt'
@@ -246,3 +251,52 @@ def test_pre_reactor_records_are_reused_only_for_root_modules(tmp_path, module):
     source = tmp_path/'Generated.java'; source.write_text('class Generated {}')
     old = adapter.screen_fingerprint(source, 1, provenance=previous)
     assert (old in adapter.screen_fingerprints(source, 1)) == (module == '.')
+
+
+def _concurrent_resolution(folder, repository, offline_barrier):
+    import time
+    dependencies.LOCAL_REPOSITORY = repository
+    folder.mkdir()
+    intervals = []
+    def execute(args, cwd, log, timeout):
+        offline = '-o' in args
+        start = time.monotonic()
+        if 'dependency:build-classpath' in args:
+            Path(next(a.split('=', 1)[1] for a in args if a.startswith('-Dmdep.outputFile='))).write_text('')
+            return dict(exit_code=0)
+        if offline:
+            offline_barrier.wait(timeout=5)
+        else:
+            time.sleep(0.05)
+        intervals.append((offline, start, time.monotonic()))
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text('HTTP 429' if len(intervals) < 3 else 'ok')
+        return dict(exit_code=int(len(intervals) < 3))
+    dependencies.resolve(folder, folder/'classpath.txt', folder/'logs', 10, execute, wait=lambda _: None)
+    write_json(folder/'intervals.json', intervals)
+
+
+def test_online_attempts_serialize_across_processes(tmp_path):
+    import multiprocessing
+    context = multiprocessing.get_context('spawn')
+    barrier = context.Barrier(2)
+    folders = [tmp_path/'one', tmp_path/'two']
+    processes = [context.Process(target=_concurrent_resolution, args=(folder, tmp_path/'repository', barrier))
+                 for folder in folders]
+    for process in processes:
+        process.start()
+    try:
+        for process in processes:
+            process.join(timeout=10)
+            assert process.exitcode == 0
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+            process.join()
+    runs = [read_json(folder/'intervals.json') for folder in folders]
+    for attempts in runs:
+        assert [offline for offline, _, _ in attempts] == [True, False, False]
+    assert max(attempts[0][1] for attempts in runs) < min(attempts[0][2] for attempts in runs)
+    online = sorted((start, stop) for attempts in runs for offline, start, stop in attempts if not offline)
+    assert all(left[1] <= right[0] for left, right in zip(online, online[1:]))
