@@ -212,3 +212,131 @@ def test_candidate_scope_batches_select_only_candidates_with_bounded_groups(tmp_
     # 600 candidates in groups of 64, one group per JVM: nine full JVMs and one of 24
     assert len(calls)==10 and sorted(len(Path(r[0].split('\t')[2]).read_text().splitlines()) for r in calls)==[24]+[64]*9
     assert len(read_json(tmp_path/'result.json')['methods'])==600
+
+
+def root_job(exp):
+    """Two groups per one-file root, ordered independently of the filesystem."""
+    methods = []
+    for name in ('first', 'second'):
+        for i in reversed(range(12)):
+            root = exp/'pool'/str(i)
+            root.mkdir(parents=True, exist_ok=True)
+            file = root/f'Test{i}.java'
+            file.write_text(f'class Test{i} {{}}')
+            methods.append(dict(id=f'{i}-{name}', file=str(file.relative_to(exp)), file_hash=str(i),
+                                execution_hash=f'{i}-{name}', **{'class':f'Test{i}'}, method=name))
+    return dict(index=1, sha='fixture', methods=methods, survival=True, selection='affected',
+                work='work/coverage', output='result.json', scope_files=['src/main/java/P.java'])
+
+
+def root_worker(exp, compile_root, list_root):
+    def execute(command, cwd, log, timeout):
+        if 'SourceInventory' in command:
+            log.write_text('')
+        elif 'SnapshotCompiler' in command:
+            compile_root(int(log.parent.name))
+        elif 'DependencySources' in command:
+            if log.name == 'production-sources.tsv':
+                log.write_text('C\tP.java\tP\n')
+            else:
+                root = Path(command[-1])
+                if not list_root(int(root.name), log.name):
+                    return dict(exit_code=1)
+                file, = root.glob('*.java')
+                log.write_text(f'I\t{file.name}\tP\n')
+        elif 'PerTestCoverage' in command:
+            for row in Path(command[-1]).read_text().splitlines():
+                output, _, selection, *_ = row.split('\t')
+                output = Path(output)
+                output.mkdir(parents=True)
+                cls, name = Path(selection).read_text().strip().split('\t')
+                (output/'tests.tsv').write_text(f'0\t{cls}\t{name}\tSUCCESSFUL\t\n')
+                (output/'0.tsv').write_text('src/main/java/P.java\t1\ttrue\n')
+                if cls != 'Test11':  # Neither method has runtime data for this root.
+                    (output/'0.classes').write_text('')
+        return dict(exit_code=0, log=str(log.relative_to(exp)))
+
+    return SimpleNamespace(EXP=exp, HELPERS=exp, JVM=dict(jacoco='1g', javac='256m'),
+                           TIMEOUTS=dict(compile=30, test_class=1), classpath=lambda _: (exp, ''),
+                           jacoco_version=lambda _: '0.8.14', execute=execute, write_json=write_json)
+
+
+def test_root_phase_bounds_order_and_dependency_errors(tmp_path):
+    from threading import Barrier, Lock, get_ident
+    job = root_job(tmp_path)
+    caller = get_ident()
+    results = []
+    for workers in (1, 4):
+        lock = Lock()
+        gate = Barrier(workers, timeout=10)
+        active = 0
+        peak = {}
+        listed = {}
+
+        def visit(phase, index):
+            nonlocal active
+            if workers == 1:
+                assert get_ident() == caller
+            with lock:
+                active += 1
+                peak[phase] = max(peak.get(phase, 0), active)
+            if index < workers:
+                gate.wait()
+            with lock:
+                active -= 1
+
+        def list_root(index, name):
+            assert name == f'test-{index-1}-sources.tsv'
+            listed[index] = listed.get(index, 0) + 1
+            visit('listing', index-1)
+            return index != 3
+
+        worker = root_worker(tmp_path, lambda index: visit('compile', index), list_root)
+        policy_coverage.run(worker, {**job, 'chunk_workers':workers})
+        result = read_json(tmp_path/job['output'])
+        assert peak == {'compile':workers, 'listing':workers}
+        assert listed == dict.fromkeys(range(1, 12), 1)
+        assert [Path(row['compiled_source_root']).parent.name for row in result['compile']] == list(map(str, range(12)))*2
+        assert [row['sources'] for row in result['compile']] == [[f'Test{i}.java'] for i in reversed(range(12))]*2
+        for method in result['methods']:
+            record = method['dependency_record']
+            if method['class'] == 'Test11':
+                assert record['reason'] == 'missing execution'
+            elif method['class'] == 'Test8':
+                assert record == dict(version=4, selection='affected', files=[], unbounded=True,
+                                      reason='Cannot parse dependency sources')
+            else:
+                assert record['files'] == ['src/main/java/P.java']
+        results.append(result)
+    assert results[0] == results[1]
+
+
+def test_compile_failure_uses_root_order_and_cancels_unstarted_roots(tmp_path):
+    from threading import Barrier
+    job = root_job(tmp_path)
+    messages = []
+    for workers in (1, 4):
+        gate = Barrier(workers, timeout=10)
+        started = []
+        def fail(index):
+            started.append(index)
+            gate.wait()
+            raise ValueError(f'fixture compile failure for root {index}')
+        with pytest.raises(ValueError) as error:
+            policy_coverage.run(root_worker(tmp_path, fail, None), {**job, 'chunk_workers':workers})
+        messages.append(str(error.value))
+        assert sorted(started) == list(range(workers))
+    assert messages == ['fixture compile failure for root 0']*2
+
+
+@pytest.mark.parametrize('workers', [1, 4])
+def test_undiagnosed_compile_failure_precedes_later_root_exception(tmp_path, workers):
+    job = root_job(tmp_path)
+    job['selection'] = 'all'
+    (tmp_path/'pool/11/Test11.java').unlink()
+
+    def fail(index):
+        raise ValueError(f'later compile failure for root {index}')
+
+    with pytest.raises(RuntimeError, match='Snapshot failed without diagnostics for selected sources'):
+        policy_coverage.run(root_worker(tmp_path, fail, None), {**job, 'chunk_workers':workers})

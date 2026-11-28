@@ -484,10 +484,17 @@ for run in result['runs']:
  assert run['memory']['peak_rss_bytes']>0 and run['memory']['heap_pool_peak_sum_bytes']>0,run
 assert not list((exp/'job').rglob('*.exec'))
 assert not list((exp/'job').rglob('*.xml'))
-policy_coverage.run(w,dict(index=0,sha='t',selection='affected',chunk_workers=2,methods=methods,survival=True,
+full_job=dict(index=0,sha='t',selection='affected',methods=methods,survival=True,
  scope_files=['src/main/java/p/A.java','src/main/java/p/Constant.java','src/main/java/outside/Hidden.java'],
- scope_classes=['p.A','p.Constant','outside.Hidden'],work='full',output='full.json'))
-full=json.loads((exp/'full.json').read_text())
+ scope_classes=['p.A','p.Constant','outside.Hidden'],work='full',output='full.json')
+# Keep the job paths and launcher cwd identical. All six roots fit in one test JVM.
+w.execute=execute;policy_coverage.MAX_SNAPSHOT_GROUPS=len(methods)
+def measurement(workers):
+ policy_coverage.run(w,dict(full_job,chunk_workers=workers))
+ return json.loads((exp/'full.json').read_text(),
+                   object_hook=lambda row:{k:v for k,v in row.items() if k not in ('seconds','memory')})
+full=measurement(1)
+assert measurement(4)==full
 by_id={t['id']:t for t in full['methods']}
 for t in result['methods']:
  assert t['state']==by_id[t['id']]['state']

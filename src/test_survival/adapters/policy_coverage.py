@@ -4,6 +4,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
+from threading import Lock
 import shutil
 from zipfile import ZipFile
 
@@ -34,6 +35,34 @@ def includes_pattern(classes):
             # A bare '*' would also instrument every dependency package.
             patterns.update((name, name+'$*'))
     return ':'.join(sorted(patterns))
+
+
+def compile_roots(w, selected, work, cp, folder, tool_helper, selected_only, run_tasks):
+    # A later root can fail while an earlier root is still compiling. Skip
+    # unstarted work after the failure, but let earlier roots report their
+    # own errors. run_tasks consumes results (and errors) in root order.
+    first_failure = len(selected)
+    lock = Lock()
+
+    def compile_one(item):
+        nonlocal first_failure
+        number, root = item
+        with lock:
+            if number > first_failure:
+                return
+        try:
+            classes, compiled = compile_snapshot(w, root, selected[root], work/'snapshots'/str(number), cp, folder,
+                                                 full_suite=True, selected_only=selected_only, helper_classes=tool_helper)
+            if compiled['exit_code'] and any(str(file.relative_to(root)) not in compiled.get('removed', {})
+                                             for file in selected[root]):
+                raise RuntimeError('Snapshot failed without diagnostics for selected sources')
+            return classes, compiled
+        except Exception:
+            with lock:
+                first_failure = min(first_failure, number)
+            raise
+
+    return dict(zip(selected, run_tasks(compile_one, enumerate(selected))))
 
 
 def run(w, job):
@@ -70,20 +99,25 @@ def run(w, job):
         except (OSError, ValueError, RuntimeError) as exc:
             dependency_error = str(exc)
     dependency_inputs = {}
+    workers = job.get('chunk_workers', 1)
+    def run_tasks(function, items):
+        if workers == 1:
+            return map(function, items)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            return list(executor.map(function, items))
+
     groups = defaultdict(list)
+    selected = defaultdict(list)
     for ordinal, t in enumerate(job['methods']):
         root = t.get('source_root', str(Path(t['file']).parent))
+        selected[w.EXP/root].append(w.EXP/t['file'])
         group = ordinal // CANDIDATE_TESTS_PER_GROUP if job.get('candidate_suite') else 'suite' if job.get('full_suite') else t.get('execution_hash', t['file_hash'])
         groups[root, group, t.get('resource_root', 'dev/src-test-t')].append(t)
-    manifest = []; outputs = []; compile_runs = []; snapshots = {}; rejected = []
+    snapshots = compile_roots(w, selected, work, cp, folder, tool_helper, job.get('selection') == 'affected', run_tasks)
+    manifest = []; outputs = []; compile_runs = []; rejected = []
     for number, tests in enumerate(groups.values()):
         part = work/str(number); part.mkdir()
         root = w.EXP/tests[0].get('source_root', str(Path(tests[0]['file']).parent))
-        if root not in snapshots:
-            selected = [w.EXP/t['file'] for t in job['methods']
-                        if w.EXP/t.get('source_root', str(Path(t['file']).parent)) == root]
-            snapshots[root] = compile_snapshot(w, root, selected, work/'snapshots'/str(len(snapshots)), cp, folder,
-                                               full_suite=True, selected_only=job.get('selection') == 'affected', helper_classes=tool_helper)
         classes, compiled = snapshots[root]
         compile_runs.append(compiled)
         retained = []
@@ -97,8 +131,6 @@ def run(w, job):
         tests = retained
         if not tests:
             continue
-        if compiled['exit_code']:
-            raise RuntimeError('Snapshot failed without diagnostics for selected sources')
         for t in tests:
             dependency_inputs[(t['class'], t['method'], t.get('execution_hash',t['file_hash']))] = (classes, root, w.EXP/t['file'])
         selection = part/'selectors.tsv'
@@ -173,18 +205,17 @@ def run(w, job):
                             w.TIMEOUTS['test_class']*len(tests))
         measured_memory = {key:int(value) for line in memory.read_text().splitlines() for key,value in [line.split('\t')]} if memory.exists() else {}
         return chunk, chunk_outputs, tests, dict(run, manifest=str(chunk_manifest.relative_to(w.EXP)), groups=len(chunk_outputs), memory=measured_memory)
-    with ThreadPoolExecutor(max_workers=job.get('chunk_workers', 1)) as executor:
-        launched = executor.map(launch, range(0, len(manifest), step))
-        for chunk, chunk_outputs, tests, run in launched:
-            runs.append(run)
-            if run['exit_code'] or run.get('timeout'):
-                if not job.get('survival'):
-                    raise RuntimeError('Per-test coverage JVM failed; see '+str(chunk/'console.txt'))
-                failed = fallback(w, {**job, 'methods':tests}, original, chunk)
-                methods.extend(failed['methods']); files.extend(failed['files'])
-            else:
-                successful.extend(chunk_outputs)
+    for chunk, chunk_outputs, tests, run in run_tasks(launch, range(0, len(manifest), step)):
+        runs.append(run)
+        if run['exit_code'] or run.get('timeout'):
+            if not job.get('survival'):
+                raise RuntimeError('Per-test coverage JVM failed; see '+str(chunk/'console.txt'))
+            failed = fallback(w, {**job, 'methods':tests}, original, chunk)
+            methods.extend(failed['methods']); files.extend(failed['files'])
+        else:
+            successful.extend(chunk_outputs)
     scope = set(job.get('scope_files', []))
+    records = []
     for output, tests in successful:
         observed = defaultdict(list); covered = defaultdict(set); runtime = defaultdict(set); runtime_missing = set(); unbounded = set()
         path = output/'tests.tsv'
@@ -209,16 +240,22 @@ def run(w, job):
                                 message='\n'.join(m for s, m in states if s != 'SUCCESSFUL' and m)[:4000], lines=sorted(covered[ident])))
             if job.get('survival') and job.get('selection') == 'affected':
                 record = dict(version=RECORD_VERSION, selection='affected', files=[], unbounded=True, reason=dependency_error or 'missing execution')
-                if dependencies is not None and states and ident not in runtime_missing:
-                    try:
-                        classes, root, source = dependency_inputs[(t['class'],t['method'],t.get('execution_hash',t['file_hash']))]
-                        record = dependencies.record({**t, 'file':str(source)}, classes, root, runtime[ident])
-                        if production:
-                            record['files'] = sorted(set(record['files']) | {f for f, _ in covered[ident]})
-                        if ident in unbounded:
-                            record.update(unbounded=True, reason='incomplete class-initializer attribution')
-                    except (ValueError, OSError, RuntimeError) as exc: record['reason'] = str(exc)
                 methods[-1]['dependency_record'] = record
+                if dependencies is not None and states and ident not in runtime_missing:
+                    inputs = dependency_inputs[(t['class'], t['method'], t.get('execution_hash', t['file_hash']))]
+                    records.append((methods[-1], inputs, runtime[ident], ident in unbounded))
+    if records:
+        dependencies.prepare((inputs[:2] for _, inputs, _, _ in records), run_tasks)
+        for method, (classes, root, source), runtime_classes, incomplete in records:
+            try:
+                record = dependencies.record({**method, 'file':str(source)}, classes, root, runtime_classes)
+                if production:
+                    record['files'] = sorted(set(record['files']) | {f for f, _ in method['lines']})
+                if incomplete:
+                    record.update(unbounded=True, reason='incomplete class-initializer attribution')
+                method['dependency_record'] = record
+            except (ValueError, OSError, RuntimeError) as exc:
+                method['dependency_record']['reason'] = str(exc)
     if production:
         universe = {(f, int(n)) for line in universe_file.read_text().splitlines() for f,n in [line.split('\t')]}
     elif job.get('scope_universe'):

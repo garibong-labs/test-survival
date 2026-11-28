@@ -338,9 +338,11 @@ settings in any repository POM change. Missing or unbounded evidence executes
 conservatively. Control at t can seed the first segment. Carried methods retain
 state and scope lines, with their actual execution index recorded in raw results.
 
-Affected commit indices run in order; up to `runner.workers.survive` JVM chunks
-at one index run concurrently. Only roots with execution demand compile. Their
-compile set is selected test files plus non-test helpers, with referenced sources
+Affected commit indices run in order. Within each index, the worker compiles
+source roots, runs test JVM chunks, then lists dependency sources for the
+measured tests. Each phase runs up to `runner.workers.survive` tasks at once.
+Only roots with execution demand compile. Their compile set includes the
+selected test files plus non-test helpers, with referenced sources
 available to javac; `all` compiles the full eligible root. Both use iterative
 error-file removal. Raw records and final summaries include executed/carried
 counts, and JVM run evidence includes peak RSS and heap-pool peaks. See

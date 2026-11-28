@@ -86,12 +86,29 @@ class Dependencies:
             if source in declarations: self.files[name] = 'src/main/java/'+source
         self.snapshots = {}
 
+    def prepare(self, pairs, run_tasks=map):
+        pending = dict.fromkeys(pair for pair in pairs if pair not in self.snapshots)
+
+        def load(item):
+            number, (classes, root) = item
+            try:
+                graph = class_inventory(classes)
+                _, identifiers = source_inventory(self.w, root, self.folder, self.work, 'test-'+str(number), self.helper_classes)
+                return graph, identifiers
+            except (ValueError, OSError, RuntimeError) as exc:
+                return exc.with_traceback(None)
+
+        listings = run_tasks(load, enumerate(pending, start=len(self.snapshots)))
+        self.snapshots.update(zip(pending, listings))
+
     def snapshot(self, classes, root):
-        if classes not in self.snapshots:
-            graph = class_inventory(classes)
-            _, identifiers = source_inventory(self.w, root, self.folder, self.work, 'test-'+str(len(self.snapshots)), self.helper_classes)
-            self.snapshots[classes] = (graph, identifiers)
-        return self.snapshots[classes]
+        pair = classes, root
+        if pair not in self.snapshots:
+            self.prepare([pair])
+        listing = self.snapshots[pair]
+        if isinstance(listing, Exception):
+            raise listing.with_traceback(None)
+        return listing
 
     def record(self, test, classes, root, runtime):
         graph, identifiers = self.snapshot(classes, root)
