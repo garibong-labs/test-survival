@@ -245,6 +245,9 @@ pools with saved evidence; cached pools count toward completion but not the curr
 attempt's rate. An estimate stays unknown until fresh work completes. Other steps
 count their output artifacts. `policy status --watch` refreshes the same metrics
 every five seconds until the run stops; Ctrl-C exits the watcher.
+Use `survival policy run <exp> --no-progress` to omit the progress suffix from
+step and pool logs and suppress the five-second heartbeats. Policy status and its
+watch mode still calculate progress on each request.
 
 The first pool failure stops new pool submissions, including the generator wave.
 Already-running pools finish under the run lock before the command exits non-zero.

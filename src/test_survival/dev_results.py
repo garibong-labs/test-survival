@@ -11,6 +11,7 @@ from .denominators import frozen_after_control
 from .config import survival_inputs, MISSING, ConfigError, UniqueLoader, canonical_hash, runner_inputs, validate, execution_groups
 from .io import compressed_result, logical_glob, resolve_path, result_exists, result_hash, now, read_csv, read_json, write_json
 from .pipeline import PipelineError, invalidate
+from .progress_evidence import FileMemo
 from .rules.dev_denominator import denominator_file, unmapped_note
 
 
@@ -300,12 +301,16 @@ def imported_record(exp, relative, *, sha=None, method_ids=None, provenance=None
     return record
 
 
+_imported_progress = FileMemo()
+
+
 def imported_file_valid(exp, relative, files=None):
     """Read-only progress display may count imports despite old runner fingerprints."""
     if files is None:
         files = load_provenance(exp).get('files', {})
     expected = files.get(relative)
-    return bool(expected and result_exists(exp/relative) and file_hash(exp/relative) == expected)
+    path = exp/relative
+    return bool(expected and _imported_progress.get(path, expected, lambda: result_exists(path) and file_hash(path) == expected))
 
 
 def imported_baseline(exp, config):

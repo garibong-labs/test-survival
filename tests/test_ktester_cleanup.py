@@ -121,8 +121,7 @@ def test_report_refresh_updates_completion_after_cleanup(completed,old_cleanup,m
     monkeypatch.setattr(report.figures,'build',lambda *args:None)
     monkeypatch.setattr(report.figures,'png',lambda *args:False)
     monkeypatch.setattr(report.consistency,'build',summarize)
-    monkeypatch.setattr(pipeline,'log',lambda *args:None)
-    pipeline.run(exp,config,stage='report',force=True,no_panel=True)
+    pipeline.run(exp,config,stage='report',force=True,no_panel=True,no_progress=True)
     saved=read_json(dataset/'experiment-result.json')
     assert saved['final_summary_sha256']==hashlib.sha256((exp/'results/final-summary.json').read_bytes()).hexdigest()
     assert saved['denominators']==updated['denominators'] and saved['verification']==updated['final_verification']

@@ -58,6 +58,25 @@ def test_policy_progress_heartbeat(tmp_path, monkeypatch, capsys):
     assert 'policy-pool-dev-scope-21: running | elapsed 00:00:00; 0/1 items; estimated finish unknown' in capsys.readouterr().out
 
 
+def test_pool_events_share_aggregate_scan_until_pools_finish(tmp_path, monkeypatch):
+    from test_survival.policy import progress as module
+    scans = []
+    def counted(exp, name, state):
+        if name == 'pools':
+            scans.append(name)
+        return description(exp, name, state)
+    monkeypatch.setattr(module, 'description', counted)
+    progress = LiveProgress(tmp_path)
+    progress.logs.clock = lambda: 0
+    progress.event('pools', 'started', running=True)
+    for i in range(10):
+        name = f'pool-dev-{i}'
+        progress.event(name, 'started', running=True)
+        progress.event(name, 'completed')
+    progress.event('pools', 'completed')
+    assert scans == ['pools', 'pools']
+
+
 def test_policy_status_watch_refreshes_until_run_stops(tmp_path, monkeypatch, capsys):
     from types import SimpleNamespace
     from test_survival.cli import main

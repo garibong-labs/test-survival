@@ -282,6 +282,34 @@ def test_empty_local_populations_still_measure_scope_universe(tmp_path,monkeypat
     assert batch.stage_complete(tmp_path,config,'survive')
 
 
+def test_batch_projection_memo_is_display_only(tmp_path, monkeypatch):
+    from test_survival import progress
+    from test_survival.progress_evidence import FileMemo
+    config = fixture(tmp_path)
+    setup_worker(monkeypatch, [])
+    control.run(tmp_path, config)
+    survive.run(tmp_path, config)
+    paths = [tmp_path/f'results/raw/{i}-dev.json' for i in (1, 2)]
+    reads = []
+    def counted(path, default=None):
+        if path in paths:
+            reads.append(path)
+        return read_json(path, default)
+    monkeypatch.setattr(batch, 'read_json', counted)
+    monkeypatch.setattr(progress, '_batch_projections', FileMemo())
+    assert len(items(tmp_path, 'survive', config, {})[0]) == 6
+    assert reads == paths
+    reads.clear()
+    assert len(items(tmp_path, 'survive', config, {})[0]) == 6
+    assert not reads
+    assert batch.stage_complete(tmp_path, config, 'survive')
+    assert reads == paths
+    reads.clear()
+    write_json(paths[1], {}, compress=True)
+    assert len(items(tmp_path, 'survive', config, {})[0]) == 5
+    assert reads == paths[1:]
+
+
 @pytest.mark.parametrize('damage', ['missing-lines', 'nonexecuting-repair', 'projection', 'identity'])
 def test_batch_progress_matches_resume_and_is_read_only(tmp_path, monkeypatch, damage):
     from test_survival.progress import panel_items, describe

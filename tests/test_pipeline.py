@@ -78,7 +78,8 @@ def test_init_and_status(tmp_path, capsys):
     assert 'prepare    pending' in capsys.readouterr().out
 
 
-def test_detached_child_records_its_completion(tmp_path, config):
+@pytest.mark.parametrize('no_progress', [False, True])
+def test_detached_child_records_its_completion(tmp_path, config, no_progress):
     import subprocess
     import time
     import yaml
@@ -88,7 +89,7 @@ def test_detached_child_records_its_completion(tmp_path, config):
     (tmp_path/'experiment.yaml').write_text(yaml.safe_dump(config))
     for stage in STAGES:
         write_json(tmp_path/'state'/f'{stage}.json', dict(status='completed', config_hash=stage_hash(config, stage)))
-    pid, log_path = background(tmp_path)
+    pid, log_path = background(tmp_path, no_progress=no_progress)
     deadline = time.monotonic()+10
     while time.monotonic()<deadline:
         record = read_json(tmp_path/'state/run.json')
@@ -99,6 +100,7 @@ def test_detached_child_records_its_completion(tmp_path, config):
     assert record['status']=='completed'
     assert record['log']==str(log_path)
     assert 'report: already completed; skipped' in log_path.read_text()
+    assert (' | elapsed ' in log_path.read_text()) == (not no_progress)
     # Reap our child so this test does not leave a zombie in a long-lived runner.
     os.waitpid(pid, 0)
 

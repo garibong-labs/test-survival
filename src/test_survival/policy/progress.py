@@ -5,7 +5,8 @@ import threading
 
 from ..display import UTC_DISPLAY
 from ..io import now, read_json
-from ..panel import OUTPUT_LOCK
+from ..log_progress import LogProgress
+from ..pipeline import write_log_line
 from ..progress import Description, duration
 
 
@@ -59,22 +60,21 @@ def description(exp, name, state, *, at=None):
 
 
 class LiveProgress:
-    def __init__(self, exp, *, display=UTC_DISPLAY):
+    def __init__(self, exp, *, display=UTC_DISPLAY, logs=None):
         self.exp = Path(exp)
         self.display = display
+        self.logs = logs if logs is not None else LogProgress()
         self.active = set()
         self.lock = threading.RLock()
         self.stop = threading.Event()
 
     def emit(self, name, message):
-        state = read_json(self.exp/f'state/policy-{name}.json', {})
-        progress = description(self.exp, name, state)
-        stamp = now()
-        text = f'policy-{name}: {message} | '
-        with OUTPUT_LOCK:
-            print(f'{self.display.timestamp(stamp)} {text}{progress.render(self.display)}', flush=True)
-            with (self.exp/'state/log.txt').open('a') as stream:
-                stream.write(f'{stamp} {text}{progress.render()}\n')
+        def compute():
+            state = read_json(self.exp/f'state/policy-{name}.json', {})
+            return description(self.exp, name, state)
+        stage = f'policy-{name}'
+        progress = self.logs.get((self.exp, stage), compute, refresh=message != 'running')
+        write_log_line(self.exp, now(), f'{stage}: {message}', self.display, progress)
 
     def event(self, name, message, *, running=False):
         with self.lock:
@@ -96,10 +96,12 @@ class LiveProgress:
                         pass  # Progress must not fail work during an evidence update.
 
     def __enter__(self):
-        self.thread = threading.Thread(target=self.loop, name='policy-progress', daemon=True)
-        self.thread.start()
+        if not self.logs.disabled:
+            self.thread = threading.Thread(target=self.loop, name='policy-progress', daemon=True)
+            self.thread.start()
         return self
 
     def __exit__(self, *exc):
-        self.stop.set()
-        self.thread.join()
+        if not self.logs.disabled:
+            self.stop.set()
+            self.thread.join()
