@@ -127,7 +127,7 @@ def finish_deferred_builds(exp, config):
         error = exp/'state/range-builds-error.txt'
         atomic_text(error, f'{type(exc).__name__}: {exc}\n')
         write_json(path, {**state, 'status': 'failed', 'finished': now()})
-        log(exp, f'range-builds: failed ({type(exc).__name__}); see {error}', config)
+        log(exp, f'range-builds: failed ({type(exc).__name__}); see {error}', config, refresh=True)
         raise
     path.unlink()
     log(exp, 'range-builds: completed deferred range builds')

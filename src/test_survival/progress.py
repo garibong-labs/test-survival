@@ -1,17 +1,67 @@
 """Read-only stage progress from existing state and evidence records."""
-from .denominators import frozen_after_control
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from pathlib import Path
 
 from .config import range_fingerprint, execution_groups, derived_source
+from .denominators import frozen_after_control
 from .display import UTC_DISPLAY
 from .io import result_exists, resolve_path, read_csv, read_json
+from .progress_evidence import FileMemo, file_stamp
 from .adapters.run_reuse import survival_provenance_matches
 
 
 def csv_rows(path):
     return read_csv(path) if path.exists() else []
+
+
+_screen_checks = FileMemo()
+_generation_records = FileMemo()
+_raw_checks = FileMemo()
+_batch_projections = FileMemo()
+
+
+def generation_record(path):
+    def fields():
+        # Call ledgers and class records can also hold large response bodies.
+        return {key: value for key, value in read_json(path, {}).items()
+                if key in ('status', 'class', 'class_name', 'technique')}
+    return _generation_records.get(path, (), fields)
+
+
+def screen_complete(exp, source, path, adapter, repeats, provenance, historical):
+    relative = str(source.relative_to(exp))
+    inputs = relative, file_stamp(source), repeats, provenance, historical
+    def check():
+        record = read_json(path, {})
+        if record.get('file') != relative:
+            return False
+        if historical:
+            return True
+        saved = record.get('input_sha256')
+        # Most records use the current layout. Try the entire compatibility
+        # set only when that first fingerprint does not match.
+        return (saved == adapter.screen_fingerprint(source, repeats, provenance=provenance)
+                or saved in adapter.screen_fingerprints(source, repeats, provenance=provenance))
+    return _screen_checks.get(path, inputs, check)
+
+
+def raw_complete(path, sha, *, skipped=False, coverage=False, imported=False, historical=False,
+                 fingerprints=(), provenance=None):
+    inputs = sha, skipped, coverage, imported, historical, fingerprints, provenance
+    def check():
+        raw = read_json(path, {})
+        if skipped:
+            return raw.get('status') == 'skipped-untouched' and raw.get('sha') == sha
+        if not sha or raw.get('sha') != sha or (coverage and raw.get('status') != 'evaluated'):
+            return False
+        if imported:
+            return True
+        compatible = historical or (raw.get('input_sha256') in fingerprints
+                                     and survival_provenance_matches(raw.get('runner_sha256'), provenance))
+        return compatible and raw.get('status') != 'coverage-fail'
+    return _raw_checks.get(path, inputs, check)
 
 
 def items(exp, stage, config, state):
@@ -32,7 +82,7 @@ def items(exp, stage, config, state):
             path = exp/'results/commits.csv'
             total = len(csv_rows(path)) if path.exists() else None
         try:
-            completed, _ = completed_items(exp, config, stage, historical=historical)
+            completed, _ = completed_items(exp, config, stage, historical=historical, projection_memo=_batch_projections)
         except PipelineError:
             # Incompatible imports are pending, not reusable evidence. The
             # measuring stage reports the actionable compatibility error.
@@ -105,9 +155,7 @@ def items(exp, stage, config, state):
                             from .generators.testpilot_native import validation_id
                             number = validation_id(source, directory)
                         path = directory/f'validation/{number}.json'
-                        record = read_json(path, {})
-                        fingerprints = adapter.screen_fingerprints(source, config['screen']['stable_runs'], provenance=provenance)
-                        if record.get('file') == str(source.relative_to(exp)) and (historical or record.get('input_sha256') in fingerprints):
+                        if screen_complete(exp, source, path, adapter, config['screen']['stable_runs'], provenance, historical):
                             completed.append([path])
                 continue
             manifest = read_json(root/'rounds.json', {})
@@ -115,7 +163,7 @@ def items(exp, stage, config, state):
             if group['method'] in ('ouedraogo', 'testpilot'):
                 for directory in directories:
                     for path in directory.glob('runs/*/*/**/run.json'):
-                        if read_json(path, {}).get('status'):
+                        if generation_record(path).get('status'):
                             paths[str(path.relative_to(root))] = path
                 planned = len(paths)
                 if group['method'] == 'ouedraogo':
@@ -129,7 +177,7 @@ def items(exp, stage, config, state):
                 for base in (exp/'work/ktester'/group['name']/'rounds', root):
                     for directory in rounds(base, group['rounds']['max']):
                         for path in directory.glob('raw-responses/*/call.json'):
-                            if read_json(path, {}).get('status'):
+                            if generation_record(path).get('status'):
                                 paths[str(path.relative_to(base))] = path
                 planned = len(paths)
                 # Repair/retry calls are adaptive; the total is not known yet.
@@ -154,6 +202,7 @@ def items(exp, stage, config, state):
         alive = read_json(exp/'results/alive-entering.json', {})
         changes = read_json(exp/'results/commit-paths.json', {})
         fingerprints = {}
+        folders = {}
         if stage == 'survive':
             derived = {g['name'] for g in config['dev']['groups'] if derived_source(config, g['name'])}
             groups = [g for g in groups if g not in derived]
@@ -167,26 +216,28 @@ def items(exp, stage, config, state):
             commit = read_json(exp/'results/anchor.json', {}) if index == '0' else build
             skipped = stage == 'survive' and index in changes and skip_reason(changes[index], config['project']['module'], config['range']['skip_untouched'])
             for group in groups:
-                folder = raw_folder(group, config, imports) if stage == 'survive' else 'raw-coverage'
-                path = exp/f'results/{folder}/{index}-{group}.json'
-                raw = read_json(path, {})
+                if group not in folders:
+                    folders[group] = raw_folder(group, config, imports) if stage == 'survive' else 'raw-coverage'
+                path = exp/f'results/{folders[group]}/{index}-{group}.json'
                 if skipped:
-                    if raw.get('status') == 'skipped-untouched' and raw.get('sha') == commit.get('sha'):
+                    if raw_complete(path, commit.get('sha'), skipped=True):
                         paths.append(path)
                     continue
-                if stage == 'cover' and group not in alive.get(index, {}):
-                    continue
-                selected = set(alive[index][group]) if stage == 'cover' else None
-                methods = [m for m in frozen[group] if selected is None or m['id'] in selected]
-                key = (group, tuple(m['id'] for m in methods))
+                methods = frozen[group]
+                key = group
+                if stage == 'cover':
+                    if group not in alive.get(index, {}):
+                        continue
+                    selected = set(alive[index][group])
+                    methods = [m for m in methods if m['id'] in selected]
+                    key = (group, tuple(m['id'] for m in methods))
                 if key not in fingerprints:
                     fingerprints[key] = adapter.run_fingerprints(methods)
-                # Same reuse rule as run_group(): historical provenances count, failed coverage does not.
-                runner_matches = (historical or survival_provenance_matches(raw.get('runner_sha256'), provenance)) and raw.get('status') != 'coverage-fail'
-                valid = ((imported_file_valid(exp, str(path.relative_to(exp)), imported_files) or ((historical or raw.get('input_sha256') in fingerprints[key]) and runner_matches))
-                         and bool(commit.get('sha')) and raw.get('sha') == commit['sha'])
+                imported = imported_file_valid(exp, str(path.relative_to(exp)), imported_files)
+                valid = raw_complete(path, commit.get('sha'), coverage=stage == 'cover', imported=imported,
+                                     historical=historical, fingerprints=fingerprints[key], provenance=provenance)
                 if stage == 'cover':
-                    valid = valid and raw.get('status') == 'evaluated' and result_exists(exp/f'results/coverage/{index}-{group}-lines.csv')
+                    valid = valid and result_exists(exp/f'results/coverage/{index}-{group}-lines.csv')
                 if valid:
                     paths.append(path)
             if groups and len(paths) == len(groups):
@@ -205,6 +256,16 @@ class Description:
         return self.prefix + display.timestamp(self.eta, timespec='seconds')
 
 
+def fresh_items(completed, start):
+    if not start:
+        return 0
+    # Many panel items can point at the same control, timing or class record.
+    cutoff = start.timestamp()
+    paths = {path for item in completed for path in item}
+    recent = {path for path in paths if resolve_path(path).stat().st_mtime >= cutoff}
+    return sum(any(path in recent for path in item) for item in completed)
+
+
 def description(exp, stage, config, *, at=None):
     exp = Path(exp)
     state = read_json(exp/'state'/f'{stage}.json', {})
@@ -215,8 +276,7 @@ def description(exp, stage, config, *, at=None):
     try:
         completed, total, unit = items(exp, stage, config, state)
         # Cached evidence contributes to done/total, but not this attempt's rate.
-        fresh = sum(bool(paths) and max(resolve_path(p).stat().st_mtime for p in paths) >= start.timestamp()
-                    for paths in completed) if start else 0
+        fresh = fresh_items(completed, start)
     except (OSError, ValueError, KeyError, TypeError):
         # A live worker may be replacing a record. Reporting must not fail work.
         completed, total, unit, fresh = [], None, 'items', 0
@@ -284,7 +344,7 @@ def generation_progress(exp, config, state):
             for label, copies in directories.items():
                 for directory in copies:
                     for path in directory.glob('raw-responses/*/call.json'):
-                        if read_json(path, {}).get('status'):
+                        if generation_record(path).get('status'):
                             calls[(name, label, path.parent.name)] = path
                     for path in directory.glob('raw-responses/*/response.json'):
                         responses.add((name, label, path.parent.name))
@@ -297,7 +357,7 @@ def generation_progress(exp, config, state):
                     active = []
                     repair_records = list(directory.glob('progress/*.json'))
                     for path in repair_records:
-                        record = read_json(path, {})
+                        record = generation_record(path)
                         if record.get('status') == 'completed':
                             completed[(name, label, path.stem)] = [path]
                         elif record.get('status') == 'running':
@@ -316,7 +376,7 @@ def generation_progress(exp, config, state):
             for label, copies in directories.items():
                 for directory in copies:
                     for path in directory.glob('runs/*/*/**/run.json'):
-                        if read_json(path, {}).get('status'):
+                        if generation_record(path).get('status'):
                             calls[name, label, str(path.relative_to(directory))] = path
                     for path in directory.glob('refinements/*/*.json'):
                         completed[name, label, path.parent.name, path.name] = [path]
@@ -328,21 +388,22 @@ def generation_progress(exp, config, state):
             if not classes or not all(classes.values()):
                 # Full method inventory is available even with a minimal scope record.
                 inventory = csv_rows(exp/'population/methods.csv')
-                inventory_keys = folder_keys(list(dict.fromkeys(r['class'] for r in inventory)))
-                for row in inventory:
-                    key = inventory_keys[row['class']]
+                counts = Counter(row['class'] for row in inventory)
+                inventory_keys = folder_keys(list(counts))
+                for name, count in counts.items():
+                    key = inventory_keys[name]
                     if not classes.get(key):
-                        classes[key] = sum(r['class'] == row['class'] for r in inventory)
+                        classes[key] = count
             if not classes or not all(classes.values()):
                 known = False
             total += sum(classes.values())*len(group['params']['prompts'])*count
             for label, copies in directories.items():
                 for directory in copies:
                     for path in directory.glob('runs/*/*/**/run.json'):
-                        if read_json(path, {}).get('status'):
+                        if generation_record(path).get('status'):
                             calls[(name, label, str(path.relative_to(directory)))] = path
                     for path in directory.glob('records/*.json'):
-                        record = read_json(path, {})
+                        record = generation_record(path)
                         if record.get('status'):
                             for method in range(classes.get(record['class_name'], 0)):
                                 completed[(name, label, record['class_name'], record['technique'], method)] = [path]
@@ -402,8 +463,7 @@ def snapshot(exp, stage, config, *, at=None):
     elapsed = max(0, ((finish or at)-start).total_seconds()) if start else 0
     try:
         completed, total, unit, extra = panel_items(exp, stage, config, state)
-        fresh = sum(bool(paths) and max(resolve_path(p).stat().st_mtime for p in paths) >= start.timestamp()
-                    for paths in completed) if start else 0
+        fresh = fresh_items(completed, start)
     except (OSError, ValueError, KeyError, TypeError):
         completed, total, unit, extra, fresh = [], None, UNITS[stage], {}, 0
     done = len(completed)

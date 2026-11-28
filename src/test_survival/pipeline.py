@@ -14,6 +14,7 @@ from .frozen_tree import verify_existing_tree
 from .io import atomic_text, now, read_json, write_json
 from .model.calls import active_calls, admission_lock
 from .progress import describe, description
+from .log_progress import for_experiment, run_logging
 from .display import load_display_settings
 from .lifecycle import process_identity, freeze_workers, terminate_workers, cleanup_containers
 
@@ -22,14 +23,23 @@ class PipelineError(RuntimeError):
     pass
 
 
-def log(exp, message, config=None, *, display=None):
-    from .panel import OUTPUT_LOCK, notify, active_display
+def log(exp, message, config=None, *, display=None, refresh=False):
+    from .panel import notify, active_display
     display = display or active_display(exp) or load_display_settings()
     stamp = now()
-    saved_message = shown_message = message
+    progress = None
     stage = message.partition(':')[0]
     if config is not None and stage in (*STAGES, 'range-builds'):
-        progress = description(exp, stage, config)
+        exp = Path(exp).resolve()
+        progress = for_experiment(exp).get((exp, stage), lambda: description(exp, stage, config), refresh=refresh)
+    write_log_line(exp, stamp, message, display, progress)
+    notify(exp)
+
+
+def write_log_line(exp, stamp, message, display, progress):
+    from .panel import OUTPUT_LOCK
+    saved_message = shown_message = message
+    if progress is not None:
         saved_message += ' | ' + progress.render()
         shown_message += ' | ' + progress.render(display)
     line = f'{stamp} {saved_message}'
@@ -39,7 +49,6 @@ def log(exp, message, config=None, *, display=None):
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open('a') as stream:
             stream.write(line + '\n')
-    notify(exp)
 
 
 def process_alive(pid):
@@ -180,13 +189,13 @@ def default_handler(stage):
     return importlib.import_module(f'test_survival.stages.{stage}').run
 
 
-def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False, display=None, keep_work=False, resend_interrupted=False):
+def run(exp, config, *, until=None, stage=None, force=False, group=None, handlers=None, locked=False, no_panel=False, no_progress=False, display=None, keep_work=False, resend_interrupted=False):
     config.keep_work = keep_work
     display = display or load_display_settings()
     exp = Path(exp).resolve()
     if not locked:
         with run_lock(exp):
-            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel, display=display, keep_work=keep_work, resend_interrupted=resend_interrupted)
+            return run(exp, config, until=until, stage=stage, force=force, group=group, handlers=handlers, locked=True, no_panel=no_panel, no_progress=no_progress, display=display, keep_work=keep_work, resend_interrupted=resend_interrupted)
     if stage and until:
         raise PipelineError('--stage and --until are mutually exclusive')
     if group and stage != 'generate':
@@ -205,7 +214,7 @@ def run(exp, config, *, until=None, stage=None, force=False, group=None, handler
             if previous.get('status') != 'completed' or previous.get('config_hash') != stage_hash(config, earlier):
                 raise PipelineError(f'{stage} requires completed, current stage {earlier}')
     from .panel import LiveProgress
-    with LiveProgress(exp, config, disabled=no_panel, display=display):
+    with run_logging(exp, no_progress=no_progress), LiveProgress(exp, config, disabled=no_panel, display=display):
         return _run(exp, config, selected=selected, force=force, group=group, handlers=handlers, resend_interrupted=resend_interrupted)
 
 
@@ -261,7 +270,7 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None, resen
                               and not verified_archives(exp/'generated'/g['name'], g['rounds']['max'])}
                 batch_current = batch_current and not unverified
             if batch_current and not force and previous.get('status') == 'completed' and previous.get('config_hash') == digest:
-                log(exp, f'{current}: already completed; skipped', config)
+                log(exp, f'{current}: already completed; skipped', config, refresh=True)
                 if handlers is None:
                     from .work import cleanup_stage
                     cleanup_stage(exp, config, current)
@@ -301,7 +310,7 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None, resen
                 atomic_text(error_path, f'{type(exc).__name__}: {exc}\n')
                 state.update(status='failed', finished=now(), notes=f'{type(exc).__name__}; see {error_path.relative_to(exp)}')
                 write_json(path, state)
-                log(exp, f'{current}: failed ({type(exc).__name__}); see {error_path}', config)
+                log(exp, f'{current}: failed ({type(exc).__name__}); see {error_path}', config, refresh=True)
                 raise
             state.update(status='completed', finished=now(), notes=summary or f'{current} completed')
             if current == 'generate' and group and handlers is None:
@@ -313,7 +322,7 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None, resen
             if current == 'generate' and not group and handlers is None:
                 state['group_hashes'] = {g['name']: stage_hash(config, 'generate', g['name']) for g in config['generators']}
             write_json(path, state)
-            log(exp, f'{current}: {state["notes"]}', config)
+            log(exp, f'{current}: {state["notes"]}', config, refresh=True)
             if handlers is None and state['status'] == 'completed':
                 from .work import cleanup_stage
                 cleanup_stage(exp, config, current)
@@ -327,7 +336,7 @@ def _run(exp, config, *, selected, force=False, group=None, handlers=None, resen
         return completed
 
 
-def background(exp, *, until=None, stage=None, force=False, group=None, keep_work=False, resend_interrupted=False):
+def background(exp, *, until=None, stage=None, force=False, group=None, keep_work=False, resend_interrupted=False, no_progress=False):
     exp = Path(exp).resolve()
     verify_existing_tree(exp/'dev/src-test-t', record=False)
     arguments = ['run', str(exp)]
@@ -340,6 +349,8 @@ def background(exp, *, until=None, stage=None, force=False, group=None, keep_wor
         arguments.append('--keep-work')
     if resend_interrupted:
         arguments.append('--resend-interrupted')
+    if no_progress:
+        arguments.append('--no-progress')
     return launch_background(exp, arguments)
 
 

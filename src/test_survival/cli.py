@@ -40,6 +40,8 @@ def parser():
     execute.add_argument('--keep-work', action='store_true', help='Retain successful checkouts and stage scratch')
     execute.add_argument('--background', action='store_true')
     execute.add_argument('--no-panel', action='store_true', help='Disable the terminal progress panel')
+    progress_help = 'Omit progress suffixes from run logs'
+    execute.add_argument('--no-progress', action='store_true', help=progress_help)
     execute.add_argument('--group')
     execute.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
     execute.add_argument('--ready-fd', type=int, help=argparse.SUPPRESS)
@@ -78,6 +80,7 @@ def parser():
         if name == 'status':
             command.add_argument('--watch', action='store_true', help='Refresh policy progress every five seconds until the run stops')
         if name == 'run':
+            command.add_argument('--no-progress', action='store_true', help=progress_help+' and suppress policy heartbeats')
             command.add_argument('--resend-interrupted', action='store_true', help=resend_help)
             command.add_argument('--background', action='store_true')
             command.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
@@ -156,7 +159,7 @@ def main(argv=None):
                 from .summary import show
                 print(show(args.exp_dir, args.stage))
             else:
-                options = {key: getattr(args, key) for key in ('until', 'stage', 'force', 'group', 'keep_work', 'resend_interrupted')}
+                options = {key: getattr(args, key) for key in ('until', 'stage', 'force', 'group', 'keep_work', 'resend_interrupted', 'no_progress')}
                 if args.background:
                     pid, log_path = background(args.exp_dir, **options)
                     print(f'PID {pid}; log {log_path}')

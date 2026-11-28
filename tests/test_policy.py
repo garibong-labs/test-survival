@@ -477,6 +477,36 @@ def test_policy_background_uses_registered_handshake(baseline,monkeypatch):
     assert calls==[(exp,['policy','run',str(exp),'--until','pools'],'policy-background.log')]
     pipeline.background(exp, config, 'pools', False, resend_interrupted=True)
     assert calls[-1][1][-1] == '--resend-interrupted'
+    pipeline.background(exp, config, 'pools', False, no_progress=True)
+    assert '--no-progress' in calls[-1][1]
+
+
+def test_policy_run_without_progress_keeps_pool_events_and_starts_no_heartbeat(baseline, monkeypatch, capsys):
+    from test_survival import pipeline
+    from test_survival.cli import main
+    from test_survival.policy import pipeline as policy, pools, progress
+    exp, config, _ = baseline
+    scans, heartbeats = [], []
+    monkeypatch.setattr(policy, 'load', lambda p: config)
+    monkeypatch.setattr(pipeline, 'description', lambda *args: scans.append('worker'))
+    monkeypatch.setattr(progress, 'description', lambda *args: scans.append('policy'))
+    monkeypatch.setattr(progress.LiveProgress, 'loop', lambda self: heartbeats.append(True))
+    def build(b, point, target):
+        child = b.exp/f'results/policy/pools/{point["group"]}/{point["index"]}'
+        pipeline.log(child, 'generate: candidate screened', pools.pool_config(b, point))
+        write_json(child/'pool.json', [])
+    monkeypatch.setattr(pools, 'build_pool', build)
+    assert main(['policy', 'run', str(exp), '--until', 'pools', '--no-progress']) == 0
+    assert not scans and not heartbeats
+    child = exp/'results/policy/pools/dev-scope/2'
+    assert (child/'state/log.txt').read_text().rstrip().endswith(' generate: candidate screened')
+    text = (exp/'state/log.txt').read_text()
+    assert 'policy-pool-dev-scope-2: started\n' in text
+    assert 'policy-pools: completed\n' in text
+    assert ' | ' not in text
+    capsys.readouterr()
+    assert main(['policy', 'status', str(exp), '--watch']) == 0
+    assert 'policy-pools.json: completed | elapsed' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize('method', ['dev', 'ouedraogo'])

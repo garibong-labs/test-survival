@@ -357,3 +357,129 @@ def test_screen_rejects_stale_validation_like_the_adapter(tmp_path, config, monk
     text = describe(tmp_path, 'screen', config, at=AT)
     assert '1/2 files' in text
     assert 'estimated finish 2026-01-01T00:03:20+00:00' in text
+
+
+def test_screen_log_can_lag_while_status_and_panel_see_validation_changes(tmp_path, config, monkeypatch):
+    from test_survival.progress import snapshot
+    state(tmp_path, 'screen')
+    root = tmp_path/'generated/o/round1'
+    source = root/'sources/A.java'
+    source.parent.mkdir(parents=True)
+    source.write_text('class A {}')
+    adapter = JavaMavenAdapter(tmp_path, config)
+    data = dict(file=str(source.relative_to(tmp_path)),
+                input_sha256=adapter.screen_fingerprint(source, config['screen']['stable_runs']))
+    calls = []
+    fingerprint = JavaMavenAdapter.screen_fingerprint
+    def counted(self, *args, **kwargs):
+        calls.append(args[0])
+        return fingerprint(self, *args, **kwargs)
+    monkeypatch.setattr(JavaMavenAdapter, 'screen_fingerprint', counted)
+    log(tmp_path, 'screen: waiting', config)
+    path = root/'validation/0.json'
+    write_json(path, data)
+    assert '1/1 files' in status(tmp_path, config)
+    assert snapshot(tmp_path, 'screen', config)['done'] == 1
+    assert calls == [source]
+    log(tmp_path, 'screen: saved validation', config)
+    assert '0/1 files' in (tmp_path/'state/log.txt').read_text().splitlines()[-1]
+    write_json(path, {**data, 'input_sha256': 'invalid'})
+    assert snapshot(tmp_path, 'screen', config)['done'] == 0
+    legacy = adapter.screen_fingerprints(source, config['screen']['stable_runs'])[-1]
+    assert legacy != data['input_sha256']
+    write_json(path, {**data, 'input_sha256': legacy})
+    assert snapshot(tmp_path, 'screen', config)['done'] == 1
+    write_json(path, data)
+    assert snapshot(tmp_path, 'screen', config)['done'] == 1
+    source.write_text('class B {}')
+    assert snapshot(tmp_path, 'screen', config)['done'] == 0
+
+
+def test_generation_log_and_panel_share_only_unchanged_ledger_reads(tmp_path, config, monkeypatch):
+    from test_survival import progress
+    root = tmp_path/'generated/o/round1'
+    paths = [root/f'runs/{name}/ZSL/run.json' for name in ('A', 'B')]
+    for path in paths:
+        write_json(path, {})
+    reads = []
+    def counted(path, default=None):
+        if path in paths:
+            reads.append(path)
+        return read_json(path, default)
+    monkeypatch.setattr(progress, 'read_json', counted)
+    assert '0/? calls' in describe(tmp_path, 'generate', config)
+    assert progress.snapshot(tmp_path, 'generate', config)['calls'] == 0
+    assert sorted(reads) == paths
+    reads.clear()
+    write_json(paths[0], {'status': 'ok'})
+    assert progress.snapshot(tmp_path, 'generate', config)['calls'] == 1
+    assert '1/? calls' in describe(tmp_path, 'generate', config)
+    assert reads == paths[:1]
+
+
+@pytest.mark.parametrize('stage', ['survive', 'cover'])
+def test_raw_progress_rechecks_only_changed_records_and_current_coverage(tmp_path, config, monkeypatch, stage):
+    from test_survival import progress
+    from test_survival.io import resolve_path
+    adapter = JavaMavenAdapter(tmp_path, config)
+    commits(tmp_path)
+    write_csv(tmp_path/'results/coverage-commits.csv', [{'index': i} for i in range(1, 4)], ['index'])
+    write_json(tmp_path/'results/frozen-denominators.json', {'dev': []})
+    write_json(tmp_path/'results/alive-entering.json', {str(i): {'dev': []} for i in range(1, 4)})
+    folder = 'raw' if stage == 'survive' else 'raw-coverage'
+    paths = [tmp_path/f'results/{folder}/{i}-dev.json' for i in range(1, 4)]
+    data = dict(status='evaluated', input_sha256=adapter.run_fingerprint([]), runner_sha256=adapter.provenance())
+    for i, path in enumerate(paths, 1):
+        write_json(tmp_path/f'results/builds/{i}.json', {'build': 'ok', 'sha': str(i)})
+        write_json(path, {**data, 'sha': str(i)}, compress=True)
+        write_csv(tmp_path/f'results/coverage/{i}-dev-lines.csv', [], ['line'], compress=True)
+    reads, hashes = [], []
+    def counted(path, default=None):
+        if path in paths:
+            reads.append(path)
+        return read_json(path, default)
+    fingerprints = JavaMavenAdapter.run_fingerprints
+    def counted_fingerprints(self, methods):
+        hashes.append(methods)
+        return fingerprints(self, methods)
+    monkeypatch.setattr(progress, 'read_json', counted)
+    monkeypatch.setattr(JavaMavenAdapter, 'run_fingerprints', counted_fingerprints)
+    assert '3/3' in describe(tmp_path, stage, config)
+    assert reads == paths and len(hashes) == 1
+    reads.clear()
+    assert '3/3' in describe(tmp_path, stage, config)
+    assert not reads and len(hashes) == 2
+    write_json(paths[1], {**data, 'sha': 'wrong'}, compress=True)
+    assert '2/3' in describe(tmp_path, stage, config)
+    assert reads == paths[1:2]
+    if stage == 'cover':
+        resolve_path(tmp_path/'results/coverage/1-dev-lines.csv').unlink()
+        assert '1/3' in describe(tmp_path, stage, config)
+        assert reads == paths[1:2]
+
+
+def test_import_progress_revalidates_hash_on_size_mtime_or_manifest_change(tmp_path, monkeypatch):
+    from test_survival import dev_results
+    relative = 'results/raw/1-dev.json'
+    path = tmp_path/relative
+    write_json(path, {'value': 1})
+    original_hash = dev_results.file_hash
+    expected = original_hash(path)
+    calls = []
+    def counted(path):
+        calls.append(path)
+        return original_hash(path)
+    monkeypatch.setattr(dev_results, 'file_hash', counted)
+    def valid(digest=expected):
+        return dev_results.imported_file_valid(tmp_path, relative, {relative: digest})
+    assert valid() and valid() and calls == [path]
+    stat = path.stat()
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    assert valid() and len(calls) == 2
+    stat = path.stat()
+    path.write_text('{}')
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert not valid() and len(calls) == 3
+    assert valid(original_hash(path)) and len(calls) == 4
+    path.unlink()
+    assert not valid()

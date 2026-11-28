@@ -397,6 +397,14 @@ survival show /absolute/path/to/target-fork/experiments/first-run screen
 
 Status and stage log lines show elapsed time, completed/total items, and an estimated finish time. Prepare counts builds including the anchor; generate counts model calls; screen counts files; survive counts commits; cover counts indices.
 
+Log lines reuse the last progress estimate for 30 seconds or ten times the cost
+of the last calculation, whichever is longer. The final stage message refreshes
+the estimate. Use `survival run <exp-dir> --no-progress` or
+`survival policy run <exp-dir> --no-progress` to log just the timestamp and
+message. This also suppresses the five-second policy heartbeats. Both commands
+accept the flag with `--background`. The terminal panel, `survival status`,
+`survival policy status` and their watch modes still read current evidence.
+
 Terminal timestamps and ETAs default to **Asia/Seoul** (UTC+09:00). Configure
 `display.timezone` as `"UTC"` (or another IANA zone) in
 `~/.config/test-survival/config.toml`; `XDG_CONFIG_HOME` selects an alternative

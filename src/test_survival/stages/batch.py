@@ -342,7 +342,20 @@ def project_coverage(exp, config, index, entering):
         write_csv(output,[dict(file=f,line=n,covered='yes' if (f,n) in hits else 'no') for f,n in raw['universe']],['file','line','covered'],compress=True)
 
 
-def completed_items(exp, config, stage, *, historical=False):
+def projection_complete(path, *, method_ids=None, digest=None, skipped_sha=None, memo=None):
+    """Status can memoize this single-file check. Resume reads every projection."""
+    def check():
+        raw = read_json(path, {})
+        if method_ids is None:
+            return raw.get('status') == 'skipped-untouched' and raw.get('sha') == skipped_sha
+        return ((digest is None or raw.get('batch_input_sha256') == digest)
+                and {t['id'] for t in raw.get('methods', [])} == method_ids)
+    if memo is None:
+        return check()
+    return memo.get(path, (method_ids, digest, skipped_sha), check)
+
+
+def completed_items(exp, config, stage, *, historical=False, projection_memo=None):
     """Read-only completeness audit shared by resume, log and panel progress."""
     from .survive import skipped_commits, raw_folder
     # Status visits every stage, including those whose inputs have not been
@@ -367,13 +380,18 @@ def completed_items(exp, config, stage, *, historical=False):
     m = Measurements(exp, config, stage, record=False)
     skipped = skipped_commits(exp,config,commits) if commits else {}
     rows = commits if stage == 'survive' else [dict(index=0,sha=anchor['sha'])]
+    if not rows:
+        return [], 0
+    method_ids = {g: frozenset(t['id'] for t in tests) for g, tests in m.frozen.items() if g not in m.imported}
+    digest = None if historical else m.digest
+    folders = {g: 'control' if stage == 'control' else raw_folder(g, config, m.provenance) for g in m.frozen}
     known = {}; completed = []
     for r in rows:
         i=int(r['index'])
-        paths = [exp/f'results/{"control" if stage == "control" else raw_folder(g,config,m.provenance)}/{i}-{g}.json' for g in m.frozen]
+        paths = {g: exp/f'results/{folder}/{i}-{g}.json' for g, folder in folders.items()}
         if i in skipped:
-            if all((raw := read_json(p, {})).get('status') == 'skipped-untouched' and raw.get('sha') == r['sha'] for p in paths):
-                completed.append(paths)
+            if all(projection_complete(p, skipped_sha=r['sha'], memo=projection_memo) for p in paths.values()):
+                completed.append(list(paths.values()))
             continue
         build = read_json(exp/f'results/builds/{i}.json',{})
         if i and build.get('build') != 'ok':
@@ -386,15 +404,11 @@ def completed_items(exp, config, stage, *, historical=False):
         if record is None:
             continue
         valid = (stage == 'control' and config['survival'].get('control_failures') == 'exclude') or complete_lines(record, known)
-        for g, tests in m.frozen.items():
-            if g in m.imported:
-                continue
-            folder = 'control' if stage == 'control' else raw_folder(g,config,m.provenance)
-            projected = read_json(exp/f'results/{folder}/{i}-{g}.json', {})
-            if (not historical and projected.get('batch_input_sha256') != m.digest) or {t['id'] for t in projected.get('methods', [])} != {t['id'] for t in tests}:
+        for g, ids in method_ids.items():
+            if not projection_complete(paths[g], method_ids=ids, digest=digest, memo=projection_memo):
                 valid = False
         if valid:
-            completed.append([exp/f'results/baseline-batches/{i}.json', *paths])
+            completed.append([exp/f'results/baseline-batches/{i}.json', *paths.values()])
         for t in record['methods']:
             if t['state'] in FAILURES:
                 known.setdefault(identity(t),i)

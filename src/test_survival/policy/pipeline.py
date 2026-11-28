@@ -8,6 +8,7 @@ import traceback
 from ..config import ConfigError, canonical_hash, load, result_inputs
 from ..display import UTC_DISPLAY
 from ..io import logical_glob, resolve_path, atomic_text, now, read_csv, read_json, write_json
+from ..log_progress import run_logging
 from ..pipeline import PipelineError, run_lock, run_session, launch_background, process_alive
 from .baseline import Baseline
 from .config import COVERAGE_VERSION, digest_options, digest_plan, active_plan, reusable_run
@@ -97,10 +98,11 @@ def verify_baseline_trees(baseline, *, record):
     verify_existing_tree(baseline.exp/'results/policy/baseline-sources/dev/src-test-t', record=record)
 
 
-def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_DISPLAY, keep_work=False, resend_interrupted=False):
+def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_DISPLAY, keep_work=False, resend_interrupted=False, no_progress=False):
     config.keep_work = keep_work
     b = Baseline(exp,config)  # Validate the read-only boundary before creating lock/state files.
-    with run_lock(b.exp, lock_fd), run_session(b.exp, resend_interrupted=resend_interrupted), LiveProgress(b.exp, display=display) as progress:
+    with (run_lock(b.exp, lock_fd), run_session(b.exp, resend_interrupted=resend_interrupted),
+          run_logging(b.exp, no_progress=no_progress) as logs, LiveProgress(b.exp, display=display, logs=logs) as progress):
         verify_baseline_trees(b, record=True)
         if force:
             root = b.exp/'results/policy'
@@ -155,7 +157,7 @@ def run(exp, config, until='report', force=False, lock_fd=None, *, display=UTC_D
         finish_work(b.exp, b.execution_config)
 
 
-def background(exp, config, until, force, keep_work=False, resend_interrupted=False):
+def background(exp, config, until, force, keep_work=False, resend_interrupted=False, no_progress=False):
     b = Baseline(exp,config)
     verify_baseline_trees(b, record=False)
     arguments = ['policy','run',str(b.exp),'--until',until]
@@ -165,6 +167,8 @@ def background(exp, config, until, force, keep_work=False, resend_interrupted=Fa
         arguments.append('--keep-work')
     if resend_interrupted:
         arguments.append('--resend-interrupted')
+    if no_progress:
+        arguments.append('--no-progress')
     return launch_background(b.exp, arguments, log_name='policy-background.log')
 
 
@@ -220,7 +224,7 @@ def command(args, *, display=UTC_DISPLAY):
             print(status(args.exp_dir,config,display=display))
     elif args.background:
         pid, log = background(args.exp_dir, config, args.until, args.force, keep_work=args.keep_work,
-                              resend_interrupted=args.resend_interrupted)
+                              resend_interrupted=args.resend_interrupted, no_progress=args.no_progress)
         print(f'PID {pid}; log {log}')
     else:
         if args.ready_fd is not None:
@@ -230,4 +234,4 @@ def command(args, *, display=UTC_DISPLAY):
             finally:
                 os.close(args.ready_fd)
         run(args.exp_dir, config, args.until, args.force, args.lock_fd, display=display,
-            keep_work=args.keep_work, resend_interrupted=args.resend_interrupted)
+            keep_work=args.keep_work, resend_interrupted=args.resend_interrupted, no_progress=args.no_progress)

@@ -161,6 +161,10 @@ _FROZEN_TREE_EQUIVALENT = {
     # batch.py
     '5a582c2814c3664f72d98ca865b4e51c2fed552e0bb8a587dca0423bbd83cccc':
         '6cbf7d5dcaa136f148e63dedb04f47618ab3ee4354e630e20b20dc36a1876997',
+    # batch.py with optional display-only projection memoization. Both
+    # coverage universes still measure and publish the same batch records.
+    '42263d6fc1b53eeb901dfba519377bd5c496fe4b0bbcba9838d1a954765262a0':
+        '6cbf7d5dcaa136f148e63dedb04f47618ab3ee4354e630e20b20dc36a1876997',
     # docker.py
     '8b94985fd55723af2f5f8832efcf165dec3933a25338a31f392e81db65bc6f3d':
         '8ffe7dd59a13a8f7e8ab203777dc031be8627a3b07b516737c333f1ff2bfe8c1',
